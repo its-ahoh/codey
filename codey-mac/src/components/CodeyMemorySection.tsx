@@ -3,18 +3,7 @@ import { C } from '../theme'
 import { Toggle, unwrap } from './settingsAtoms'
 import type { CodeyMemoryItem, MemoryStoreScope } from '../codey-api'
 
-/**
- * Codey's own memory: the entries it injects into prompts. Two scopes share
- * this panel — the user-global store (`~/.codey/memory`), which applies in
- * every project, and a workspace's own store. The global store had no UI at
- * all before: only `/remember --global` in chat could write to it, so it sat
- * empty.
- *
- * These live in the store's `index.json`. The `memory.md` beside it is a
- * rendered view the store rewrites whenever an entry changes, which is why
- * this panel edits entries rather than that file — text typed into the old
- * memory.md editor was silently overwritten by the next recorded entry.
- */
+/** User/project notes are managed through Co-memo; old Codey files can be imported explicitly. */
 
 const relative = (ms: number): string => {
   const mins = Math.round((Date.now() - ms) / 60000)
@@ -39,7 +28,7 @@ const smallButton = (danger?: boolean): React.CSSProperties => ({
 
 const EntryRow: React.FC<{
   entry: CodeyMemoryItem
-  onSave: (content: string) => Promise<void>
+  onSave: (content: string) => Promise<boolean>
   onRemove: () => Promise<void>
 }> = ({ entry, onSave, onRemove }) => {
   const [editing, setEditing] = useState(false)
@@ -51,7 +40,7 @@ const EntryRow: React.FC<{
   const save = async () => {
     if (busy || draft.trim() === entry.content.trim()) { setEditing(false); return }
     setBusy(true)
-    try { await onSave(draft); setEditing(false) } finally { setBusy(false) }
+    try { if (await onSave(draft)) setEditing(false) } finally { setBusy(false) }
   }
 
   return (
@@ -65,7 +54,7 @@ const EntryRow: React.FC<{
           {relative(entry.updatedAt)}
         </span>
         <button onClick={() => setEditing(e => !e)} style={smallButton()}>{editing ? 'Close' : 'Edit'}</button>
-        <button onClick={() => void onRemove()} style={smallButton(true)} title="Forget this memory">Forget</button>
+        <button onClick={() => void onRemove()} style={smallButton(true)} title="Archive this memory while keeping its history">Archive</button>
       </div>
       {editing && (
         <div style={{ marginTop: 6 }}>
@@ -106,6 +95,7 @@ interface PanelProps {
 export const MemoryPanel: React.FC<PanelProps> = ({ scope, workspace, title, description, banner }) => {
   const [entries, setEntries] = useState<CodeyMemoryItem[]>([])
   const [draft, setDraft] = useState('')
+  const [legacyCount, setLegacyCount] = useState(0)
   const [adding, setAdding] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -114,7 +104,9 @@ export const MemoryPanel: React.FC<PanelProps> = ({ scope, workspace, title, des
     setLoading(true)
     setError(null)
     try {
-      setEntries(unwrap(await window.codey.memory.codey.list(scope, workspace)).entries)
+      const result = unwrap(await window.codey.memory.codey.list(scope, workspace))
+      setEntries(result.entries)
+      setLegacyCount(result.legacyCount ?? 0)
     } catch (e: any) { setError(e?.message ?? String(e)) } finally { setLoading(false) }
   }, [scope, workspace])
 
@@ -122,15 +114,14 @@ export const MemoryPanel: React.FC<PanelProps> = ({ scope, workspace, title, des
 
   const run = async (fn: () => Promise<unknown>) => {
     setError(null)
-    try { await fn(); await reload() } catch (e: any) { setError(e?.message ?? String(e)) }
+    try { await fn(); await reload(); return true } catch (e: any) { setError(e?.message ?? String(e)); return false }
   }
 
   const add = async () => {
     if (adding || !draft.trim()) return
     setAdding(true)
     try {
-      await run(async () => { unwrap(await window.codey.memory.codey.add(scope, workspace, draft)) })
-      setDraft('')
+      if (await run(async () => { unwrap(await window.codey.memory.codey.add(scope, workspace, draft)) })) setDraft('')
     } finally { setAdding(false) }
   }
 
@@ -151,6 +142,13 @@ export const MemoryPanel: React.FC<PanelProps> = ({ scope, workspace, title, des
       )}
 
       {banner}
+      {legacyCount > 0 && <div style={{ marginBottom: 12, color: C.fg3, fontSize: 12 }}>
+        {legacyCount} previous Codey memories are available. Original files will be kept.
+        <button disabled={loading || adding} style={smallButton()} onClick={() => void run(async () => {
+          setAdding(true)
+          try { unwrap(await window.codey.memory.codey.importLegacy(scope, workspace)) } finally { setAdding(false) }
+        })}>Import into Co-memo</button>
+      </div>}
 
       <div>
         <textarea
@@ -180,8 +178,8 @@ export const MemoryPanel: React.FC<PanelProps> = ({ scope, workspace, title, des
             <EntryRow
               key={entry.id}
               entry={entry}
-              onSave={async content => { unwrap(await window.codey.memory.codey.update(scope, workspace, entry.id, content)); await reload() }}
-              onRemove={async () => { unwrap(await window.codey.memory.codey.remove(scope, workspace, entry.id)); await reload() }}
+              onSave={content => run(async () => { unwrap(await window.codey.memory.codey.update(scope, workspace, entry.id, content, entry.version!)) })}
+              onRemove={async () => { await run(async () => { unwrap(await window.codey.memory.codey.remove(scope, workspace, entry.id, entry.version!)) }) }}
             />
           ))}
         </div>
@@ -196,7 +194,7 @@ export const CodeyMemorySection: React.FC<{ workspace: string }> = ({ workspace 
     scope="workspace"
     workspace={workspace}
     title="Shared memory"
-    description="What Codey remembers about this workspace and adds to its prompts."
+    description="Project facts and decisions stored in Co-memo for this project path."
   />
 )
 
@@ -204,6 +202,7 @@ export const CodeyMemorySection: React.FC<{ workspace: string }> = ({ workspace 
 export const CodeyMemorySettings: React.FC = () => {
   const [enabled, setEnabled] = useState(true)
   const [autoExtract, setAutoExtract] = useState(true)
+  const [paused, setPaused] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -212,6 +211,7 @@ export const CodeyMemorySettings: React.FC = () => {
         const s = unwrap(await window.codey.memory.codey.settings())
         setEnabled(s.enabled)
         setAutoExtract(s.autoExtract)
+        setPaused(s.paused ?? false)
       } catch (e: any) { setError(e?.message ?? String(e)) }
     })()
   }, [])
@@ -225,6 +225,7 @@ export const CodeyMemorySettings: React.FC = () => {
       const s = unwrap(await window.codey.memory.codey.setSettings(next))
       setEnabled(s.enabled)
       setAutoExtract(s.autoExtract)
+      setPaused(s.paused ?? false)
     } catch (e: any) {
       setEnabled(prev.enabled)
       setAutoExtract(prev.autoExtract)
@@ -253,8 +254,9 @@ export const CodeyMemorySettings: React.FC = () => {
       {error && (
         <div style={{ background: C.red + '22', color: C.red, padding: 8, borderRadius: 6, fontSize: 12, marginBottom: 8 }}>{error}</div>
       )}
-      {row('Use memory in prompts', 'Off means nothing remembered is sent to the agents.', enabled, v => void patch({ enabled: v }))}
-      {row('Record memories automatically', 'Off means only what you add by hand is kept.', autoExtract, v => void patch({ autoExtract: v }), !enabled)}
+      {paused && <p>Co-memo is paused. Resume it in Co-memo to read or save memories.</p>}
+      {row('Use memory in prompts', 'Controls memory that Codey adds to new prompts; existing sessions and agent hooks may already contain notes.', enabled, v => void patch({ enabled: v }))}
+      {row('Allow automatic memory saves', 'Applies to connected Co-memo agents. Agents select durable information; no background extraction runs.', autoExtract, v => void patch({ autoExtract: v }), !enabled)}
     </div>
   )
 }

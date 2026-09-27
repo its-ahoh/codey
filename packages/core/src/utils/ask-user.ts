@@ -2,9 +2,9 @@ const INVOKE_ASK_USER_RE = /<invoke\s+name="AskUserQuestion">\s*<parameter\s+nam
 
 /**
  * Convert hallucinated `<invoke name="AskUserQuestion">` XML blocks emitted by
- * worker LLMs into `[ASK_USER:choice]` markers so the normal parsing path handles them.
+ * bot LLMs into `[ASK_USER:choice]` markers so the normal parsing path handles them.
  */
-export function normalizeWorkerOutput(output: string): string {
+export function normalizeBotOutput(output: string): string {
   if (!output.includes('<invoke name="AskUserQuestion">')) return output;
   return output.replace(INVOKE_ASK_USER_RE, (_, rawJson) => {
     try {
@@ -27,7 +27,7 @@ export function normalizeWorkerOutput(output: string): string {
 }
 
 export interface AskUser {
-  /** Worker output before the marker line (joined with \n, trimmed of trailing whitespace). */
+  /** Bot output before the marker line (joined with \n, trimmed of trailing whitespace). */
   preamble: string;
   /** The question text after `[ASK_USER]:` (or `[ASK_USER:choice]:` before the first `|`). */
   question: string;
@@ -37,7 +37,7 @@ export interface AskUser {
 
 export interface AskTeam {
   preamble: string;
-  /** The teammate the asking worker has nominated to answer. */
+  /** The teammate the asking bot has nominated to answer. */
   target: string;
   question: string;
 }
@@ -60,12 +60,12 @@ function splitChoicePayload(payload: string): { question: string; options?: stri
 }
 
 /**
- * Detect a `[ASK_USER]: <question>` or `[ASK_USER:choice]: <question> | <option1> | <option2>...` marker line in worker output.
+ * Detect a `[ASK_USER]: <question>` or `[ASK_USER:choice]: <question> | <option1> | <option2>...` marker line in bot output.
  * Returns null when no marker is present or the question is blank.
  */
 export function parseAskUser(output: string): AskUser | null {
   if (!output) return null;
-  const lines = normalizeWorkerOutput(output).split(/\r?\n/);
+  const lines = normalizeBotOutput(output).split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
     const m = lines[i].match(USER_MARKER_RE);
     if (!m) continue;
@@ -90,7 +90,7 @@ export function parseAskUser(output: string): AskUser | null {
  */
 export function parseAsk(output: string): AskMarker | null {
   if (!output) return null;
-  const lines = normalizeWorkerOutput(output).split(/\r?\n/);
+  const lines = normalizeBotOutput(output).split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const m = line.match(USER_MARKER_RE);

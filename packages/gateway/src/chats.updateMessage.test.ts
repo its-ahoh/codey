@@ -16,14 +16,14 @@ describe('ChatManager.updateMessage', () => {
 
   it('patches a message in place and persists', () => {
     const chat = mgr.create({ workspaceName: 'ws', selection: { type: 'team', name: 't' }, title: 't' });
-    mgr.appendMessage(chat.id, { id: 'm1', role: 'assistant', content: '', timestamp: 1, toolCalls: [], workerStatus: 'running' });
+    mgr.appendMessage(chat.id, { id: 'm1', role: 'assistant', content: '', timestamp: 1, toolCalls: [], botStatus: 'running' });
 
-    mgr.updateMessage(chat.id, 'm1', { content: 'hello', workerStatus: 'done', isComplete: true });
+    mgr.updateMessage(chat.id, 'm1', { content: 'hello', botStatus: 'done', isComplete: true });
 
     const after = mgr.get(chat.id)!;
     const m = after.messages.find(x => x.id === 'm1')!;
     expect(m.content).toBe('hello');
-    expect(m.workerStatus).toBe('done');
+    expect(m.botStatus).toBe('done');
     expect(m.isComplete).toBe(true);
 
     const onDisk = JSON.parse(fs.readFileSync(path.join(root, 'ws', 'chats', `${chat.id}.json`), 'utf8'));

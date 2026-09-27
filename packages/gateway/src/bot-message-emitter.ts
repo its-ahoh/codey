@@ -5,15 +5,15 @@ import type { ChatStreamEvent } from './chat-runner';
 type Sink = (e: ChatStreamEvent) => void;
 
 /** Minimal store surface the emitter needs (satisfied by ChatManager). */
-export interface WorkerMessageStore {
+export interface BotMessageStore {
   appendMessage(chatId: string, m: ChatMessage): unknown;
   updateMessage(chatId: string, id: string, patch: Partial<ChatMessage>): unknown;
 }
 
-interface Buf { messageId: string; step: number; worker: string; content: string; toolCalls: ToolCallEntry[]; thinking: string; }
+interface Buf { messageId: string; step: number; bot: string; content: string; toolCalls: ToolCallEntry[]; thinking: string; }
 
-export interface BeginWorkerArgs { step: number; worker: string; reason?: string; agent?: ChatMessage['agent']; model?: string; }
-export interface EndWorkerMeta {
+export interface BeginBotArgs { step: number; bot: string; reason?: string; agent?: ChatMessage['agent']; model?: string; }
+export interface EndBotMeta {
   tokens?: number;
   durationSec?: number;
   failureReason?: string;
@@ -21,73 +21,73 @@ export interface EndWorkerMeta {
 }
 
 /**
- * Owns the per-worker chat-message lifecycle for a single team run. All
- * worker-scoped events (stream/thinking/tool) flow through here so they carry a
- * stable, backend-authoritative `messageId`. Serial modes use `beginWorker`
- * (active message); parallel uses `teamStart` (pre-created, routed by worker
+ * Owns the per-bot chat-message lifecycle for a single team run. All
+ * bot-scoped events (stream/thinking/tool) flow through here so they carry a
+ * stable, backend-authoritative `messageId`. Serial modes use `beginBot`
+ * (active message); parallel uses `teamStart` (pre-created, routed by bot
  * name).
  */
-export class WorkerMessageEmitter {
+export class BotMessageEmitter {
   private active: Buf | null = null;
-  private byWorker = new Map<string, Buf>();
+  private byBot = new Map<string, Buf>();
 
   constructor(
     private sink: Sink,
-    private store: WorkerMessageStore,
+    private store: BotMessageStore,
     private chatId: string,
     private meta: { teamTurnId: string; teamName: string; mode: ChatMessage['teamMode'] },
     private newId: () => string = randomUUID,
   ) {}
 
   /** Pre-create the full roster so the UI can show every member immediately. */
-  teamStart(workers: Array<{ step: number; worker: string; agent?: ChatMessage['agent']; model?: string }>): void {
-    const list = workers.map(w => {
+  teamStart(bots: Array<{ step: number; bot: string; agent?: ChatMessage['agent']; model?: string }>): void {
+    const list = bots.map(w => {
       const initialStatus = this.meta.mode === 'roundtable' ? 'running' : 'pending';
-      const buf = this.createStub(w.step, w.worker, undefined, w.agent, w.model, initialStatus);
-      this.byWorker.set(w.worker, buf);
-      return { messageId: buf.messageId, step: w.step, worker: w.worker, agent: w.agent, model: w.model };
+      const buf = this.createStub(w.step, w.bot, undefined, w.agent, w.model, initialStatus);
+      this.byBot.set(w.bot, buf);
+      return { messageId: buf.messageId, step: w.step, bot: w.bot, agent: w.agent, model: w.model };
     });
-    this.sink({ type: 'team_start', chatId: this.chatId, teamTurnId: this.meta.teamTurnId, teamName: this.meta.teamName, mode: this.meta.mode!, workers: list });
+    this.sink({ type: 'team_start', chatId: this.chatId, teamTurnId: this.meta.teamTurnId, teamName: this.meta.teamName, mode: this.meta.mode!, bots: list });
   }
 
-  /** Start a worker (serial). Flushes any still-active worker as done first. */
-  beginWorker(args: BeginWorkerArgs): string {
-    if (this.active) this.endWorker('done');
+  /** Start a bot (serial). Flushes any still-active bot as done first. */
+  beginBot(args: BeginBotArgs): string {
+    if (this.active) this.endBot('done');
     // Serial teams already have pending roster stubs. Reuse the member's first
     // stub when their turn arrives so the card gains live content in place.
-    const waiting = this.byWorker.get(args.worker);
-    const buf = waiting ?? this.createStub(args.step, args.worker, args.reason, args.agent, args.model, 'running');
+    const waiting = this.byBot.get(args.bot);
+    const buf = waiting ?? this.createStub(args.step, args.bot, args.reason, args.agent, args.model, 'running');
     if (waiting) {
-      this.byWorker.delete(args.worker);
+      this.byBot.delete(args.bot);
       buf.step = args.step;
       this.store.updateMessage(this.chatId, buf.messageId, {
-        step: args.step, workerStatus: 'running', isComplete: false,
+        step: args.step, botStatus: 'running', isComplete: false,
         ...(args.reason ? { advisorReason: args.reason } : {}),
         ...(args.agent ? { agent: args.agent } : {}),
         ...(args.model ? { model: args.model } : {}),
       });
     }
     this.active = buf;
-    this.sink({ type: 'worker_start', chatId: this.chatId, teamTurnId: this.meta.teamTurnId, messageId: buf.messageId, step: args.step, worker: args.worker, reason: args.reason, agent: args.agent, model: args.model });
+    this.sink({ type: 'bot_start', chatId: this.chatId, teamTurnId: this.meta.teamTurnId, messageId: buf.messageId, step: args.step, bot: args.bot, reason: args.reason, agent: args.agent, model: args.model });
     return buf.messageId;
   }
 
-  onStream(token: string, worker?: string): void {
-    const buf = this.target(worker);
+  onStream(token: string, bot?: string): void {
+    const buf = this.target(bot);
     if (!buf) return;
     buf.content += token;
     this.sink({ type: 'stream', chatId: this.chatId, token, messageId: buf.messageId, step: buf.step });
   }
 
-  onThinking(token: string, step: number, worker?: string): void {
-    const buf = this.target(worker);
+  onThinking(token: string, step: number, bot?: string): void {
+    const buf = this.target(bot);
     if (!buf) return;
     buf.thinking += token;
     this.sink({ type: 'thinking', chatId: this.chatId, token, step, messageId: buf.messageId });
   }
 
-  onTool(entry: { type: 'tool_start' | 'tool_end'; tool?: string; message?: string; input?: Record<string, unknown>; output?: string; writes?: string[]; writeDiffs?: WriteDiff[] }, worker?: string): void {
-    const buf = this.target(worker);
+  onTool(entry: { type: 'tool_start' | 'tool_end'; tool?: string; message?: string; input?: Record<string, unknown>; output?: string; writes?: string[]; writeDiffs?: WriteDiff[] }, bot?: string): void {
+    const buf = this.target(bot);
     if (!buf) return;
     const tc: ToolCallEntry = {
       id: this.newId(), type: entry.type, tool: entry.tool, message: entry.message ?? '', input: entry.input, output: entry.output,
@@ -103,9 +103,9 @@ export class WorkerMessageEmitter {
     });
   }
 
-  /** Persist and publish the authoritative board after a worker contributes. */
-  updateBlackboard(blackboard: BlackboardSnapshot, worker?: string): void {
-    const buf = this.target(worker);
+  /** Persist and publish the authoritative board after a bot contributes. */
+  updateBlackboard(blackboard: BlackboardSnapshot, bot?: string): void {
+    const buf = this.target(bot);
     if (!buf) return;
     this.store.updateMessage(this.chatId, buf.messageId, { teamBlackboard: blackboard });
     this.sink({
@@ -117,41 +117,41 @@ export class WorkerMessageEmitter {
     });
   }
 
-  /** Finalize a worker. For parallel pass `worker`; for serial it finalizes the active one. */
-  endWorker(status: 'done' | 'failed' | 'askedUser', extra?: EndWorkerMeta, worker?: string): void {
-    const buf = worker ? this.byWorker.get(worker) : this.active;
+  /** Finalize a bot. For parallel pass `bot`; for serial it finalizes the active one. */
+  endBot(status: 'done' | 'failed' | 'askedUser', extra?: EndBotMeta, bot?: string): void {
+    const buf = bot ? this.byBot.get(bot) : this.active;
     if (!buf) return;
     this.store.updateMessage(this.chatId, buf.messageId, {
       content: buf.content,
       toolCalls: buf.toolCalls,
       thinking: buf.thinking || undefined,
-      workerStatus: status,
+      botStatus: status,
       isComplete: true,
       ...(extra?.tokens != null ? { tokens: extra.tokens } : {}),
       ...(extra?.durationSec != null ? { durationSec: extra.durationSec } : {}),
-      ...(extra?.failureReason ? { workerFailureReason: extra.failureReason } : {}),
-      ...(extra?.nextUserAction ? { workerNextUserAction: extra.nextUserAction } : {}),
+      ...(extra?.failureReason ? { botFailureReason: extra.failureReason } : {}),
+      ...(extra?.nextUserAction ? { botNextUserAction: extra.nextUserAction } : {}),
     });
-    this.sink({ type: 'worker_end', chatId: this.chatId, messageId: buf.messageId, step: buf.step, status, tokens: extra?.tokens, durationSec: extra?.durationSec, failureReason: extra?.failureReason, nextUserAction: extra?.nextUserAction });
+    this.sink({ type: 'bot_end', chatId: this.chatId, messageId: buf.messageId, step: buf.step, status, tokens: extra?.tokens, durationSec: extra?.durationSec, failureReason: extra?.failureReason, nextUserAction: extra?.nextUserAction });
     if (buf === this.active) this.active = null;
-    if (worker) this.byWorker.delete(worker);
+    if (bot) this.byBot.delete(bot);
   }
 
-  /** The message id of the currently-active serial worker (for resume mapping). */
+  /** The message id of the currently-active serial bot (for resume mapping). */
   get activeMessageId(): string | null { return this.active?.messageId ?? null; }
 
-  private target(worker?: string): Buf | null {
-    return worker ? (this.byWorker.get(worker) ?? null) : this.active;
+  private target(bot?: string): Buf | null {
+    return bot ? (this.byBot.get(bot) ?? null) : this.active;
   }
 
-  private createStub(step: number, worker: string, reason?: string, agent?: ChatMessage['agent'], model?: string, status: NonNullable<ChatMessage['workerStatus']> = 'running'): Buf {
+  private createStub(step: number, bot: string, reason?: string, agent?: ChatMessage['agent'], model?: string, status: NonNullable<ChatMessage['botStatus']> = 'running'): Buf {
     const messageId = this.newId();
-    const buf: Buf = { messageId, step, worker, content: '', toolCalls: [], thinking: '' };
+    const buf: Buf = { messageId, step, bot, content: '', toolCalls: [], thinking: '' };
     const stub: ChatMessage = {
       id: messageId, role: 'assistant', content: '', timestamp: Date.now(),
       toolCalls: [], isComplete: false,
       teamTurnId: this.meta.teamTurnId, teamName: this.meta.teamName, teamMode: this.meta.mode,
-      step, worker, workerStatus: status,
+      step, bot, botStatus: status,
       ...(agent ? { agent } : {}),
       ...(model ? { model } : {}),
       ...(reason ? { advisorReason: reason } : {}),

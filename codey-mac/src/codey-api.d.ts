@@ -23,6 +23,7 @@ export type { SkillUsage, SkillUsageMap }
 export type { MemoryEntry, CodeyMemoryItem, MemoryStoreScope }
 
 export interface CodeyMemorySettings {
+  paused?: boolean
   enabled: boolean
   autoExtract: boolean
 }
@@ -312,7 +313,7 @@ export interface ChromePageSnapshot {
 declare global {
   interface Window {
     codey: {
-      workers: {
+      bots: {
         list: () => Promise<IpcResult<any[]>>
         get: (name: string) => Promise<IpcResult<any>>
         save: (name: string, personality: any, config: any) => Promise<IpcResult<void>>
@@ -443,10 +444,11 @@ declare global {
         }
         /** Codey's own remembered entries — what it injects into prompts. */
         codey: {
-          list: (scope: MemoryStoreScope, workspace?: string) => Promise<IpcResult<{ entries: CodeyMemoryItem[] }>>
+          list: (scope: MemoryStoreScope, workspace?: string) => Promise<IpcResult<{ entries: CodeyMemoryItem[]; legacyCount?: number }>>
+          importLegacy: (scope: MemoryStoreScope, workspace?: string) => Promise<IpcResult<{ imported: number }>>
           add: (scope: MemoryStoreScope, workspace: string | undefined, content: string, type?: string) => Promise<IpcResult<CodeyMemoryItem>>
-          update: (scope: MemoryStoreScope, workspace: string | undefined, id: string, content: string, type?: string) => Promise<IpcResult<{ updated: boolean }>>
-          remove: (scope: MemoryStoreScope, workspace: string | undefined, id: string) => Promise<IpcResult<{ removed: boolean }>>
+          update: (scope: MemoryStoreScope, workspace: string | undefined, id: string, content: string, version: number) => Promise<IpcResult<{ updated: boolean }>>
+          remove: (scope: MemoryStoreScope, workspace: string | undefined, id: string, version: number) => Promise<IpcResult<{ removed: boolean }>>
           settings: () => Promise<IpcResult<CodeyMemorySettings>>
           setSettings: (patch: Partial<CodeyMemorySettings>) => Promise<IpcResult<CodeyMemorySettings>>
         }

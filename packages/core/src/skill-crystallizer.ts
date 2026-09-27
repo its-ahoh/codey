@@ -65,7 +65,7 @@ export interface RunTrace {
   promptSummary: string;
   /** First ~300 chars of the agent's output. A preview, not a structural analysis. */
   outputPreview: string;
-  workerSequence?: string[];
+  botSequence?: string[];
   /** Tool names in call order, consecutive repeats collapsed, capped at a
    *  fixed bound. A skill IS a procedure, so what the run did is the
    *  signal the distiller actually needs — the message text is context. */
@@ -557,8 +557,8 @@ const TRACE_PREVIEW_CHARS = 200;
 function formatTracesForPrompt(traces: RunTrace[]): string {
   return traces.map(t => {
     const parts = [`- ${t.promptSummary} [${t.mode}]`];
-    if (t.workerSequence && t.workerSequence.length > 0) {
-      parts.push(`  Steps: ${t.workerSequence.join(' → ')}`);
+    if (t.botSequence && t.botSequence.length > 0) {
+      parts.push(`  Steps: ${t.botSequence.join(' → ')}`);
     }
     if (t.toolSequence && t.toolSequence.length > 0) {
       parts.push(`  Did: ${t.toolSequence.join(' → ')}`);
@@ -631,7 +631,7 @@ function isLowSignalPrompt(text: string): boolean {
  *  that both says nothing and did nothing is dropped. */
 export function isLowSignalTrace(trace: RunTrace): boolean {
   if (trace.toolSequence && trace.toolSequence.length > 0) return false;
-  if (trace.workerSequence && trace.workerSequence.length > 0) return false;
+  if (trace.botSequence && trace.botSequence.length > 0) return false;
   return isLowSignalPrompt(trace.promptSummary);
 }
 
@@ -874,7 +874,7 @@ Run context:
 - Task: %TASK_SUMMARY%
 - Output preview: %OUTPUT_PREVIEW%
 - Mode: %MODE%
-%WORKER_STEPS%%TOOL_STEPS%
+%BOT_STEPS%%TOOL_STEPS%
 
 Does the run suggest a better version of the steps? If yes, return improved steps. If the current steps are fine, say no change. Only propose a change when the run clearly revealed a missing, wrong, or better step — do not rephrase working steps.
 
@@ -890,14 +890,14 @@ export async function evolveSkill(
   skill: SkillEntry,
   trace: RunTrace,
 ): Promise<string | null> {
-  let workerPart = '';
-  if (trace.workerSequence && trace.workerSequence.length > 0) {
-    workerPart = `- Worker sequence: ${trace.workerSequence.join(' → ')}`;
+  let botPart = '';
+  if (trace.botSequence && trace.botSequence.length > 0) {
+    botPart = `- Bot sequence: ${trace.botSequence.join(' → ')}`;
   }
   // What the run DID is the strongest evidence that a step is missing or wrong.
   let toolPart = '';
   if (trace.toolSequence && trace.toolSequence.length > 0) {
-    toolPart = `${workerPart ? '\n' : ''}- Tools called: ${trace.toolSequence.join(' → ')}`;
+    toolPart = `${botPart ? '\n' : ''}- Tools called: ${trace.toolSequence.join(' → ')}`;
   }
   const composed = fillPrompt(EVOLVE_PROMPT, {
     '%SKILL_NAME%': skill.name,
@@ -907,7 +907,7 @@ export async function evolveSkill(
     '%TASK_SUMMARY%': trace.promptSummary,
     '%OUTPUT_PREVIEW%': trace.outputPreview,
     '%MODE%': trace.mode,
-    '%WORKER_STEPS%': workerPart,
+    '%BOT_STEPS%': botPart,
     '%TOOL_STEPS%': toolPart,
   });
 

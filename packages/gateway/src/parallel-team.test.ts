@@ -17,9 +17,9 @@ function makeRunner(overrides: Partial<ConstructorParameters<typeof ParallelTeam
     members: ['a', 'b'],
     topic: 'Decide X',
     settings: { maxDurationMs: 1000, idleTimeoutMs: 500, advisorPollMs: 200, ...settingsOverrides },
-    workerRunner: stubRunner,
+    botRunner: stubRunner,
     advisorRunner: vi.fn().mockResolvedValue({ success: true, output: '{"action":"terminate","final_message":"end","reason":"drift"}' }),
-    buildWorkerPrompt: () => 'WORKER',
+    buildBotPrompt: () => 'BOT',
     onUserQuestion: vi.fn(),
     onFinal: vi.fn(),
     ...overrides,
@@ -36,13 +36,13 @@ describe('ParallelTeamRunner', () => {
     await r.stop('user_cancel');
   });
 
-  it('dispatches each member exactly once via workerRunner with its built prompt', async () => {
-    const workerRunner = vi.fn().mockResolvedValue({ success: true, output: '' });
-    const buildWorkerPrompt = vi.fn((w: string) => `PROMPT-${w}`);
-    const r = makeRunner({ workerRunner, buildWorkerPrompt });
+  it('dispatches each member exactly once via botRunner with its built prompt', async () => {
+    const botRunner = vi.fn().mockResolvedValue({ success: true, output: '' });
+    const buildBotPrompt = vi.fn((w: string) => `PROMPT-${w}`);
+    const r = makeRunner({ botRunner, buildBotPrompt });
     await r.start();
     await r.stop('user_cancel');
-    const calls = workerRunner.mock.calls.map(c => c[0].prompt);
+    const calls = botRunner.mock.calls.map(c => c[0].prompt);
     expect(calls.sort()).toEqual(['PROMPT-a', 'PROMPT-b']);
   });
 
@@ -99,11 +99,11 @@ describe('ParallelTeamRunner', () => {
 
   it('terminates on max_duration when settings.maxDurationMs elapses', async () => {
     const advisorRunner = vi.fn().mockImplementation(() => new Promise(() => {/* never resolves */}));
-    const workerRunner = vi.fn().mockImplementation(() => new Promise(() => {/* never resolves */}));
+    const botRunner = vi.fn().mockImplementation(() => new Promise(() => {/* never resolves */}));
     const onFinal = vi.fn();
     const r = makeRunner({
       advisorRunner,
-      workerRunner,
+      botRunner,
       onFinal,
     }, { maxDurationMs: 200, idleTimeoutMs: 10_000, advisorPollMs: 10_000 });
     await r.start();
@@ -113,11 +113,11 @@ describe('ParallelTeamRunner', () => {
 
   it('terminates on timeout when idleTimeoutMs elapses with no file mtime change', async () => {
     const advisorRunner = vi.fn().mockImplementation(() => new Promise(() => {/* never resolves */}));
-    const workerRunner = vi.fn().mockImplementation(() => new Promise(() => {/* never resolves */}));
+    const botRunner = vi.fn().mockImplementation(() => new Promise(() => {/* never resolves */}));
     const onFinal = vi.fn();
     const r = makeRunner({
       advisorRunner,
-      workerRunner,
+      botRunner,
       onFinal,
     }, { maxDurationMs: 10_000, idleTimeoutMs: 250, advisorPollMs: 10_000 });
     await r.start();
@@ -151,7 +151,7 @@ describe('ParallelTeamRunner', () => {
     expect(topic).toMatch(/## Continuation/);
     expect(topic).toContain('second round');
     expect(fs.readFileSync(path.join(wsRoot, 'demo', 'chats', 'c1', 'discussion', 'opinions', 'a.md'), 'utf-8')).toContain('prior a opinion');
-    // New worker b gets a fresh opinion file
+    // New bot b gets a fresh opinion file
     expect(fs.existsSync(path.join(wsRoot, 'demo', 'chats', 'c1', 'discussion', 'opinions', 'b.md'))).toBe(true);
     // Control reset to running with bumped revision
     const ctrl = await readControl(path.join(wsRoot, 'demo', 'chats', 'c1', 'discussion', 'control.md'));

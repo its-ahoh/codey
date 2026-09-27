@@ -15,13 +15,13 @@ export type ChatStreamEvent =
   | { type: 'checklist'; chatId: string; message: string; items: ChecklistItem[] }
   | { type: 'stream'; chatId: string; token: string; messageId?: string; step?: number }
   | { type: 'thinking'; chatId: string; token: string; step?: number; messageId?: string }
-  | { type: 'team_start'; chatId: string; teamTurnId: string; teamName: string; mode: 'sequential' | 'graph' | 'auto' | 'roundtable'; workers?: Array<{ messageId: string; step: number; worker: string; agent?: 'claude-code' | 'opencode' | 'codex' | 'pi'; model?: string }> }
-  | { type: 'worker_start'; chatId: string; teamTurnId: string; messageId: string; step: number; worker: string; agent?: 'claude-code' | 'opencode' | 'codex' | 'pi'; model?: string; reason?: string }
-  | { type: 'worker_end'; chatId: string; messageId: string; step: number; status: 'done' | 'failed' | 'askedUser'; tokens?: number; durationSec?: number; failureReason?: string; nextUserAction?: { text: string; options?: string[] } }
+  | { type: 'team_start'; chatId: string; teamTurnId: string; teamName: string; mode: 'sequential' | 'graph' | 'auto' | 'roundtable'; bots?: Array<{ messageId: string; step: number; bot: string; agent?: 'claude-code' | 'opencode' | 'codex' | 'pi'; model?: string }> }
+  | { type: 'bot_start'; chatId: string; teamTurnId: string; messageId: string; step: number; bot: string; agent?: 'claude-code' | 'opencode' | 'codex' | 'pi'; model?: string; reason?: string }
+  | { type: 'bot_end'; chatId: string; messageId: string; step: number; status: 'done' | 'failed' | 'askedUser'; tokens?: number; durationSec?: number; failureReason?: string; nextUserAction?: { text: string; options?: string[] } }
   | { type: 'blackboard_update'; chatId: string; teamTurnId: string; messageId: string; blackboard: BlackboardSnapshot }
   | { type: 'team_end'; chatId: string; teamTurnId: string; summary: TeamRunSummary; taskBrief?: TaskBrief }
   | { type: 'workspace_ready'; chatId: string }
-  | { type: 'done'; chatId: string; response: string; worker?: string; workerStatus?: 'pending' | 'running' | 'done' | 'failed' | 'askedUser'; thinking?: string; tokens?: number; durationSec?: number; agent?: 'claude-code' | 'opencode' | 'codex' | 'pi'; model?: string; title?: string; choices?: string[]; userQuestion?: { question: string; options: Array<{ label: string; description?: string }> }; fallback?: { from: string; to: string; reason?: string }; teamTurnId?: string }
+  | { type: 'done'; chatId: string; response: string; bot?: string; botStatus?: 'pending' | 'running' | 'done' | 'failed' | 'askedUser'; thinking?: string; tokens?: number; durationSec?: number; agent?: 'claude-code' | 'opencode' | 'codex' | 'pi'; model?: string; title?: string; choices?: string[]; userQuestion?: { question: string; options: Array<{ label: string; description?: string }> }; fallback?: { from: string; to: string; reason?: string }; teamTurnId?: string }
   | { type: 'stopped'; chatId: string; userMessageId: string; text: string }
   | { type: 'error'; chatId: string; message: string }
   | { type: 'permission_denials'; chatId: string; denials: Array<{ toolName: string; toolInput?: Record<string, unknown> }> };
@@ -29,7 +29,7 @@ export type ChatStreamEvent =
 export type QQStreamEvent =
   | { type: 'stream'; chatId: string; token: string }
   | { type: 'tool'; chatId: string; message: string; tool?: string }
-  | { type: 'done'; chatId: string; response: string; worker?: string; workerStatus?: 'pending' | 'running' | 'done' | 'failed' | 'askedUser'; tokens?: number; durationSec?: number }
+  | { type: 'done'; chatId: string; response: string; bot?: string; botStatus?: 'pending' | 'running' | 'done' | 'failed' | 'askedUser'; tokens?: number; durationSec?: number }
   | { type: 'stopped'; chatId: string }
   | { type: 'error'; chatId: string; message: string };
 
@@ -39,12 +39,12 @@ function unwrap<T>(result: { ok: true; data: T } | { ok: false; error: string })
 }
 
 // Type aliases for the shapes returned by core
-export interface WorkerPersonality { role: string; soul: string; instructions: string }
-export interface WorkerConfig { avatar?: import('../components/workerAvatarModel').WorkerAvatarConfig; tools: string[]; dispatchHint?: string }
-export interface WorkerDto {
+export interface BotPersonality { role: string; soul: string; instructions: string }
+export interface BotConfig { avatar?: import('../components/botAvatarModel').BotAvatarConfig; tools: string[]; dispatchHint?: string }
+export interface BotDto {
   name: string
-  personality: WorkerPersonality
-  config: WorkerConfig
+  personality: BotPersonality
+  config: BotConfig
 }
 
 export const apiService = {
@@ -62,21 +62,21 @@ export const apiService = {
       window.codey.qq.onEvent(handler),
   },
 
-  // Workers
-  listWorkers: async (): Promise<WorkerDto[]> =>
-    unwrap(await window.codey.workers.list()),
+  // Bots
+  listBots: async (): Promise<BotDto[]> =>
+    unwrap(await window.codey.bots.list()),
 
-  updateWorker: async (name: string, body: { personality: WorkerPersonality; config: WorkerConfig }): Promise<void> =>
-    unwrap(await window.codey.workers.save(name, body.personality, body.config)),
+  updateBot: async (name: string, body: { personality: BotPersonality; config: BotConfig }): Promise<void> =>
+    unwrap(await window.codey.bots.save(name, body.personality, body.config)),
 
-  deleteWorker: async (name: string): Promise<void> =>
-    unwrap(await window.codey.workers.delete(name)),
+  deleteBot: async (name: string): Promise<void> =>
+    unwrap(await window.codey.bots.delete(name)),
 
-  renameWorker: async (oldName: string, newName: string): Promise<void> =>
-    unwrap(await window.codey.workers.rename(oldName, newName)),
+  renameBot: async (oldName: string, newName: string): Promise<void> =>
+    unwrap(await window.codey.bots.rename(oldName, newName)),
 
-  generateWorker: async (prompt: string): Promise<WorkerDto> =>
-    unwrap(await window.codey.workers.generate(prompt)),
+  generateBot: async (prompt: string): Promise<BotDto> =>
+    unwrap(await window.codey.bots.generate(prompt)),
 
   // Workspaces
   getWorkspaces: async (): Promise<string[]> =>

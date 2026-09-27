@@ -1,7 +1,7 @@
 /**
  * Per-team-run shared blackboard.
  *
- * Workers emit single-line markers in their output to contribute structured
+ * Bots emit single-line markers in their output to contribute structured
  * facts, decisions, handoffs, and open questions. The blackboard collects
  * them across steps, exposes a compact view for prompt injection on the next
  * step, and renders a clean summary for the user when the run completes.
@@ -13,13 +13,13 @@
 export type MarkerKind = 'fact' | 'decision' | 'handoff' | 'open';
 
 export interface BlackboardEntry {
-  worker: string;
+  bot: string;
   step: number;
   text: string;
 }
 
 export interface HandoffEntry extends BlackboardEntry {
-  /** Target worker name; null means "for whoever runs next". */
+  /** Target bot name; null means "for whoever runs next". */
   to: string | null;
 }
 
@@ -36,7 +36,7 @@ export interface ParseResult {
   stripped: string;
 }
 
-// Workers often emit markers as list items (`- [DECISION]: …`, `1. [FACT]: …`)
+// Bots often emit markers as list items (`- [DECISION]: …`, `1. [FACT]: …`)
 // rather than at the start of the line. Tolerate an optional leading bullet so
 // the tag never leaks into the user-visible prose. The required `]: <body>`
 // shape excludes real markdown checkboxes like `- [ ]` / `- [x]`.
@@ -44,7 +44,7 @@ const MARKER_RE = /^\s*(?:[-*•]\s+|\d+[.)]\s+)?\[(FACT|DECISION|OPEN|HANDOFF(?
 
 /**
  * Pull `[FACT]:`, `[DECISION]:`, `[OPEN]:`, `[HANDOFF: name]:` markers out
- * of free-form worker output. Lines that match are removed from the prose.
+ * of free-form bot output. Lines that match are removed from the prose.
  */
 export function parseMarkers(text: string): ParseResult {
   if (!text) return { markers: [], stripped: text ?? '' };
@@ -111,22 +111,22 @@ export class TeamBlackboard {
   }
 
   /**
-   * Ingest a worker's raw output. Markers are parsed, recorded, and removed
+   * Ingest a bot's raw output. Markers are parsed, recorded, and removed
    * from the returned `stripped` text — callers should use `stripped` as the
-   * user-visible / next-worker-visible output.
+   * user-visible / next-bot-visible output.
    */
-  ingest(worker: string, step: number, output: string): {
+  ingest(bot: string, step: number, output: string): {
     stripped: string;
     added: { facts: number; decisions: number; handoffs: number; open: number };
   } {
     const { markers, stripped } = parseMarkers(output);
     const added = { facts: 0, decisions: 0, handoffs: 0, open: 0 };
     for (const m of markers) {
-      if (m.kind === 'fact') { this.facts.push({ worker, step, text: m.text }); added.facts++; }
-      else if (m.kind === 'decision') { this.decisions.push({ worker, step, text: m.text }); added.decisions++; }
-      else if (m.kind === 'open') { this.open.push({ worker, step, text: m.text }); added.open++; }
+      if (m.kind === 'fact') { this.facts.push({ bot, step, text: m.text }); added.facts++; }
+      else if (m.kind === 'decision') { this.decisions.push({ bot, step, text: m.text }); added.decisions++; }
+      else if (m.kind === 'open') { this.open.push({ bot, step, text: m.text }); added.open++; }
       else if (m.kind === 'handoff') {
-        this.handoffs.push({ worker, step, text: m.text, to: m.to ?? null });
+        this.handoffs.push({ bot, step, text: m.text, to: m.to ?? null });
         added.handoffs++;
       }
     }
@@ -152,15 +152,15 @@ export class TeamBlackboard {
   /**
    * Render only the entries appended AFTER `sinceCount` total entries.
    * Each kind is sliced from its current position back to where it was
-   * when sinceCount was recorded — see `renderForWorker` for the full
-   * render. Returns empty string when nothing is new for this worker.
+   * when sinceCount was recorded — see `renderForBot` for the full
+   * render. Returns empty string when nothing is new for this bot.
    *
    * Note: `sinceCount` is the snapshot of `totalCount()` at the previous
    * call, so the slice indices are recomputed from the running totals
    * each kind contributes — order matters: facts → decisions → handoffs
    * → open, matching `totalCount()`.
    */
-  renderDeltaForWorker(workerName: string, sinceCount: number): string {
+  renderDeltaForBot(botName: string, sinceCount: number): string {
     if (sinceCount >= this.totalCount()) return '';
 
     // Walk the kinds in the same order totalCount() sums them. For each
@@ -177,7 +177,7 @@ export class TeamBlackboard {
     const newHandoffsAll = sliceTail(this.handoffs);
     const newOpen = sliceTail(this.open);
 
-    const newHandoffs = newHandoffsAll.filter(h => h.to === workerName || h.to === null);
+    const newHandoffs = newHandoffsAll.filter(h => h.to === botName || h.to === null);
 
     if (newFacts.length === 0 && newDecisions.length === 0 && newHandoffs.length === 0 && newOpen.length === 0) {
       return '';
@@ -185,47 +185,47 @@ export class TeamBlackboard {
     const lines: string[] = ['## Blackboard updates since your last turn'];
     if (newFacts.length > 0) {
       lines.push('', '### New facts');
-      for (const f of newFacts) lines.push(`- (${f.worker}) ${f.text}`);
+      for (const f of newFacts) lines.push(`- (${f.bot}) ${f.text}`);
     }
     if (newDecisions.length > 0) {
       lines.push('', '### New decisions');
-      for (const d of newDecisions) lines.push(`- (${d.worker}) ${d.text}`);
+      for (const d of newDecisions) lines.push(`- (${d.bot}) ${d.text}`);
     }
     if (newHandoffs.length > 0) {
       lines.push('', '### New handoffs to you');
-      for (const h of newHandoffs) lines.push(`- from ${h.worker}: ${h.text}`);
+      for (const h of newHandoffs) lines.push(`- from ${h.bot}: ${h.text}`);
     }
     if (newOpen.length > 0) {
       lines.push('', '### New open questions');
-      for (const o of newOpen) lines.push(`- (${o.worker}) ${o.text}`);
+      for (const o of newOpen) lines.push(`- (${o.bot}) ${o.text}`);
     }
     return lines.join('\n');
   }
 
   /**
-   * Compact markdown block to inject into the NEXT worker's prompt.
-   * Handoffs filter to those addressed to this worker (or to anyone).
+   * Compact markdown block to inject into the NEXT bot's prompt.
+   * Handoffs filter to those addressed to this bot (or to anyone).
    */
-  renderForWorker(workerName: string): string {
+  renderForBot(botName: string): string {
     if (this.isEmpty()) return '';
     const lines: string[] = ['## Team Blackboard (so far)'];
 
     if (this.facts.length > 0) {
       lines.push('', '### Facts');
-      for (const f of this.facts) lines.push(`- (${f.worker}) ${f.text}`);
+      for (const f of this.facts) lines.push(`- (${f.bot}) ${f.text}`);
     }
     if (this.decisions.length > 0) {
       lines.push('', '### Decisions');
-      for (const d of this.decisions) lines.push(`- (${d.worker}) ${d.text}`);
+      for (const d of this.decisions) lines.push(`- (${d.bot}) ${d.text}`);
     }
     if (this.open.length > 0) {
       lines.push('', '### Open questions');
-      for (const o of this.open) lines.push(`- (${o.worker}) ${o.text}`);
+      for (const o of this.open) lines.push(`- (${o.bot}) ${o.text}`);
     }
-    const myHandoffs = this.handoffs.filter(h => h.to === workerName || h.to === null);
+    const myHandoffs = this.handoffs.filter(h => h.to === botName || h.to === null);
     if (myHandoffs.length > 0) {
       lines.push('', '### Handoffs addressed to you');
-      for (const h of myHandoffs) lines.push(`- from ${h.worker}: ${h.text}`);
+      for (const h of myHandoffs) lines.push(`- from ${h.bot}: ${h.text}`);
     }
     return lines.join('\n');
   }
@@ -238,15 +238,15 @@ export class TeamBlackboard {
     const lines: string[] = ['---', '', '### 🧠 Team whiteboard'];
     if (this.decisions.length > 0) {
       lines.push('', '**Decisions:**');
-      for (const d of this.decisions) lines.push(`- *${d.worker}* — ${d.text}`);
+      for (const d of this.decisions) lines.push(`- *${d.bot}* — ${d.text}`);
     }
     if (this.facts.length > 0) {
       lines.push('', '**Facts:**');
-      for (const f of this.facts) lines.push(`- *${f.worker}* — ${f.text}`);
+      for (const f of this.facts) lines.push(`- *${f.bot}* — ${f.text}`);
     }
     if (this.open.length > 0) {
       lines.push('', '**Open questions:**');
-      for (const o of this.open) lines.push(`- *${o.worker}* — ${o.text}`);
+      for (const o of this.open) lines.push(`- *${o.bot}* — ${o.text}`);
     }
     return lines.join('\n');
   }
@@ -263,7 +263,7 @@ export class TeamBlackboard {
 }
 
 /**
- * Prompt fragment that teaches workers about the marker protocol. Kept short
+ * Prompt fragment that teaches bots about the marker protocol. Kept short
  * so it doesn't dominate the per-step prompt.
  */
 export const BLACKBOARD_MARKER_INSTRUCTIONS = [
@@ -271,7 +271,7 @@ export const BLACKBOARD_MARKER_INSTRUCTIONS = [
   'In addition to your normal output, you may surface structured notes for the rest of the team using single-line markers anywhere in your reply. These lines are EXTRACTED and STRIPPED from the user-visible output, so put them on their own line, exactly:',
   '- `[FACT]: <one line>` — something you discovered that the team should remember',
   '- `[DECISION]: <one line>` — a decision you made, ideally with a "because" clause',
-  '- `[HANDOFF: <worker-name>]: <one line>` — a specific note for the next worker (omit `: <worker-name>` for "whoever runs next")',
+  '- `[HANDOFF: <bot-name>]: <one line>` — a specific note for the next bot (omit `: <bot-name>` for "whoever runs next")',
   '- `[OPEN]: <one line>` — a question or unresolved item the team still needs to address',
-  'Use these sparingly — only for items the next worker or a future run should clearly see. Do NOT use markers to communicate with the user; write prose for that.',
+  'Use these sparingly — only for items the next bot or a future run should clearly see. Do NOT use markers to communicate with the user; write prose for that.',
 ].join('\n');

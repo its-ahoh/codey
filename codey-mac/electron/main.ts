@@ -26,8 +26,8 @@ import { locateRefPath } from './file-ref'
 import { fetchLinkPreview, type LinkPreview } from './link-preview'
 import type { ScannedSkill } from './skills'
 import { AGENT_MEMORY, scanProjectMemory, scanUserMemory } from './memory'
-import { legacySharedFilePath, renderSharedBody, sharedMemoryTargets, syncSharedMemory } from './shared-memory'
-import { isMemoryType, labelFor, listStore, toMemoryItem, validateContent } from './codey-memory'
+import { sharedMemoryTargets, syncSharedMemory } from './shared-memory'
+import { listStore, toCoMemoItem, validateContent } from './codey-memory'
 import type { MemoryStoreScope } from './codey-memory'
 import { scanSkillUsage } from './skill-usage'
 import type { SkillUsageMap, UsageCacheEntry } from './skill-usage'
@@ -47,7 +47,7 @@ import * as pty from 'node-pty'
 protocol.registerSchemesAsPrivileged([
   { scheme: 'codey-asset', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
 ])
-import { browserSkillStatus, checkBrowserSkillUpdate, chromeCompanionSkillStatus, checkChromeCompanionSkillUpdate, CODEY_GLOBAL_SKILLS_SUBDIR, CODEY_SKILL_DISCOVERY_SUBDIRS, CODEY_SKILLS_SUBDIR, installBrowserSkill, installChromeCompanionSkill, setChromeCompanionSkillEnabled, syncCodeyGlobalSkills, syncCodeyProjectSkills, uninstallBrowserSkill, uninstallChromeCompanionSkill, renameWorkerInTeams, WorkerManager, WorkspaceManager } from '@codey/core'
+import { browserSkillStatus, checkBrowserSkillUpdate, chromeCompanionSkillStatus, checkChromeCompanionSkillUpdate, CODEY_GLOBAL_SKILLS_SUBDIR, CODEY_SKILL_DISCOVERY_SUBDIRS, CODEY_SKILLS_SUBDIR, installBrowserSkill, installChromeCompanionSkill, setChromeCompanionSkillEnabled, syncCodeyGlobalSkills, syncCodeyProjectSkills, uninstallBrowserSkill, uninstallChromeCompanionSkill, renameBotInTeams, BotManager, WorkspaceManager } from '@codey/core'
 import { listPlaybooks, playbookDetail, playbookHistory, archivePlaybook, deletePlaybook, restorePlaybook, rollbackPlaybook, promotePlaybook } from './playbooks'
 import { Codey } from '@codey/gateway/dist/gateway'
 import { ConfigManager } from '@codey/gateway/dist/config'
@@ -70,7 +70,7 @@ let isQuitting = false
 let inProcessGateway: Codey | null = null
 const coreStateStore = createCoreStateStore((s) => sendToRenderer('core:state', s))
 const turnTracker = createTurnTracker()
-let workerManager: WorkerManager | null = null
+let botManager: BotManager | null = null
 let workspaceManager: WorkspaceManager | null = null
 let coreConfigManager: ConfigManager | null = null
 let apiServer: ApiServer | null = null
@@ -787,8 +787,8 @@ function createTray() {
 
 function resolveDataRoot(): string {
   // Dev (unpacked): use the monorepo root so the app picks up existing
-  // gateway.json, workers/, and workspaces/ from the repo.
-  // Packaged: use ~/.codey/ so a real gateway.json / workers / workspaces
+  // gateway.json, bots/, and workspaces/ from the repo.
+  // Packaged: use ~/.codey/ so a real gateway.json / bots / workspaces
   // directory can be edited in place.
   if (isDev) return join(__dirname, '..', '..')
   const home = app.getPath('home')
@@ -796,13 +796,13 @@ function resolveDataRoot(): string {
   try {
     const fs = require('fs')
     if (!fs.existsSync(root)) fs.mkdirSync(root, { recursive: true })
-    if (!fs.existsSync(join(root, 'workers'))) fs.mkdirSync(join(root, 'workers'), { recursive: true })
+    if (!fs.existsSync(join(root, 'bots'))) fs.mkdirSync(join(root, 'bots'), { recursive: true })
     if (!fs.existsSync(join(root, 'workspaces'))) fs.mkdirSync(join(root, 'workspaces'), { recursive: true })
-    // Seed bundled workers into ~/.codey/workers/ on first run
-    const bundledDir = join(process.resourcesPath, 'bundled-workers')
+    // Seed bundled bots into ~/.codey/bots/ on first run
+    const bundledDir = join(process.resourcesPath, 'bundled-bots')
     if (fs.existsSync(bundledDir)) {
       for (const name of fs.readdirSync(bundledDir)) {
-        const dest = join(root, 'workers', name)
+        const dest = join(root, 'bots', name)
         if (!fs.existsSync(dest)) {
           fs.cpSync(join(bundledDir, name), dest, { recursive: true })
         }
@@ -1072,13 +1072,13 @@ async function bootInProcessCore() {
       }
 
     } catch { /* best-effort: the Plugins tab can install it by hand */ }
-    workerManager = new WorkerManager(join(root, 'workers'))
-    await workerManager.loadWorkers()
+    botManager = new BotManager(join(root, 'bots'))
+    await botManager.loadBots()
     // Teams are defined globally in gateway.json; the workspace just stores
     // the names it has enabled. Inject a live provider so workspace.json edits
     // never need to know about the global library shape.
     workspaceManager = new WorkspaceManager(
-      workerManager,
+      botManager,
       join(root, 'workspaces'),
       undefined,
       () => coreConfigManager?.getTeams() ?? {},
@@ -1102,7 +1102,7 @@ async function bootInProcessCore() {
       await workspaceManager.switchWorkspace(existing[0])
     }
     const runtimeCfg = buildRuntimeConfig(coreConfigManager.get())
-    inProcessGateway = new Codey(runtimeCfg, undefined, join(root, 'workspaces'), coreConfigManager, workerManager)
+    inProcessGateway = new Codey(runtimeCfg, undefined, join(root, 'workspaces'), coreConfigManager, botManager)
     // Apply config changes to the running gateway when the renderer edits them.
     // applyConfig is async so a missing await would swallow channel-start errors.
     coreConfigManager.on('change', (updated: any) => {
@@ -1124,7 +1124,7 @@ async function bootInProcessCore() {
     applyCaptureHotkey(coreConfigManager.get())
     applyScreenshotHotkey(coreConfigManager.get())
     applyUiPreferences(coreConfigManager.get())
-    sendToRenderer('gateway-log', `[core] In-process core booted (root: ${root}, workers: ${workerManager.getAllWorkers().length}, agent: ${runtimeCfg.defaultAgent})`)
+    sendToRenderer('gateway-log', `[core] In-process core booted (root: ${root}, bots: ${botManager.getAllBots().length}, agent: ${runtimeCfg.defaultAgent})`)
     // Boot the gateway in the background so configured channels (telegram,
     // discord, imessage) connect. Done after returning so IPC handler
     // registration in app.whenReady() isn't blocked by network I/O
@@ -3606,48 +3606,48 @@ app.whenReady().then(async () => {
     })
   )
 
-  // ── Workers IPC ──────────────────────────────────────────────────
-  ipcMain.handle('workers:list', async () =>
-    wrap(async () => workerManager?.getAllWorkers() ?? [])
+  // ── Bots IPC ──────────────────────────────────────────────────
+  ipcMain.handle('bots:list', async () =>
+    wrap(async () => botManager?.getAllBots() ?? [])
   )
 
-  ipcMain.handle('workers:get', async (_e, name: string) =>
+  ipcMain.handle('bots:get', async (_e, name: string) =>
     wrap(async () => {
-      const w = workerManager?.getWorker(name)
-      if (!w) throw new Error(`Worker not found: ${name}`)
+      const w = botManager?.getBot(name)
+      if (!w) throw new Error(`Bot not found: ${name}`)
       return w
     })
   )
 
-  ipcMain.handle('workers:save', async (_e, name: string, personality: any, config: any) =>
+  ipcMain.handle('bots:save', async (_e, name: string, personality: any, config: any) =>
     wrap(async () => {
-      await workerManager?.saveWorker(name, personality, config)
+      await botManager?.saveBot(name, personality, config)
       // Invalidate any warm `--resume` sessions bootstrapped under the
       // previous personality; next run rebuilds with the new definition.
-      inProcessGateway?.invalidateWorkerSessions(name)
+      inProcessGateway?.invalidateBotSessions(name)
     })
   )
 
-  ipcMain.handle('workers:rename', async (_e, oldName: string, newName: string) =>
+  ipcMain.handle('bots:rename', async (_e, oldName: string, newName: string) =>
     wrap(async () => {
-      if (!workerManager) throw new Error('Workers are not loaded yet')
-      await workerManager.renameWorker(oldName, newName)
+      if (!botManager) throw new Error('Bots are not loaded yet')
+      await botManager.renameBot(oldName, newName)
       inProcessGateway?.renameBotChats(oldName, newName)
-      inProcessGateway?.invalidateWorkerSessions(oldName)
+      inProcessGateway?.invalidateBotSessions(oldName)
       // Cascade: every team member list and flow-graph node that pointed at
       // the old name now points at the new one.
       if (coreConfigManager) {
-        const { teams, changed } = renameWorkerInTeams(coreConfigManager.getTeams(), oldName, newName)
+        const { teams, changed } = renameBotInTeams(coreConfigManager.getTeams(), oldName, newName)
         if (changed) coreConfigManager.setTeams(teams)
       }
     })
   )
 
-  ipcMain.handle('workers:delete', async (_e, name: string) =>
+  ipcMain.handle('bots:delete', async (_e, name: string) =>
     wrap(async () => {
-      await workerManager?.deleteWorker(name)
-      inProcessGateway?.invalidateWorkerSessions(name)
-      // Cascade: remove the worker from every global team that referenced it.
+      await botManager?.deleteBot(name)
+      inProcessGateway?.invalidateBotSessions(name)
+      // Cascade: remove the bot from every global team that referenced it.
       // Teams are now defined globally, so we no longer walk per-workspace.
       if (coreConfigManager) {
         const teams = { ...coreConfigManager.getTeams() }
@@ -3829,19 +3829,19 @@ app.whenReady().then(async () => {
     })
   )
 
-  // ── Workers generate IPC ──────────────────────────────────────────
-  ipcMain.handle('workers:generate', async (_e, prompt: string) =>
+  // ── Bots generate IPC ──────────────────────────────────────────
+  ipcMain.handle('bots:generate', async (_e, prompt: string) =>
     wrap(async () => {
-      const { generateWorker, AgentFactory } = await import('@codey/core')
+      const { generateBot, AgentFactory, runAide } = await import('@codey/core')
       const factory = new AgentFactory()
       const root = resolveDataRoot()
       if (!inProcessGateway) throw new Error('Gateway is not ready')
       const aide = inProcessGateway.getAideOptions()
-      const result = await generateWorker(
+      const result = await generateBot(
         {
           agentFactory: factory,
-          workerManager: workerManager!,
-          workersDir: join(root, 'workers'),
+          botManager: botManager!,
+          botsDir: join(root, 'bots'),
           activeAgent: aide.agent,
           activeModel: aide.model,
           // Call the Aide runner directly, not runAide: generating a full Bot
@@ -3853,7 +3853,7 @@ app.whenReady().then(async () => {
         prompt,
       )
       if (!result.ok) throw new Error(result.error)
-      return workerManager!.getWorker(result.worker.name)!
+      return botManager!.getBot(result.bot.name)!
     })
   )
 
@@ -4573,7 +4573,7 @@ app.whenReady().then(async () => {
   )
 
   // ── Advisor (formerly Dispatcher) IPC ─────────────────────────────
-  // The advisor block selects the agent + model that decides which workers
+  // The advisor block selects the agent + model that decides which bots
   // a `dispatch: 'auto'` team uses, and runs the /team manager. Empty values
   // mean "use gateway default". IPC channel kept as `dispatcher:*` for
   // back-compat with the renderer; underlying field is `advisor`.
@@ -4986,57 +4986,18 @@ app.whenReady().then(async () => {
   // The user-global store owns this text; sharing renders its entries into
   // each agent's own global memory file inside a marked block. Off until the
   // user opts in, because the sync writes into files the user owns.
-  function sharingEnabled(): boolean {
-    return coreConfigManager?.get().sharedMemory?.enabled === true
-  }
-
-  /** Render the global entries into every agent file, or clear the block. */
+  /** Retire only Codey-managed mirror blocks; Co-memo now owns shared memory. */
   async function applySharedMemory(): Promise<string[]> {
     const fsMod = await import('fs')
     const pathMod = await import('path')
     const osMod = await import('os')
     const home = osMod.homedir()
     const targets = sharedMemoryTargets(pathMod, home, agentEnv)
-    let body = ''
-    if (sharingEnabled()) {
-      const store = await openMemoryStore('global')
-      body = renderSharedBody(store.getAll())
-    }
-    return syncSharedMemory(fsMod, pathMod, targets, body).written
+    return syncSharedMemory(fsMod, pathMod, targets, '').written
   }
 
-  /**
-   * Carry the pre-merge `~/.codey/memory/MEMORY.md` into the global store, so
-   * a user who had typed shared text keeps it now that entries own the block.
-   * Runs once: the file is removed after it lands in the store.
-   */
-  async function migrateLegacySharedFile(): Promise<void> {
-    const fsMod = await import('fs')
-    const pathMod = await import('path')
-    const osMod = await import('os')
-    const file = legacySharedFilePath(pathMod, osMod.homedir())
-    let text = ''
-    try {
-      text = fsMod.readFileSync(file, 'utf-8').trim()
-    } catch { return }
-    if (text) {
-      const store = await openMemoryStore('global')
-      store.add({
-        type: 'context',
-        content: text,
-        label: labelFor(text),
-        tags: ['user', 'migrated'],
-        source: 'migration',
-      })
-      await store.flush()
-    }
-    try { fsMod.unlinkSync(file) } catch { /* already gone */ }
-  }
-
-  // Agents read their memory files from disk when they spawn, so one sync per
-  // launch keeps the shared block current everywhere.
+  // Remove obsolete Codey mirror blocks so they cannot duplicate or revive archived notes.
   try {
-    await migrateLegacySharedFile()
     await applySharedMemory()
   } catch { /* best-effort: a stale block must not break startup */ }
 
@@ -5045,7 +5006,7 @@ app.whenReady().then(async () => {
       const pathMod = await import('path')
       const osMod = await import('os')
       return {
-        enabled: sharingEnabled(),
+        enabled: false,
         targets: sharedMemoryTargets(pathMod, osMod.homedir(), agentEnv),
       }
     })
@@ -5054,7 +5015,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('memory:shared:setEnabled', async (_e, enabled: boolean) =>
     wrap(async () => {
       if (!coreConfigManager) throw new Error('Config manager not initialized')
-      coreConfigManager.update({ sharedMemory: { enabled } })
+      if (enabled) throw new Error('Memory sharing is managed by Co-memo now')
       return { synced: await applySharedMemory() }
     })
   )
@@ -5098,9 +5059,7 @@ app.whenReady().then(async () => {
     if (!workspaceManager) throw new Error('Workspace manager not ready')
     const name = workspace || workspaceManager.getCurrentWorkspace()
     if (!name) throw new Error('No workspace selected')
-    if (gatewayWorkspaces && name === gatewayWorkspaces.getCurrentWorkspace()) {
-      return gatewayWorkspaces.getMemoryStore()
-    }
+    if (gatewayWorkspaces) return gatewayWorkspaces.getMemoryStoreFor(name)
     const fsMod = await import('fs')
     const pathMod = await import('path')
     const root = pathMod.join(workspaceManager.getWorkspacesRoot(), name)
@@ -5112,71 +5071,85 @@ app.whenReady().then(async () => {
     return store
   }
 
+  async function coMemoTarget(scope: MemoryStoreScope, workspace?: string) {
+    if (scope !== 'global' && scope !== 'workspace') throw new Error('Invalid memory scope')
+    if (!inProcessGateway) throw new Error('Gateway not ready')
+    const provider = inProcessGateway.getCoMemo()
+    if (scope === 'global') return { provider, scope: 'user' as const, project: undefined }
+    const name = workspace ?? workspaceManager?.getCurrentWorkspace()
+    if (!name || !workspaceManager?.listWorkspaces().includes(name)) throw new Error('Workspace not found')
+    const project = getWorkingDir(await import('fs'), await import('path'), name)
+    if (!project) throw new Error('Project memory requires a working directory')
+    return { provider, scope: 'project' as const, project }
+  }
+
   ipcMain.handle('codeyMemory:list', async (_e, scope: MemoryStoreScope, workspace?: string) =>
     wrap(async () => {
-      const store = await openMemoryStore(scope, workspace)
-      return { entries: listStore(store) }
+      const target = await coMemoTarget(scope, workspace)
+      const notes = await target.provider.list(target.scope, target.project)
+      const old = listStore(await openMemoryStore(scope, workspace))
+      return { entries: notes.map(toCoMemoItem), legacyCount: old.filter(note => !notes.some(n => n.content === note.content)).length }
     })
   )
-
-  ipcMain.handle('codeyMemory:add', async (_e, scope: MemoryStoreScope, workspace: string | undefined, content: string, type?: string) =>
+  ipcMain.handle('codeyMemory:importLegacy', async (_e, scope: MemoryStoreScope, workspace?: string) =>
     wrap(async () => {
-      const store = await openMemoryStore(scope, workspace)
-      const text = validateContent(content)
-      const entry = store.add({
-        type: isMemoryType(type) ? type : 'fact',
-        content: text,
-        label: labelFor(text),
-        tags: ['user'],
-        source: 'user',
-      })
-      await store.flush()
-      if (scope === 'global') await applySharedMemory()
-      return toMemoryItem(entry)
+      const target = await coMemoTarget(scope, workspace)
+      const old = listStore(await openMemoryStore(scope, workspace))
+      let imported = 0
+      try {
+        for (const note of old) {
+          await target.provider.remember(note.content, target.scope, target.project)
+          imported++
+        }
+      } finally { inProcessGateway?.invalidateMemorySessions() }
+      return { imported }
     })
   )
-
-  ipcMain.handle('codeyMemory:update', async (_e, scope: MemoryStoreScope, workspace: string | undefined, id: string, content: string, type?: string) =>
+  ipcMain.handle('codeyMemory:add', async (_e, scope: MemoryStoreScope, workspace: string | undefined, content: string) =>
     wrap(async () => {
-      const store = await openMemoryStore(scope, workspace)
-      const text = validateContent(content)
-      const ok = store.update(id, {
-        content: text,
-        label: labelFor(text),
-        ...(isMemoryType(type) ? { type } : {}),
-      })
-      if (!ok) throw new Error('That memory no longer exists')
-      await store.flush()
-      if (scope === 'global') await applySharedMemory()
+      const target = await coMemoTarget(scope, workspace)
+      const note = await target.provider.remember(validateContent(content), target.scope, target.project)
+      inProcessGateway?.invalidateMemorySessions()
+      return toCoMemoItem(note)
+    })
+  )
+  ipcMain.handle('codeyMemory:update', async (_e, scope: MemoryStoreScope, workspace: string | undefined, id: string, content: string, version: number) =>
+    wrap(async () => {
+      const target = await coMemoTarget(scope, workspace)
+      await target.provider.change(id, version, target.scope, target.project, validateContent(content))
+      inProcessGateway?.invalidateMemorySessions()
       return { updated: true }
     })
   )
-
-  ipcMain.handle('codeyMemory:remove', async (_e, scope: MemoryStoreScope, workspace: string | undefined, id: string) =>
+  ipcMain.handle('codeyMemory:remove', async (_e, scope: MemoryStoreScope, workspace: string | undefined, id: string, version: number) =>
     wrap(async () => {
-      const store = await openMemoryStore(scope, workspace)
-      const removed = store.remove(id)
-      if (removed) {
-        await store.flush()
-        if (scope === 'global') await applySharedMemory()
-      }
-      return { removed }
+      const target = await coMemoTarget(scope, workspace)
+      await target.provider.change(id, version, target.scope, target.project)
+      inProcessGateway?.invalidateMemorySessions()
+      return { removed: true }
     })
   )
 
   ipcMain.handle('codeyMemory:settings', async () =>
     wrap(async () => {
       const memory = coreConfigManager?.get().memory ?? {}
-      return { enabled: memory.enabled !== false, autoExtract: memory.autoExtract !== false }
+      if (!inProcessGateway) throw new Error('Gateway not ready')
+      const { effective } = await inProcessGateway.getCoMemo().settings()
+      return { enabled: memory.enabled !== false, autoExtract: effective.saveMode === 'auto' && memory.autoExtract !== false, paused: effective.paused }
     })
   )
 
   ipcMain.handle('codeyMemory:setSettings', async (_e, patch: { enabled?: boolean; autoExtract?: boolean }) =>
     wrap(async () => {
       if (!coreConfigManager) throw new Error('Config manager not initialized')
+      if (!inProcessGateway) throw new Error('Gateway not ready')
+      if (patch.autoExtract !== undefined) await inProcessGateway.getCoMemo().setSaveMode(patch.autoExtract ? 'auto' : 'explicit')
       coreConfigManager.update({ memory: patch })
+      inProcessGateway.invalidateMemorySessions()
       const memory = coreConfigManager.get().memory ?? {}
-      return { enabled: memory.enabled !== false, autoExtract: memory.autoExtract !== false }
+      if (!inProcessGateway) throw new Error('Gateway not ready')
+      const { effective } = await inProcessGateway.getCoMemo().settings()
+      return { enabled: memory.enabled !== false, autoExtract: effective.saveMode === 'auto' && memory.autoExtract !== false, paused: effective.paused }
     })
   )
 

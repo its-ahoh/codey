@@ -8,7 +8,7 @@ describe('buildAdvisorPrompt userClarification', () => {
       task: 'do thing',
       members: [{ name: 'a', hint: 'hint' }],
       history: [],
-      lastWorker: null,
+      lastBot: null,
       lastOutput: null,
     });
     expect(out).not.toContain('## User Clarification');
@@ -19,12 +19,12 @@ describe('buildAdvisorPrompt userClarification', () => {
       task: 'do thing',
       members: [{ name: 'a', hint: 'hint' }],
       history: [],
-      lastWorker: 'a',
+      lastBot: 'a',
       lastOutput: '[ASK_USER]: which db?',
-      userClarification: { worker: 'a', question: 'which db?', answer: 'postgres' },
+      userClarification: { bot: 'a', question: 'which db?', answer: 'postgres' },
     });
     expect(out).toContain('## User Clarification');
-    expect(out).toContain('Worker a asked: which db?');
+    expect(out).toContain('Bot a asked: which db?');
     expect(out).toContain('User answered: postgres');
   });
 });
@@ -35,12 +35,12 @@ describe('buildAdvisorPrompt pendingQuestion', () => {
       task: 'do thing',
       members: [{ name: 'a', hint: 'hint' }, { name: 'b', hint: 'reviewer' }],
       history: [],
-      lastWorker: 'a',
+      lastBot: 'a',
       lastOutput: '[ASK_USER]: should we bump the version?',
-      pendingQuestion: { worker: 'a', question: 'should we bump the version?' },
+      pendingQuestion: { bot: 'a', question: 'should we bump the version?' },
     });
     expect(out).toContain('## Pending Question');
-    expect(out).toContain('Worker a asked: should we bump the version?');
+    expect(out).toContain('Bot a asked: should we bump the version?');
     expect(out).toContain('escalate_to_user');
   });
 });
@@ -57,9 +57,9 @@ describe('runAdvisor escalation', () => {
         task: 't',
         members: [{ name: 'a', hint: 'h' }],
         history: [],
-        lastWorker: 'a',
+        lastBot: 'a',
         lastOutput: '[ASK_USER]: q?',
-        pendingQuestion: { worker: 'a', question: 'q?' },
+        pendingQuestion: { bot: 'a', question: 'q?' },
       },
       {
         agent: 'claude-code',
@@ -86,9 +86,9 @@ describe('runAdvisor escalation', () => {
         task: 't',
         members: [{ name: 'a', hint: 'h' }, { name: 'b', hint: 'reviewer' }],
         history: [],
-        lastWorker: 'a',
+        lastBot: 'a',
         lastOutput: '[ASK_USER]: did B finish?',
-        pendingQuestion: { worker: 'a', question: 'did B finish?' },
+        pendingQuestion: { bot: 'a', question: 'did B finish?' },
       },
       {
         agent: 'claude-code',

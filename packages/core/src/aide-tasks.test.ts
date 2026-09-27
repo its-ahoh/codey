@@ -83,20 +83,20 @@ describe('generateAideTurnDigest', () => {
     }));
     const digest = await generateAideTurnDigest(makeChat(), opts, {
       completed: [
-        { worker: 'developer', step: 1, text: 'Implemented OAuth.' },
-        { worker: 'tester', step: 2, text: 'OAuth tests pass.' },
+        { bot: 'developer', step: 1, text: 'Implemented OAuth.' },
+        { bot: 'tester', step: 2, text: 'OAuth tests pass.' },
       ],
       failures: [],
-      nextUserActions: [{ worker: 'developer', step: 3, text: 'Provide a production client ID.' }],
+      nextUserActions: [{ bot: 'developer', step: 3, text: 'Provide a production client ID.' }],
       finalizedAt: 100,
     });
 
     expect(opts.runner).toHaveBeenCalledTimes(1);
     expect(digest.taskBrief.goal).toBe('Ship OAuth');
     expect(digest.teamSummary).toEqual({
-      completed: [{ worker: 'Team', step: 1, text: 'Implemented and verified OAuth.' }],
+      completed: [{ bot: 'Team', step: 1, text: 'Implemented and verified OAuth.' }],
       failures: [],
-      nextUserActions: [{ worker: 'developer', step: 3, text: 'Provide the production client ID.' }],
+      nextUserActions: [{ bot: 'developer', step: 3, text: 'Provide the production client ID.' }],
       finalizedAt: 100,
     });
   });
@@ -104,8 +104,8 @@ describe('generateAideTurnDigest', () => {
   it('falls back to authoritative facts when source references are incomplete', async () => {
     const source = {
       completed: [
-        { worker: 'developer', step: 1, text: 'Implemented OAuth.' },
-        { worker: 'tester', step: 2, text: 'OAuth tests pass.' },
+        { bot: 'developer', step: 1, text: 'Implemented OAuth.' },
+        { bot: 'tester', step: 2, text: 'OAuth tests pass.' },
       ],
       failures: [],
       nextUserActions: [],

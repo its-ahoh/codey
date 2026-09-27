@@ -3,7 +3,7 @@
 //   npx ts-node --project packages/gateway/tsconfig.json scripts/verify-mac-boot.ts
 
 import { join } from 'path'
-import { WorkerManager, WorkspaceManager } from '@codey/core'
+import { BotManager, WorkspaceManager } from '@codey/core'
 import { ConfigManager } from '@codey/gateway/dist/config'
 import { Codey } from '@codey/gateway/dist/gateway'
 
@@ -20,9 +20,9 @@ async function main() {
   console.log('[diag] model catalog:', JSON.stringify(cm.listModels().map(m => ({ name: m.name, apiType: m.apiType, model: m.model, baseUrl: m.baseUrl, hasKey: !!m.apiKey })), null, 2))
   console.log('[diag] fallback:', cm.getFallback())
 
-  const wm = new WorkerManager(join(root, 'workers'))
-  await wm.loadWorkers()
-  console.log('[diag] workers loaded:', wm.getAllWorkers().map(w => w.name))
+  const wm = new BotManager(join(root, 'bots'))
+  await wm.loadBots()
+  console.log('[diag] bots loaded:', wm.getAllBots().map(w => w.name))
 
   const wsm = new WorkspaceManager(wm, join(root, 'workspaces'))
   await wsm.switchWorkspace(wsm.getCurrentWorkspace())

@@ -135,6 +135,15 @@ describe('syncSharedMemory', () => {
 })
 
 describe('renderSharedBody', () => {
+  it('does not publish retired Bot-scoped notes as user memory', () => {
+    expect(renderSharedBody([
+      { content: 'User preference' },
+      { content: 'Project decision', scope: 'workspace' },
+      { content: 'Private note', scope: { bot: 'alice' } },
+      { content: 'Team note', scope: { bots: ['alice', 'bob'] } },
+    ])).toBe('- User preference\n- Project decision')
+  })
+
   it('renders one bullet per entry', () => {
     expect(renderSharedBody([{ content: 'Uses tabs' }, { content: 'Ships on Fridays' }]))
       .toBe('- Uses tabs\n- Ships on Fridays')

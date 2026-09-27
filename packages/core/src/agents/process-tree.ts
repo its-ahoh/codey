@@ -92,7 +92,7 @@ export function withForegroundPolicy(prompt: string): string {
  * degradation: `spawn` fails with `E2BIG` and the agent never starts.
  *
  * Callers bound their own prompts (windowed history, transcript pointers), but
- * a single pasted log or a runaway worker hand-off can still blow past the
+ * a single pasted log or a runaway bot hand-off can still blow past the
  * limit. This is the last line of defence, applied at the spawn boundary so no
  * adapter can forget it.
  */

@@ -8,7 +8,7 @@ export interface AdvisorMember {
 }
 
 export interface AdvisorHistoryEntry {
-  worker: string;
+  bot: string;
   summary: string;
 }
 
@@ -16,17 +16,17 @@ export interface AdvisorInput {
   task: string;
   members: AdvisorMember[];
   history: AdvisorHistoryEntry[];
-  lastWorker: string | null;
+  lastBot: string | null;
   lastOutput: string | null;
   /** When true, return only done:true with a final_summary; do not pick next. */
   finalize?: boolean;
   /** Set on the turn immediately after a paused run resumes. */
-  userClarification?: { worker: string; question: string; answer: string };
+  userClarification?: { bot: string; question: string; answer: string };
   /**
-   * Set when a worker emitted `[ASK_USER]: q` and the Advisor must decide
+   * Set when a bot emitted `[ASK_USER]: q` and the Advisor must decide
    * whether to route the question to a teammate or escalate to the user.
    */
-  pendingQuestion?: { worker: string; question: string };
+  pendingQuestion?: { bot: string; question: string };
 }
 
 export interface AdvisorTurn {
@@ -73,12 +73,12 @@ export function buildAdvisorPrompt(input: AdvisorInput): string {
     lines.push('(empty — this is the first turn)');
   } else {
     input.history.forEach((h, i) => {
-      lines.push(`${i + 1}. ${h.worker}: ${h.summary}`);
+      lines.push(`${i + 1}. ${h.bot}: ${h.summary}`);
     });
   }
   lines.push('## Last Output');
-  if (input.lastWorker && input.lastOutput) {
-    lines.push(`Worker: ${input.lastWorker}`);
+  if (input.lastBot && input.lastOutput) {
+    lines.push(`Bot: ${input.lastBot}`);
     lines.push('Output:');
     lines.push(input.lastOutput);
   } else {
@@ -87,20 +87,20 @@ export function buildAdvisorPrompt(input: AdvisorInput): string {
   if (input.userClarification) {
     const u = input.userClarification;
     lines.push('## User Clarification');
-    lines.push(`Worker ${u.worker} asked: ${u.question}`);
+    lines.push(`Bot ${u.bot} asked: ${u.question}`);
     lines.push(`User answered: ${u.answer}`);
   }
   if (input.pendingQuestion) {
     const q = input.pendingQuestion;
     lines.push('## Pending Question');
-    lines.push(`Worker ${q.worker} asked: ${q.question}`);
+    lines.push(`Bot ${q.bot} asked: ${q.question}`);
     lines.push(
       'Decide one of: (a) route this to a teammate from the Roster who can answer — set `next` to that teammate and put the question in `instruction`; or (b) escalate to the user — set `escalate_to_user: true` and `done: true` with no `next`. Prefer (a) when a teammate plausibly has the answer.',
     );
   }
   if (input.finalize) {
     lines.push('## Finalize');
-    lines.push('FINALIZE=true. Return only done:true with a final_summary; do not pick a next worker.');
+    lines.push('FINALIZE=true. Return only done:true with a final_summary; do not pick a next bot.');
   }
   return lines.join('\n\n');
 }

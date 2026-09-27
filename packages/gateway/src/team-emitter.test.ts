@@ -25,20 +25,20 @@ describe('ChatEmitter', () => {
     expect(events.some(v => v.type === 'thinking' && v.token === 'pondering' && v.step === 2)).toBe(true);
   });
 
-  it('keeps worker tokens out of the transcript when they have their own bubbles', async () => {
-    const workerMsgs = { onStream: vi.fn(), onThinking: vi.fn() } as any;
-    const e = new ChatEmitter(() => {}, 'c1', workerMsgs);
-    expect(e.rendersWorkerBubbles).toBe(true);
+  it('keeps bot tokens out of the transcript when they have their own bubbles', async () => {
+    const botMsgs = { onStream: vi.fn(), onThinking: vi.fn() } as any;
+    const e = new ChatEmitter(() => {}, 'c1', botMsgs);
+    expect(e.rendersBotBubbles).toBe(true);
     e.onStream('the whole answer');
     await e.notify('a question for you');
-    expect(workerMsgs.onStream).toHaveBeenCalledWith('the whole answer');
+    expect(botMsgs.onStream).toHaveBeenCalledWith('the whole answer');
     // The member bubble owns the answer; only the group-level notice is left.
     expect(e.transcript).toBe('a question for you');
   });
 
-  it('reports no worker bubbles without a WorkerMessageEmitter', () => {
-    expect(new ChatEmitter(() => {}, 'c1').rendersWorkerBubbles).toBe(false);
-    expect(new ChannelEmitter(async () => {}, undefined, 'c1', 'telegram' as any).rendersWorkerBubbles).toBe(false);
+  it('reports no bot bubbles without a BotMessageEmitter', () => {
+    expect(new ChatEmitter(() => {}, 'c1').rendersBotBubbles).toBe(false);
+    expect(new ChannelEmitter(async () => {}, undefined, 'c1', 'telegram' as any).rendersBotBubbles).toBe(false);
   });
 
   it('status emits an info event and is NOT recorded in the transcript', async () => {

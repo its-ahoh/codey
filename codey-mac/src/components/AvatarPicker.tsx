@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { WorkerAvatar } from './WorkerAvatar'
-import { avatarShapes, avatarColors, type WorkerAvatarConfig } from './workerAvatarModel'
+import { BotAvatar } from './BotAvatar'
+import { avatarShapes, avatarColors, type BotAvatarConfig } from './botAvatarModel'
 import { C } from '../theme'
 import './avatarPicker.css'
 
 export function AvatarPicker({ value, onChange, name = 'Member', size = 56 }: {
-  value: WorkerAvatarConfig
-  onChange: (avatar: WorkerAvatarConfig) => void
+  value: BotAvatarConfig
+  onChange: (avatar: BotAvatarConfig) => void
   name?: string
   size?: number
 }) {
@@ -29,7 +29,7 @@ export function AvatarPicker({ value, onChange, name = 'Member', size = 56 }: {
     <button ref={trigger} type="button" onClick={() => setOpen(true)} aria-label={`Change ${name} avatar`}
       title="Change avatar" aria-haspopup="dialog" aria-expanded={open}
       style={{ display: 'inline-flex', padding: 0, background: 'transparent', border: 'none', borderRadius: '50%', cursor: 'pointer', lineHeight: 0 }}>
-      <WorkerAvatar name={name} config={value} size={size} />
+      <BotAvatar name={name} config={value} size={size} />
     </button>
     {open && createPortal(<dialog ref={dialog} className="member-avatar-dialog" aria-label={`Change ${name} avatar`}
       onCancel={event => { event.preventDefault(); setOpen(false) }}
@@ -44,7 +44,7 @@ export function AvatarPicker({ value, onChange, name = 'Member', size = 56 }: {
             {avatarShapes.map(shape => <button type="button" key={shape} aria-label={shape} aria-pressed={value.shape === shape}
               autoFocus={value.shape === shape} onClick={() => onChange({ ...value, shape })}
               style={{ background: C.surface2, border: `2px solid ${value.shape === shape ? C.accent : C.border}`, borderRadius: 12, padding: 5, cursor: 'pointer' }}>
-              <WorkerAvatar name={shape} config={{ ...value, shape }} size={44} />
+              <BotAvatar name={shape} config={{ ...value, shape }} size={44} />
             </button>)}
           </div>
         </div>

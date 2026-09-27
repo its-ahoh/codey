@@ -41,7 +41,7 @@ describe('automation chats are hidden', () => {
     const shared = a.create({ workspaceName: 'default', title: 'Automation: x', kind: 'automation' });
     b.setPendingTeam(shared.id, {
       teamName: 't', task: 'deploy', mode: 'sequential', teamTurnId: 'turn-1',
-      memberIndex: 0, carry: '', askingWorker: 'w', question: 'Deploy now?', askedAt: Date.now(),
+      memberIndex: 0, carry: '', askingBot: 'w', question: 'Deploy now?', askedAt: Date.now(),
     });
     expect(a.get(shared.id)?.pendingTeam).toBeUndefined(); // stale cache
     expect(a.reload(shared.id)?.pendingTeam?.question).toBe('Deploy now?');

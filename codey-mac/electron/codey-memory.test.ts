@@ -6,6 +6,7 @@ import {
   labelFor,
   sortItems,
   toMemoryItem,
+  toCoMemoItem,
   validateContent,
 } from './codey-memory'
 import type { CodeyMemoryItem } from './codey-memory'
@@ -25,6 +26,12 @@ describe('memory types', () => {
 })
 
 describe('toMemoryItem', () => {
+  it('preserves the Co-memo version used for optimistic edits', () => {
+    expect(toCoMemoItem({ id: 'shared', version: 7, scope: 'user', projectId: null,
+      content: 'Concise reviews', deleted: false, createdAt: 1, updatedAt: 2, origin: 'mcp',
+      metadata: { kind: 'preference' },
+    })).toMatchObject({ id: 'shared', version: 7, source: 'co-memo', type: 'preference', tags: ['user'] })
+  })
   it('keeps the display fields and drops the rest', () => {
     const entry = {
       id: 'mem-9', type: 'decision' as const, content: 'Use tabs', label: 'Use tabs',

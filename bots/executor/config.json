@@ -1,0 +1,8 @@
+{
+  "tools": [
+    "file-system",
+    "git",
+    "npm",
+    "docker"
+  ]
+}

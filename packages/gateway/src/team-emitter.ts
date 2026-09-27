@@ -1,5 +1,5 @@
 import { BlackboardSnapshot, ChannelType, CodingAgent } from '@codey/core';
-import type { EndWorkerMeta, WorkerMessageEmitter } from './worker-message-emitter';
+import type { EndBotMeta, BotMessageEmitter } from './bot-message-emitter';
 
 /** Surface-agnostic sink for team continuation output. */
 export interface TeamEmitter {
@@ -7,28 +7,28 @@ export interface TeamEmitter {
   notify(text: string, choices?: string[]): Promise<void>;
   /** An ephemeral progress line ("step 2: architect is working"). Never a
    * message: chat shows it as a transient info event, channels have no
-   * transient surface and drop it. A team run's messages are the worker
+   * transient surface and drop it. A team run's messages are the bot
    * bubbles (where the surface has them), any question, and the Aide final. */
   status(text: string): Promise<void>;
   termination?(reason: string): void;
-  /** Per-worker streamed output token. */
+  /** Per-bot streamed output token. */
   onStream(token: string): void;
-  /** Per-worker streamed thinking token. */
+  /** Per-bot streamed thinking token. */
   onThinking(token: string, step: number): void;
-  /** Begin a per-worker chat message (chat surface only). */
-  beginWorker?(args: { step: number; worker: string; reason?: string; agent?: CodingAgent; model?: string }): void;
-  /** Finalize the active per-worker chat message (chat surface only). */
-  endWorker?(status: 'done' | 'failed' | 'askedUser', meta?: EndWorkerMeta): void;
+  /** Begin a per-bot chat message (chat surface only). */
+  beginBot?(args: { step: number; bot: string; reason?: string; agent?: CodingAgent; model?: string }): void;
+  /** Finalize the active per-bot chat message (chat surface only). */
+  endBot?(status: 'done' | 'failed' | 'askedUser', meta?: EndBotMeta): void;
   /** Publish the latest shared blackboard (chat surface only). */
   updateBlackboard?(blackboard: BlackboardSnapshot): void;
   /** Accumulated assistant transcript (chat surface); '' for channels. */
   readonly transcript: string;
   /** Latest choices passed to notify (for the chat return contract). */
   readonly choices: string[] | undefined;
-  /** True when each worker's own output already has its own chat bubble. Such
+  /** True when each bot's own output already has its own chat bubble. Such
    * surfaces must not repeat that output inside a group-level notice (an
    * ASK_USER preamble, the whiteboard block) — it would read twice. */
-  readonly rendersWorkerBubbles: boolean;
+  readonly rendersBotBubbles: boolean;
 }
 
 type SinkLike = (ev: any) => void;
@@ -37,7 +37,7 @@ type SinkLike = (ev: any) => void;
 export class ChatEmitter implements TeamEmitter {
   private parts: string[] = [];
   private _choices: string[] | undefined;
-  constructor(private sink: SinkLike, private chatId: string, private workerMsgs?: WorkerMessageEmitter) {}
+  constructor(private sink: SinkLike, private chatId: string, private botMsgs?: BotMessageEmitter) {}
   async notify(text: string, choices?: string[]): Promise<void> {
     this._choices = choices;
     this.parts.push(text);
@@ -48,23 +48,23 @@ export class ChatEmitter implements TeamEmitter {
     try { this.sink({ type: 'info', chatId: this.chatId, message: text }); } catch { /* swallow */ }
   }
   onStream(token: string): void {
-    // With per-worker bubbles the token already has a home: the member's own
+    // With per-bot bubbles the token already has a home: the member's own
     // message. Keeping a second copy in the transcript is what made a paused
     // run render its answer twice (transcript -> group footer bubble).
-    if (this.workerMsgs) { this.workerMsgs.onStream(token); return; }
+    if (this.botMsgs) { this.botMsgs.onStream(token); return; }
     this.parts.push(token);
     try { this.sink({ type: 'stream', chatId: this.chatId, token }); } catch { /* swallow */ }
   }
   onThinking(token: string, step: number): void {
-    if (this.workerMsgs) { this.workerMsgs.onThinking(token, step); return; }
+    if (this.botMsgs) { this.botMsgs.onThinking(token, step); return; }
     try { this.sink({ type: 'thinking', chatId: this.chatId, token, step }); } catch { /* swallow */ }
   }
-  beginWorker(args: { step: number; worker: string; reason?: string; agent?: CodingAgent; model?: string }): void { this.workerMsgs?.beginWorker(args); }
-  endWorker(status: 'done' | 'failed' | 'askedUser', meta?: EndWorkerMeta): void { this.workerMsgs?.endWorker(status, meta); }
-  updateBlackboard(blackboard: BlackboardSnapshot): void { this.workerMsgs?.updateBlackboard(blackboard); }
+  beginBot(args: { step: number; bot: string; reason?: string; agent?: CodingAgent; model?: string }): void { this.botMsgs?.beginBot(args); }
+  endBot(status: 'done' | 'failed' | 'askedUser', meta?: EndBotMeta): void { this.botMsgs?.endBot(status, meta); }
+  updateBlackboard(blackboard: BlackboardSnapshot): void { this.botMsgs?.updateBlackboard(blackboard); }
   get transcript(): string { return this.parts.join('\n\n'); }
   get choices(): string[] | undefined { return this._choices; }
-  get rendersWorkerBubbles(): boolean { return !!this.workerMsgs; }
+  get rendersBotBubbles(): boolean { return !!this.botMsgs; }
 }
 
 /** Emits to a channel via the gateway's sendResponse + handler.streamText. */
@@ -86,5 +86,5 @@ export class ChannelEmitter implements TeamEmitter {
   onThinking(_token: string, _step: number): void { /* channels don't render thinking today */ }
   get transcript(): string { return ''; }
   get choices(): string[] | undefined { return this._choices; }
-  readonly rendersWorkerBubbles = false;
+  readonly rendersBotBubbles = false;
 }

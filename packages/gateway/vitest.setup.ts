@@ -12,6 +12,7 @@ import * as path from 'path';
  */
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-test-home-'));
 process.env.CODEY_HOME = home;
+process.env.CO_MEMO_HOME = path.join(home, 'co-memo');
 
 process.on('exit', () => {
   try { fs.rmSync(home, { recursive: true, force: true }); } catch { /* best effort */ }

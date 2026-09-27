@@ -1,11 +1,11 @@
 import { AdvisorHistoryEntry } from '../advisor';
 import type { BlackboardSnapshot } from '../team-blackboard';
-import type { WorkerAnchor } from '../context';
+import type { BotAnchor } from '../context';
 
 /** Recorded part of a Advisor-driven run, kept while the team is paused. */
 export interface PendingPart {
   step: number;
-  worker: string;
+  bot: string;
   output: string;
   isRevision: boolean;
 }
@@ -21,15 +21,15 @@ export type PendingTeamState =
       members?: string[];
       memberIndex: number;
       carry: string;
-      askingWorker: string;
+      askingBot: string;
       question: string;
-      /** Options when worker emitted [ASK_USER:choice]; absent for free-text questions. */
+      /** Options when bot emitted [ASK_USER:choice]; absent for free-text questions. */
       options?: string[];
       askedAt: number;
       blackboard?: BlackboardSnapshot;
-      /** Warm worker sessions captured at pause; rehydrated on resume so the
+      /** Warm bot sessions captured at pause; rehydrated on resume so the
        *  next step's prompt continues `--resume`-ing instead of re-bootstrapping. */
-      workerAnchors?: Record<string, WorkerAnchor>;
+      botAnchors?: Record<string, BotAnchor>;
     }
   | {
       teamName: string;
@@ -39,19 +39,19 @@ export type PendingTeamState =
       /** Set for an ad-hoc team built from @mentions, which has no registry entry to look up on resume. */
       members?: string[];
       history: AdvisorHistoryEntry[];
-      lastWorker: string;
+      lastBot: string;
       lastOutput: string;
       partsSoFar: PendingPart[];
-      seenWorkers: string[];
+      seenBots: string[];
       step: number;
-      askingWorker: string;
+      askingBot: string;
       question: string;
       options?: string[];
       askedAt: number;
       blackboard?: BlackboardSnapshot;
-      /** Warm worker sessions captured at pause; rehydrated on resume so the
+      /** Warm bot sessions captured at pause; rehydrated on resume so the
        *  next step's prompt continues `--resume`-ing instead of re-bootstrapping. */
-      workerAnchors?: Record<string, WorkerAnchor>;
+      botAnchors?: Record<string, BotAnchor>;
     }
   | {
       teamName: string;
@@ -60,10 +60,10 @@ export type PendingTeamState =
       teamTurnId: string;
       graphState: { currentNodeId: string; hops: number; visited: string[]; runStreak?: number };
       results: string[];
-      askingWorker: string;
+      askingBot: string;
       question: string;
       options?: string[];
       askedAt: number;
       blackboard?: BlackboardSnapshot;
-      workerAnchors?: Record<string, WorkerAnchor>;
+      botAnchors?: Record<string, BotAnchor>;
     };

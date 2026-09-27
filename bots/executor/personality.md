@@ -1,4 +1,4 @@
-# Worker: Executor
+# Bot: Executor
 
 ## Role
 Implementer that turns an approved design into working code with tests and a commit.

@@ -17,7 +17,7 @@
 
 与其说它是"聊天平台到 Agent 的桥"，不如说它是**你已经在用的那些编码 Agent 的控制台**。它完全跑在你自己的机器上，直接复用你已装好、已登录的 Agent CLI —— 没有中间代理服务器，也不用额外订阅。
 
-**目录：** [为什么用 Codey](#为什么用-codey) · [下载](#下载) · [功能特性](#功能特性) · [快速开始](#快速开始) · [配置](#配置) · [Team 与流程图](#工作者配置) · [命令](#命令) · [语音](#语音输入-macos) · [常见问题](#常见问题)
+**目录：** [为什么用 Codey](#为什么用-codey) · [下载](#下载) · [功能特性](#功能特性) · [快速开始](#快速开始) · [配置](#配置) · [Team 与流程图](#Bot配置) · [命令](#命令) · [语音](#语音输入-macos) · [常见问题](#常见问题)
 
 <p align="center">
   <img src="assets/demo.gif" alt="Codey 演示：定时 Automation 自动起草内容，并通过内置的 Agent 控制浏览器完成发帖" width="800" />
@@ -26,9 +26,9 @@
 
 ## 为什么用 Codey
 
-- **一个项目里，不同任务用不同 Agent。** 每个 workspace 有默认 Agent / 模型，每个 worker 还能单独覆盖 —— Architect 用 Opus、Executor 用 Codex、Reviewer 用本地 OpenCode，都没问题。
+- **一个项目里，不同任务用不同 Agent。** 每个 workspace 有默认 Agent / 模型，每个 bot 还能单独覆盖 —— Architect 用 Opus、Executor 用 Codex、Reviewer 用本地 OpenCode，都没问题。
 - **同一个 prompt 让多个 Agent 并行跑。** 直接把 Claude Code / Codex / OpenCode 的结果摆在一起对比，不用靠猜。
-- **用 worker 团队代替单条 prompt。** 给每个 worker 配角色、性格、工具，按顺序执行，或者让 dispatcher 自动挑选真正相关的子集。
+- **用 bot 团队代替单条 prompt。** 给每个 bot 配角色、性格、工具，按顺序执行，或者让 dispatcher 自动挑选真正相关的子集。
 - **多入口，随时调用。** 桌面用 macOS 菜单栏应用，在手机上用聊天平台派活，免手输直接用语音粘到任何前台应用。
 - **完全本地，自己掌控。** 跑在你自己机器上，连你自己的账号，中间没有代理服务器。
 
@@ -50,11 +50,11 @@
 - **思考强度**：一个 low → max 的统一档位，自动映射到各家 CLI 自己的推理参数
 - **自动 Dispatcher**：内置 dispatcher 可选，按任务自动路由到 team 的相关子集
 
-**工作区与 Worker**
-- **多工作区**：每个工作区拥有独立的工作目录、记忆与工作者
-- **工作者团队**：每个 Bot 定义角色、个性和工具；执行使用聊天设置或 Default 的 Agent / 模型
+**工作区与 Bot**
+- **多工作区**：每个工作区拥有独立的工作目录、记忆与Bot
+- **Bot团队**：每个 Bot 定义角色、个性和工具；执行使用聊天设置或 Default 的 Agent / 模型
 - **流程图**：在画布上把一个 team 画成图，由裁判 LLM 按边上的自然语言条件决定下一步 —— 可以分支、回退返工，也可以停下来问你
-- **记忆**：workspace 级 + 用户全局记忆，worker 每次运行都会读取，并把新结论写回去
+- **记忆**：workspace 级 + 用户全局记忆，bot 每次运行都会读取，并把新结论写回去
 - **对话上下文**：在会话中记忆之前的消息
 
 **接入方式**
@@ -150,18 +150,18 @@ workspaces/
 ├── default/
 │   ├── workspace.json       # 工作区配置（workingDir + 工作者）
 │   ├── memory.md            # 项目记忆/笔记
-│   └── workers/
+│   └── bots/
 │       ├── architect.md
 │       └── executor.md
 ├── project-a/
 │   ├── workspace.json
 │   ├── memory.md
-│   └── workers/
+│   └── bots/
 │       └── ...
 └── project-b/
     ├── workspace.json
     ├── memory.md
-    └── workers/
+    └── bots/
         └── ...
 ```
 
@@ -170,7 +170,7 @@ workspaces/
 ```json
 {
   "workingDir": "/path/to/project",
-  "workers": {
+  "bots": {
     "architect": {
       "tools": ["file-system", "git", "web-search"]
     }
@@ -180,12 +180,12 @@ workspaces/
 
 切换工作区（`/workspace myproject`）会自动设置代理的工作目录。
 
-## 工作者配置
+## Bot配置
 
-每个工作者在一个 Markdown 文件中定义：
+每个Bot在一个 Markdown 文件中定义：
 
 ```markdown
-# Worker: Architect
+# Bot: Architect
 
 ## Role
 负责项目规划的首席架构师...
@@ -211,11 +211,11 @@ file-system, git, web-search
 
 ## 命令
 
-### 工作者
+### Bot
 | 命令 | 描述 |
 |------|------|
-| `/workers` | 列出当前工作区的所有工作者 |
-| `/worker <名称> <任务>` | 运行指定的工作者 |
+| `/bots` | 列出当前工作区的所有Bot |
+| `/bot <名称> <任务>` | 运行指定的 Bot |
 | `/team <名称> [--all] <任务>` | 运行指定的 team（详见下方） |
 
 **Team dispatch 说明：**
@@ -223,16 +223,16 @@ file-system, git, web-search
 - `/team <name> [--all] <task>` — 运行指定的 team，成员按顺序串行执行，输出会作为下一个成员的输入。
   - 默认 `dispatch: 'all'`（所有成员参与）。
   - 配置为 `dispatch: 'auto'` 的 team 会先调用内置 dispatcher，自动选择本次任务真正需要的成员子集。临时跳过 dispatcher 可以加 `--all` 标志。
-  - 在 worker 的 `config.json` 里加可选的 `dispatchHint` 字段（一句话）可以提升路由准确性。
+  - 在 bot 的 `config.json` 里加可选的 `dispatchHint` 字段（一句话）可以提升路由准确性。
   - Advisor 用的 agent/model 在 `gateway.json` 的 `advisor.{agent, model}` 字段配置，未配置时回退到 gateway 默认 agent/model。
-  - 配置为 `dispatch: 'parallel'` 的 team 会以 **Advisor 主持的圆桌** 方式运行：所有 worker 作为长驻会话并发执行，
+  - 配置为 `dispatch: 'parallel'` 的 team 会以 **Advisor 主持的圆桌** 方式运行：所有 bot 作为长驻会话并发执行，
     在 `chats/<chatId>/discussion/` 下共享各自的意见文件；Advisor 循环评估进展、维护共享摘要，并决定何时问你、
     何时继续、何时结束。可选参数在 `parallel: { maxDurationMs, idleTimeoutMs, advisorPollMs }`。
     参见[设计文档](docs/superpowers/specs/2026-05-24-team-parallel-mode-design.md)。
   - 串行（`all`）team 还可以带一张**流程图** —— `graph: { entry, maxHops, nodes, edges }`。
-    节点是 worker（外加 `start` / `end`），每条边上写一句自然语言条件。每个 worker 跑完后，
-    由裁判 LLM（复用 Advisor 的 agent/model）按条件挑下一条边，因此流程可以分支，也可以回退到更早的 worker 返工，
-    直到走到 `end` 或达到 `maxHops` 上限。worker 可以用 `[ASK_USER]` 暂停流程，你回复后会从暂停处继续。
+    节点是 bot（外加 `start` / `end`），每条边上写一句自然语言条件。每个 bot 跑完后，
+    由裁判 LLM（复用 Advisor 的 agent/model）按条件挑下一条边，因此流程可以分支，也可以回退到更早的 bot 返工，
+    直到走到 `end` 或达到 `maxHops` 上限。bot 可以用 `[ASK_USER]` 暂停流程，你回复后会从暂停处继续。
     流程图可以在 Mac 应用的拖拽画布里直接画。
 
 ### 工作区
@@ -264,10 +264,10 @@ file-system, git, web-search
 /workspace myproject
 
 # 列出工作者
-/workers
+/bots
 
 # 运行工作者
-/worker architect design a REST API
+/bot architect design a REST API
 
 # 运行团队任务
 /team build a todo app
@@ -346,7 +346,7 @@ workspaces/              # 各工作区的配置、记忆与工作者
 ## 常见问题
 
 **Codey 是要替代 Claude Code / Codex / OpenCode 吗？**
-不是，它是来驱动它们的。Codey 调用你本机已经装好、已经登录的 Agent CLI，在它们之上补一层：workspace、worker 团队、并行对比、定时任务和远程访问。
+不是，它是来驱动它们的。Codey 调用你本机已经装好、已经登录的 Agent CLI，在它们之上补一层：workspace、bot 团队、并行对比、定时任务和远程访问。
 
 **必须要 API key 吗？**
 用到才需要。如果你的 Agent CLI 已经登录（比如 Claude 订阅），Codey 直接沿用。`gateway.json` 里的 API key 只用于你想直连的 Agent / 模型，以及云端语音转写。

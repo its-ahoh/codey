@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom'
 import { chatOwnedPrUrl } from './chatPrUrl'
 import type { Chat, ChatMessage, ChatSelection, FileAttachment } from '../types'
 import type { TeamConfigRaw } from '../../../packages/core/src/workspace'
-import { apiService, WorkerDto } from '../services/api'
+import { apiService, BotDto } from '../services/api'
 import { useChats } from '../hooks/useChats'
 import { C } from '../theme'
 import { Markdown } from './Markdown'
@@ -19,8 +19,8 @@ import type { ContextPanelTab } from './ChatContextPanel'
 import { useQuickQuestion } from '../hooks/useQuickQuestion'
 import { parseTeamMessage } from './teamMessageFormat'
 import { groupMessages } from './teamGroup'
-import { WorkerAvatar } from './WorkerAvatar'
-import { workerAvatarState } from './workerAvatarModel'
+import { BotAvatar } from './BotAvatar'
+import { botAvatarState } from './botAvatarModel'
 import { StatusSidecar } from './StatusSidecar'
 import { useStatusPanelEnabled } from './statusPanelPref'
 import { isTaskBriefStale, extractSidecarBrief } from './taskHudView'
@@ -385,7 +385,7 @@ const ThinkingBlock: React.FC<{
 const stepDomId = (messageId: string, stepNum: number) => `step-${messageId}-${stepNum}`
 
 const TeamMessage: React.FC<{
-  workers: WorkerDto[]
+  bots: BotDto[]
   messageId: string
   parsed: NonNullable<ReturnType<typeof parseTeamMessage>>
   isStreaming: boolean
@@ -393,7 +393,7 @@ const TeamMessage: React.FC<{
   thinkingByStep?: Record<number, string>
   expanded: Set<string>
   setExpanded: React.Dispatch<React.SetStateAction<Set<string>>>
-}> = ({ workers, messageId, parsed, isStreaming, isComplete, thinkingByStep, expanded, setExpanded }) => {
+}> = ({ bots, messageId, parsed, isStreaming, isComplete, thinkingByStep, expanded, setExpanded }) => {
   const lastIdx = parsed.steps.length - 1
   return (
     <div>
@@ -410,7 +410,7 @@ const TeamMessage: React.FC<{
         return (
           <div key={baseKey} id={stepDomId(messageId, s.step)} style={cardStyle}>
             <div style={styles.teamStepHeader}>
-              <WorkerAvatar name={s.worker} config={workers.find(w => w.name === s.worker)?.config.avatar} state={/^❌/.test(s.output.trim()) ? 'failed' : isLastDuringStream ? 'working' : isComplete ? 'done' : 'stopped'} /><span style={styles.teamStepLabel}>{s.worker}</span>
+              <BotAvatar name={s.bot} config={bots.find(w => w.name === s.bot)?.config.avatar} state={/^❌/.test(s.output.trim()) ? 'failed' : isLastDuringStream ? 'working' : isComplete ? 'done' : 'stopped'} /><span style={styles.teamStepLabel}>{s.bot}</span>
               {isLastDuringStream && <span style={styles.teamStepRunning}>● running</span>}
             </div>
             <div style={styles.teamStepBody}>
@@ -509,7 +509,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
   const [mentionIdx, setMentionIdx] = useState(0)
   const [taskError, setTaskError] = useState('')
   useEffect(() => { setTaskError('') }, [chat.id])
-  const [workers, setWorkers] = useState<WorkerDto[]>([])
+  const [bots, setBots] = useState<BotDto[]>([])
   // The full global team library — names drive the picker, members the "@" menu.
   const [teamLib, setTeamLib] = useState<Record<string, TeamConfigRaw>>({})
   const teamNames = React.useMemo(() => Object.keys(teamLib), [teamLib])
@@ -689,10 +689,10 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
   }
 
   useEffect(() => {
-    const refresh = () => { void apiService.listWorkers().then(setWorkers).catch(() => {}) }
+    const refresh = () => { void apiService.listBots().then(setBots).catch(() => {}) }
     refresh()
-    window.addEventListener('codey:workers-changed', refresh)
-    return () => window.removeEventListener('codey:workers-changed', refresh)
+    window.addEventListener('codey:bots-changed', refresh)
+    return () => window.removeEventListener('codey:bots-changed', refresh)
   }, [])
   const refreshPairings = async () => {
     try {
@@ -1185,8 +1185,8 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
     generateTaskBrief(chat.id).finally(() => setTaskBriefLoading(false))
   }, [sidecarVisible, turnActive, chatId, chat.messages.length, chat.taskBrief?.generatedAt])
 
-  const selectionValue: string = chat.selection.type === 'worker'
-    ? `worker:${chat.selection.name}`
+  const selectionValue: string = chat.selection.type === 'bot'
+    ? `bot:${chat.selection.name}`
     : chat.selection.type === 'team'
       ? `team:${chat.selection.name ?? ''}`
       : 'none'
@@ -1195,7 +1195,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
     let next: ChatSelection
     if (v === 'none') next = { type: 'none' }
     else if (v.startsWith('team:')) next = { type: 'team', name: v.slice('team:'.length) }
-    else next = { type: 'worker', name: v.slice('worker:'.length) }
+    else next = { type: 'bot', name: v.slice('bot:'.length) }
     await setSelection(chat.id, next)
   }
 
@@ -1274,24 +1274,24 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
     if (!mention) return
     let stale = false
     void (async () => {
-      const [skills, plugins, mcp, agentMcp, workers] = await Promise.all([
+      const [skills, plugins, mcp, agentMcp, bots] = await Promise.all([
         window.codey.skills.list(effectiveAgent, workingDir ?? undefined),
         window.codey.plugins.list(),
         window.codey.mcp.list(),
         window.codey.mcp.listAgent(),
-        window.codey.workers.list(),
+        window.codey.bots.list(),
       ])
       if (stale) return
       const entries: MentionEntry[] = []
-      // Workers come first: "@alice ..." hands the turn to that worker, and
+      // Bots come first: "@alice ..." hands the turn to that bot, and
       // "@alice @bob ..." forms an ad-hoc team the Advisor dispatches.
-      if (workers.ok) {
-        for (const worker of workers.data) {
-          const role = (worker.personality?.role ?? '').split('\n')[0].trim()
-          entries.push(resourceEntry('worker', worker.name, worker.config?.dispatchHint?.trim() || role))
+      if (bots.ok) {
+        for (const bot of bots.data) {
+          const role = (bot.personality?.role ?? '').split('\n')[0].trim()
+          entries.push(resourceEntry('bot', bot.name, bot.config?.dispatchHint?.trim() || role))
         }
       }
-      // Teams sit next to workers: "@team:release ..." runs that team with its
+      // Teams sit next to bots: "@team:release ..." runs that team with its
       // configured dispatch instead of an ad-hoc one.
       for (const [name, raw] of Object.entries(teamLib)) {
         const members: string[] = Array.isArray(raw) ? raw : (raw.members ?? [])
@@ -1808,12 +1808,12 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
     if (resolvedRightPanelMode === 'terminal') changeRightPanelMode('overview')
   }
 
-  const panelWorkerName = chat.selection.type === 'worker' ? chat.selection.name : undefined
+  const panelBotName = chat.selection.type === 'bot' ? chat.selection.name : undefined
   const panelTeamName = chat.selection.type === 'team' ? chat.selection.name : undefined
   const runSettingsSummary = chat.selection.type === 'team'
     ? `${chat.selection.name ?? 'Team'} · per-runner routing`
     : [
-        chat.selection.type === 'worker' ? chat.selection.name : null,
+        chat.selection.type === 'bot' ? chat.selection.name : null,
         effectiveAgent,
         effectiveModel ?? 'default model',
       ].filter(Boolean).join(' · ')
@@ -1848,7 +1848,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
       <div style={styles.header}>
         <div style={{ ...styles.headerIdentity, ...(containerWidth > 0 && containerWidth < 760 ? { flex: 1, overflow: 'hidden' } : {}) }}>
           <span style={styles.workspaceTag}>{chat.botChat?.kind === 'direct'
-            ? <WorkerAvatar name={chat.botChat.members[0]} config={workers.find(worker => worker.name === chat.botChat!.members[0])?.config.avatar} state={flight?.queuedPosition ? 'waiting' : isSending ? 'working' : 'idle'} size={30} />
+            ? <BotAvatar name={chat.botChat.members[0]} config={bots.find(bot => bot.name === chat.botChat!.members[0])?.config.avatar} state={flight?.queuedPosition ? 'waiting' : isSending ? 'working' : 'idle'} size={30} />
             : <UIIcon name={chat.botChat ? 'users' : 'workspace'} size={13} />}{chat.botChat ? chat.title : chat.workspaceName}</span>
           {chat.botChat?.kind === 'direct' && isSending && <span role="status" style={{ fontSize: 11, color: C.fg3 }}>{flight?.queuedPosition ? 'Queued' : 'Working…'}</span>}
           {chat.botChat && <BotMembers key={chat.id} chat={chat} running={isSending} />}
@@ -1949,9 +1949,9 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                   <span style={styles.runSettingLabel}>Bot</span>
                   <select disabled={!!chat.botChat} value={selectionValue} onChange={e => void onSelectionChange(e.target.value)} style={styles.runSettingSelect}>
                     <option value="none">{chat.botChat?.kind === 'group' ? 'Group members' : 'No bot'}</option>
-                    {workers.length > 0 && (
+                    {bots.length > 0 && (
                       <optgroup label="Bots">
-                        {workers.map(w => <option key={w.name} value={`worker:${w.name}`}>{w.name}</option>)}
+                        {bots.map(w => <option key={w.name} value={`bot:${w.name}`}>{w.name}</option>)}
                       </optgroup>
                     )}
                     {teamNames.length > 0 && (
@@ -2142,12 +2142,12 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
           />
           {renderItems.map((item, idx) => {
           const msg = item.message
-          const isWorkerMessage = !!msg.worker && !msg.builtinMember && !msg.teamFinal
-          const member = isWorkerMessage ? workers.find(w => w.name.toLowerCase() === msg.worker!.toLowerCase()) : undefined
+          const isBotMessage = !!msg.bot && !msg.builtinMember && !msg.teamFinal
+          const member = isBotMessage ? bots.find(w => w.name.toLowerCase() === msg.bot!.toLowerCase()) : undefined
           const memberActive = !!flight && (msg.teamTurnId
             ? chat.messages.slice(chat.messages.findIndex(m => m.id === flight.userMessageId) + 1).some(m => m.id === msg.id)
             : msg === lastMsg)
-          const memberState = workerAvatarState(msg, memberActive)
+          const memberState = botAvatarState(msg, memberActive)
           const isUser = msg.role === 'user'
           const isSelected = !isUser && msg.id === selectedTurnId && overviewOpen
           const isEditing = isUser && editingMsgId === msg.id
@@ -2215,7 +2215,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                 transition: 'border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease',
               }}>
                 {/* Aide, Advisor and the team final answer read like a plain
-                    Codey reply: no member header at all. Only real workers
+                    Codey reply: no member header at all. Only real bots
                     get a name and an avatar, folded into TurnHeader's own row
                     so the name sits directly above the rule instead of on a
                     separate row with a gap under it. */}
@@ -2224,7 +2224,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                   // Keyed off the in-flight turn rather than msg.isComplete:
                   // messages persisted before isComplete existed would
                   // otherwise lose their rule and timestamp for good.
-                  const streaming = isWorkerMessage ? memberActive && msg.workerStatus !== 'done' && msg.workerStatus !== 'failed' : !!flight && msg === lastMsg
+                  const streaming = isBotMessage ? memberActive && msg.botStatus !== 'done' && msg.botStatus !== 'failed' : !!flight && msg === lastMsg
                   const expanded = thinkingToggles[msg.id]
                     ?? defaultThinkingExpanded({
                       hasAnswer: !!msg.content.trim(),
@@ -2243,10 +2243,10 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                         expanded={expanded}
                         onToggle={() => setThinkingExpanded(!expanded)}
                         onAskAgentAboutFallback={(detail, fb) => { void askAgentAboutFallback(detail, fb) }}
-                        leftAvatar={isWorkerMessage ? (
-                          <WorkerAvatar name={msg.worker!} config={member?.config.avatar} state={memberState} />
+                        leftAvatar={isBotMessage ? (
+                          <BotAvatar name={msg.bot!} config={member?.config.avatar} state={memberState} />
                         ) : undefined}
-                        leftLabel={isWorkerMessage ? <strong>{msg.worker}</strong> : undefined}
+                        leftLabel={isBotMessage ? <strong>{msg.bot}</strong> : undefined}
                         messageHovered={hoveredMsgId === msg.id}
                       />
                       {!!thinking && expanded && (
@@ -2266,7 +2266,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                     </>
                   )
                 })()}
-                {!isUser && (isWorkerMessage ? memberActive && memberState === 'working' : !!flight && msg === lastMsg) && (
+                {!isUser && (isBotMessage ? memberActive && memberState === 'working' : !!flight && msg === lastMsg) && (
                   <LiveActivity toolCalls={msg.toolCalls} />
                 )}
                 {(msg.content || (!isUser && msg.userQuestion?.question)) && (() => {
@@ -2298,13 +2298,13 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                     return <UserMessageContent content={msg.content} />
                   }
                   const raw = msg.content || msg.userQuestion?.question || ''
-                  // A worker reply is an ordinary assistant reply. The only
+                  // A bot reply is an ordinary assistant reply. The only
                   // thing it does not share with one is the marker protocol,
                   // which is whiteboard bookkeeping rather than prose.
-                  const text = isWorkerMessage ? (splitWhiteboardMarkers(raw).stripped || '…') : raw
-                  const parsed = isWorkerMessage || msg.builtinMember || msg.teamFinal ? null : parseTeamMessage(text)
-                  const isStreaming = isWorkerMessage
-                    ? memberActive && msg.workerStatus !== 'done' && msg.workerStatus !== 'failed'
+                  const text = isBotMessage ? (splitWhiteboardMarkers(raw).stripped || '…') : raw
+                  const parsed = isBotMessage || msg.builtinMember || msg.teamFinal ? null : parseTeamMessage(text)
+                  const isStreaming = isBotMessage
+                    ? memberActive && msg.botStatus !== 'done' && msg.botStatus !== 'failed'
                     : !!flight && msg === lastMsg
                   if (!parsed) return (
                     <div>
@@ -2316,7 +2316,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                   )
                   return (
                     <TeamMessage
-                      workers={workers}
+                      bots={bots}
                       messageId={msg.id}
                       parsed={parsed}
                       isStreaming={isStreaming}
@@ -2327,7 +2327,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                     />
                   )
                 })()}
-                {!isUser && msg.workerFailureReason && <div role="alert" style={{ color: C.red }}>{msg.workerFailureReason}</div>}
+                {!isUser && msg.botFailureReason && <div role="alert" style={{ color: C.red }}>{msg.botFailureReason}</div>}
                 {isUser && msg.attachments && msg.attachments.length > 0 && (
                   <div style={styles.attachmentsContainer}>
                     {msg.attachments.map(att => {
@@ -2585,7 +2585,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                 onMouseEnter={() => setMentionIdx(i)}
               >
                 <span style={styles.mentionIcon}>
-                  {entry.kind === 'worker' ? <WorkerAvatar name={entry.name} config={workers.find(w => w.name === entry.name)?.config.avatar} size={14} />
+                  {entry.kind === 'bot' ? <BotAvatar name={entry.name} config={bots.find(w => w.name === entry.name)?.config.avatar} size={14} />
                     : entry.kind === 'team' ? <UIIcon name="users" size={13} color={C.fg3} />
                     : entry.kind === 'skill' ? <UIIcon name="sparkle" size={13} color={C.fg3} />
                     : entry.kind === 'plugin' ? <UIIcon name="tools" size={13} color={C.fg3} />
@@ -2984,7 +2984,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
               selectedTurnIndex={selectedTurnIndex}
               effectiveAgent={effectiveAgent}
               effectiveModel={effectiveModel}
-              workerName={panelWorkerName}
+              botName={panelBotName}
               teamName={panelTeamName}
               teamGraph={panelTeamGraph}
               workingDir={workingDir}
@@ -3087,7 +3087,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: 'SF Mono, Menlo, monospace',
     maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const,
   },
-  workerSelect: {
+  botSelect: {
     background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 6,
     color: C.fg2, fontSize: 12, padding: '4px 8px', outline: 'none',
     flexShrink: 0, maxWidth: 180,
@@ -3186,7 +3186,7 @@ const styles: Record<string, React.CSSProperties> = {
     background: C.bg, color: C.fg, border: 'none',
     borderRadius: 6, padding: '3px 9px', fontSize: 11, cursor: 'pointer', fontWeight: 600,
   },
-  // modelBadge is still used by team worker messages; tsRight, tsMeta and
+  // modelBadge is still used by team bot messages; tsRight, tsMeta and
   // fallbackBadge moved into TurnHeader with the metadata they styled.
   modelBadge: {
     color: C.fg3, background: C.surface3, border: `1px solid ${C.border2}`,

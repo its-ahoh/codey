@@ -13,11 +13,11 @@
   <a href="https://github.com/its-ahoh/codey/stargazers"><img src="https://img.shields.io/github/stars/its-ahoh/codey?style=social" alt="GitHub stars" /></a>
 </p>
 
-**A multi-agent workbench for coding agents.** Codey is one place to organize, switch between, and orchestrate Claude Code, OpenCode, Codex, pi (and more) across your projects — give each project its own workspace, build teams of reusable worker roles, run several agents in parallel on the same task to compare, and reach all of it from a native macOS app, chat platforms (Telegram / Discord / iMessage), or system-wide push-to-talk voice.
+**A multi-agent workbench for coding agents.** Codey is one place to organize, switch between, and orchestrate Claude Code, OpenCode, Codex, pi (and more) across your projects — give each project its own workspace, build teams of reusable bot roles, run several agents in parallel on the same task to compare, and reach all of it from a native macOS app, chat platforms (Telegram / Discord / iMessage), or system-wide push-to-talk voice.
 
 Think of it less as a chat bridge and more as **the control plane for the coding agents you already use**. It runs entirely on your own machine, using your existing agent CLIs and accounts — no proxy server, no extra subscription.
 
-**Contents:** [Why Codey](#why-codey) · [Download](#download) · [Features](#features) · [Quick Start](#quick-start) · [Configuration](#configuration) · [Teams & flow graphs](#worker-configuration) · [Commands](#commands) · [Voice](#voice-input-macos) · [FAQ](#faq)
+**Contents:** [Why Codey](#why-codey) · [Download](#download) · [Features](#features) · [Quick Start](#quick-start) · [Configuration](#configuration) · [Teams & flow graphs](#bot-configuration) · [Commands](#commands) · [Voice](#voice-input-macos) · [FAQ](#faq)
 
 <p align="center">
   <img src="assets/demo.gif" alt="Codey demo: a scheduled Automation drafts a post and publishes it through the built-in agent-controlled browser, hands-free" width="800" />
@@ -26,9 +26,9 @@ Think of it less as a chat bridge and more as **the control plane for the coding
 
 ## Why Codey
 
-- **One project, the right agent for each job.** Per-workspace defaults plus per-worker overrides — Architect on Opus, Executor on Codex, Reviewer on local OpenCode, etc.
+- **One project, the right agent for each job.** Per-workspace defaults plus per-bot overrides — Architect on Opus, Executor on Codex, Reviewer on local OpenCode, etc.
 - **Run multiple agents in parallel on the same prompt.** Compare Claude Code vs. Codex vs. OpenCode side by side instead of guessing which one fits.
-- **Worker teams instead of single prompts.** Define roles, personalities, tools, and let them run sequentially or be auto-dispatched to the subset that's actually relevant.
+- **Bot teams instead of single prompts.** Define roles, personalities, tools, and let them run sequentially or be auto-dispatched to the subset that's actually relevant.
 - **Use them from anywhere.** Native macOS menu-bar app for daily driving, chat platforms for delegating from your phone, voice input for hands-free dictation into any focused app.
 - **Local and yours.** Runs on your machine, talks to your accounts, no proxy server in the middle.
 
@@ -50,11 +50,11 @@ Builds are currently unsigned — on first launch, right-click the app → **Ope
 - **Thinking effort**: One low → max control that maps onto each CLI's own reasoning knob
 - **Auto-dispatcher**: Optional built-in dispatcher routes a task to the right subset of a team
 
-**Workspaces & workers**
-- **Multi-workspace**: Each workspace has its own working directory, memory, and workers
-- **Worker teams**: Define workers with roles, personalities, and tools; execution inherits the chat or Default agent/model
+**Workspaces & bots**
+- **Multi-workspace**: Each workspace has its own working directory, memory, and bots
+- **Bot teams**: Define bots with roles, personalities, and tools; execution inherits the chat or Default agent/model
 - **Flow graphs**: Draw a team as a graph on a canvas — a judge LLM picks the next edge by its condition, so runs can branch, loop back for revisions, or pause to ask you
-- **Memory**: Workspace + user-global memory that workers read on every run and write insights back to
+- **Memory**: Workspace + user-global memory that bots read on every run and write insights back to
 - **Conversation context**: Remembers previous messages within a session
 
 **Interfaces**
@@ -148,20 +148,20 @@ Advisor (auto-dispatch + team routing) settings: `advisor.{agent, model}` (optio
 ```
 workspaces/
 ├── default/
-│   ├── workspace.json       # Workspace config (workingDir + workers)
+│   ├── workspace.json       # Workspace config (workingDir + bots)
 │   ├── memory.md            # Project memory/notes
-│   └── workers/
+│   └── bots/
 │       ├── architect.md
 │       └── executor.md
 ├── project-a/
 │   ├── workspace.json
 │   ├── memory.md
-│   └── workers/
+│   └── bots/
 │       └── ...
 └── project-b/
     ├── workspace.json
     ├── memory.md
-    └── workers/
+    └── bots/
         └── ...
 ```
 
@@ -170,7 +170,7 @@ Each workspace ties to a project directory via `workspace.json`:
 ```json
 {
   "workingDir": "/path/to/project",
-  "workers": {
+  "bots": {
     "architect": {
       "tools": ["file-system", "git", "web-search"]
     }
@@ -180,12 +180,12 @@ Each workspace ties to a project directory via `workspace.json`:
 
 Switching workspaces (`/workspace myproject`) automatically sets the agent's working directory.
 
-## Worker Configuration
+## Bot Configuration
 
-Each worker is defined in a markdown file:
+Each bot is defined in a markdown file:
 
 ```markdown
-# Worker: Architect
+# Bot: Architect
 
 ## Role
 Lead architect responsible for project planning...
@@ -203,7 +203,7 @@ claude-opus-4-20250514
 file-system, git, web-search
 
 ## Relationship
-Leads the implementation workers
+Leads the implementation bots
 
 ## Instructions
 When prompted, analyze requirements and provide...
@@ -211,11 +211,11 @@ When prompted, analyze requirements and provide...
 
 ## Commands
 
-### Workers
+### Bots
 | Command | Description |
 |---------|-------------|
-| `/workers` | List all workers in current workspace |
-| `/worker <name> <task>` | Run a specific worker |
+| `/bots` | List all bots in current workspace |
+| `/bot <name> <task>` | Run a specific bot |
 | `/team <name> [--all] <task>` | Run a named team (see below) |
 
 **Team dispatch details:**
@@ -224,20 +224,20 @@ When prompted, analyze requirements and provide...
   - Teams default to `dispatch: 'sequential'` (every member runs in order).
   - Teams configured with `dispatch: 'auto'` first invoke the built-in Advisor
     that selects the relevant subset. Pass `--all` to bypass it for one call.
-  - Optional `dispatchHint` on each worker's `config.json` improves routing accuracy.
+  - Optional `dispatchHint` on each bot's `config.json` improves routing accuracy.
   - The Advisor's agent/model is configured under `gateway.json` `advisor.{agent, model}`,
     defaulting to the gateway's default agent/model.
   - Teams configured with `dispatch: 'roundtable'` run as an **Advisor-moderated roundtable**:
-    all workers run concurrently as long-lived agent sessions, sharing opinion files in
+    all bots run concurrently as long-lived agent sessions, sharing opinion files in
     `chats/<chatId>/discussion/`. An Advisor loop evaluates progress, maintains a summary,
     and decides when to ask the user, continue, or terminate.
     Optional settings under `roundtable: { maxDurationMs, idleTimeoutMs, advisorPollMs }`.
     See [design spec](docs/superpowers/specs/2026-05-24-team-parallel-mode-design.md).
   - A sequential (`all`) team can also carry a **flow graph** — `graph: { entry, maxHops, nodes, edges }`.
-    Nodes are workers (plus `start` / `end`); each edge carries a natural-language condition.
-    After every worker runs, a judge LLM (the Advisor's agent/model) picks the next edge, so a flow can
-    branch or loop back to an earlier worker for revision until it reaches `end` or hits `maxHops`.
-    Workers can pause the flow with `[ASK_USER]`; the run resumes when you reply, on chat or in the Mac app.
+    Nodes are bots (plus `start` / `end`); each edge carries a natural-language condition.
+    After every bot runs, a judge LLM (the Advisor's agent/model) picks the next edge, so a flow can
+    branch or loop back to an earlier bot for revision until it reaches `end` or hits `maxHops`.
+    Bots can pause the flow with `[ASK_USER]`; the run resumes when you reply, on chat or in the Mac app.
     Draw one on the drag-and-drop canvas in the Mac app's flow editor.
 
 ### Workspaces
@@ -268,11 +268,11 @@ When prompted, analyze requirements and provide...
 # Switch workspace
 /workspace myproject
 
-# List workers
-/workers
+# List bots
+/bots
 
-# Run a worker
-/worker architect design a REST API
+# Run a bot
+/bot architect design a REST API
 
 # Run team task
 /team build a todo app
@@ -328,7 +328,7 @@ For everything else (channels, profiles, API keys), edit `gateway.json` directly
 
 ```
 packages/
-├── core/                # Shared types, workspace + worker managers
+├── core/                # Shared types, workspace + bot managers
 │   └── src/
 └── gateway/             # Gateway server, channels, agents
     └── src/
@@ -345,13 +345,13 @@ codey-mac/               # macOS menu-bar app (Electron + React)
 └── src/                 # Renderer (React UI)
 voice/                   # Native Swift helper for hotkey + capture + WhisperKit
 └── Sources/CodeyVoice/  # AudioCapture, HotkeyManager, HudOverlay, WhisperKitEngine, ...
-workspaces/              # Per-workspace config, memory, and workers
+workspaces/              # Per-workspace config, memory, and bots
 ```
 
 ## FAQ
 
 **Does Codey replace Claude Code / Codex / OpenCode?**
-No — it drives them. Codey shells out to the agent CLIs you already have installed and signed in, and adds the layer above them: workspaces, worker teams, parallel runs, scheduling, and remote access.
+No — it drives them. Codey shells out to the agent CLIs you already have installed and signed in, and adds the layer above them: workspaces, bot teams, parallel runs, scheduling, and remote access.
 
 **Do I need an API key?**
 Only for what you use. If your agent CLI is already authenticated (e.g. a Claude subscription), Codey uses it as-is. API keys in `gateway.json` are for agents/models you want to reach directly, and for cloud voice transcription.
@@ -392,3 +392,13 @@ codey-mac auto-updates via electron-updater from GitHub Releases.
    dmg + zip + `latest-mac.yml` to the GitHub Release.
 4. Installed apps detect the new version on next launch (or within ~4h) and show
    the update button in the sidebar footer.
+
+### Shared memory with Co-memo
+
+Codey uses the official `@ahoh.tech/co-memo` 0.7.0 package through local MCP stdio. The gateway requires Node.js 24.12+. User notes are shared across projects; project notes use the chat's working directory, including its worktree. Conversations without a project receive personal memory only. No Bot-private memory is created.
+
+Settings → Memory and workspace memory panels edit Co-memo directly. Edits and archives retain the version shown to the user, so concurrent changes are rejected. Archive keeps history; restoring or permanently deleting notes remains available through Co-memo's console/CLI. Existing Codey user/project files are retained and can be explicitly imported from the corresponding panel. Old Bot-scoped entries are excluded.
+
+The gateway recalls context before execution and records the injected text in **Memory included**. Agents receive instructions for the bundled Co-memo CLI; they decide what to save. There is no background transcript extractor. Disabling automatic saves requests Co-memo's user-level explicit-only policy. Disabling prompt memory affects Codey injection, not independent agent hooks or already-loaded conversation text. Read failures are logged and do not prevent the coding task; write/sync failures are shown rather than reported as saved.
+
+`CO_MEMO_HOME` selects an existing custom store; omission uses Co-memo's normal data directory. `CO_MEMO_NODE` and `CO_MEMO_CLI` can override the bundled launcher (0.7+ required). Codey does not install per-project hooks. If a CLI already has Co-memo hooks, use its tools-only configuration to avoid duplicate context delivery. Upgrade older connected Co-memo installations before opening the shared database with 0.7.

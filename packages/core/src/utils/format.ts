@@ -1,5 +1,5 @@
 /**
- * Condense a block of worker output to a short preview: the last non-empty
+ * Condense a block of bot output to a short preview: the last non-empty
  * paragraph, truncated to `maxChars` with a trailing ellipsis. Used to keep
  * per-step team output compact in chat surfaces. Returns '' for blank input.
  */

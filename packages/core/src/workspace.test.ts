@@ -3,17 +3,17 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { WorkspaceManager, normalizeDispatchMode } from './workspace';
-import { WorkerManager } from './workers';
+import { BotManager } from './bots';
 
-function seedWorkers(workersDir: string, names: string[]) {
+function seedBots(botsDir: string, names: string[]) {
   for (const n of names) {
-    fs.mkdirSync(path.join(workersDir, n), { recursive: true });
+    fs.mkdirSync(path.join(botsDir, n), { recursive: true });
     fs.writeFileSync(
-      path.join(workersDir, n, 'personality.md'),
+      path.join(botsDir, n, 'personality.md'),
       `# ${n}\n## Role\n${n}\n## Soul\n.\n## Instructions\n.\n`,
     );
     fs.writeFileSync(
-      path.join(workersDir, n, 'config.json'),
+      path.join(botsDir, n, 'config.json'),
       JSON.stringify({ codingAgent: 'claude-code', model: 'm', tools: [] }),
     );
   }
@@ -38,17 +38,17 @@ describe('WorkspaceManager parallel team config', () => {
   it('normalizes dispatch: "roundtable" with default parallel settings', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-parallel-'));
     const wsDir = path.join(root, 'workspaces');
-    const workersDir = path.join(root, 'workers');
+    const botsDir = path.join(root, 'bots');
     fs.mkdirSync(path.join(wsDir, 'demo'), { recursive: true });
-    seedWorkers(workersDir, ['a', 'b']);
+    seedBots(botsDir, ['a', 'b']);
     fs.writeFileSync(
       path.join(wsDir, 'demo', 'workspace.json'),
       JSON.stringify({ workingDir: root, teams: ['rt'] }),
     );
 
-    const workers = new WorkerManager(workersDir);
-    await workers.loadWorkers();
-    const ws = new WorkspaceManager(workers, wsDir, undefined, () => ({
+    const bots = new BotManager(botsDir);
+    await bots.loadBots();
+    const ws = new WorkspaceManager(bots, wsDir, undefined, () => ({
       rt: { members: ['a', 'b'], dispatch: 'roundtable' },
     }));
     await ws.switchWorkspace('demo');
@@ -66,17 +66,17 @@ describe('WorkspaceManager parallel team config', () => {
   it('preserves explicit parallel settings', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-parallel-'));
     const wsDir = path.join(root, 'workspaces');
-    const workersDir = path.join(root, 'workers');
+    const botsDir = path.join(root, 'bots');
     fs.mkdirSync(path.join(wsDir, 'demo'), { recursive: true });
-    seedWorkers(workersDir, ['a']);
+    seedBots(botsDir, ['a']);
     fs.writeFileSync(
       path.join(wsDir, 'demo', 'workspace.json'),
       JSON.stringify({ workingDir: root, teams: ['rt'] }),
     );
 
-    const workers = new WorkerManager(workersDir);
-    await workers.loadWorkers();
-    const ws = new WorkspaceManager(workers, wsDir, undefined, () => ({
+    const bots = new BotManager(botsDir);
+    await bots.loadBots();
+    const ws = new WorkspaceManager(bots, wsDir, undefined, () => ({
       rt: {
         members: ['a'],
         dispatch: 'roundtable',
@@ -95,17 +95,17 @@ describe('WorkspaceManager parallel team config', () => {
   it('falls back to "sequential" for unknown dispatch values', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-parallel-'));
     const wsDir = path.join(root, 'workspaces');
-    const workersDir = path.join(root, 'workers');
+    const botsDir = path.join(root, 'bots');
     fs.mkdirSync(path.join(wsDir, 'demo'), { recursive: true });
-    seedWorkers(workersDir, ['a']);
+    seedBots(botsDir, ['a']);
     fs.writeFileSync(
       path.join(wsDir, 'demo', 'workspace.json'),
       JSON.stringify({ workingDir: root, teams: ['rt'] }),
     );
 
-    const workers = new WorkerManager(workersDir);
-    await workers.loadWorkers();
-    const ws = new WorkspaceManager(workers, wsDir, undefined, () => ({
+    const bots = new BotManager(botsDir);
+    await bots.loadBots();
+    const ws = new WorkspaceManager(bots, wsDir, undefined, () => ({
       rt: { members: ['a'], dispatch: 'nope' as unknown as 'sequential' },
     }));
     await ws.switchWorkspace('demo');
@@ -121,10 +121,10 @@ class TestWM extends WorkspaceManager {
 }
 
 function makeWM(): TestWM {
-  const workers = new WorkerManager('/tmp/nonexistent-workers');
+  const bots = new BotManager('/tmp/nonexistent-bots');
   // Pretend "coder" exists.
-  (workers as any).workers = new Map([['coder', { name: 'coder', personality: {}, config: {} }]]);
-  return new TestWM(workers, '/tmp/ws');
+  (bots as any).bots = new Map([['coder', { name: 'coder', personality: {}, config: {} }]]);
+  return new TestWM(bots, '/tmp/ws');
 }
 
 describe('WorkspaceManager workspace ordering', () => {
@@ -142,7 +142,7 @@ describe('WorkspaceManager workspace ordering', () => {
       JSON.stringify({ workingDir: root, createdAt: '2026-02-01T00:00:00.000Z' }),
     );
 
-    const manager = new WorkspaceManager(new WorkerManager(path.join(root, 'workers')), wsDir);
+    const manager = new WorkspaceManager(new BotManager(path.join(root, 'bots')), wsDir);
     expect(manager.listWorkspaces()).toEqual(['newer', 'older']);
     fs.rmSync(root, { recursive: true, force: true });
   });
@@ -153,7 +153,7 @@ const validGraph = {
   maxHops: 5,
   nodes: [
     { id: 'start', type: 'start', x: 0, y: 0 },
-    { id: 'n_coder', type: 'worker', worker: 'coder', x: 1, y: 0 },
+    { id: 'n_coder', type: 'bot', bot: 'coder', x: 1, y: 0 },
     { id: 'end', type: 'end', x: 2, y: 0 },
   ],
   edges: [
@@ -201,8 +201,8 @@ describe('WorkspaceManager SkillStore', () => {
     wsDir = path.join(root, 'workspaces');
     seedWorkspace('proj', true);
     seedWorkspace('other', false);
-    const workers = new WorkerManager(path.join(root, 'workers'));
-    manager = new WorkspaceManager(workers, wsDir);
+    const bots = new BotManager(path.join(root, 'bots'));
+    manager = new WorkspaceManager(bots, wsDir);
     await manager.switchWorkspace('proj');
   });
 

@@ -73,7 +73,7 @@ type Action =
   | { type: 'toolCall'; chatId: string; entry: ToolCallEntry; status: AgentActivity; messageId?: string }
   | { type: 'patchChecklist'; chatId: string; items: ChecklistItem[] }
   | { type: 'queued'; chatId: string; position: number }
-  | { type: 'completeSend'; taskId?: string | null; tasks?: Chat['tasks']; worker?: string; workerStatus?: ChatMessage['workerStatus']; chatId: string; assistantMessageId: string; content: string; thinking?: string; tokens?: number; durationSec?: number; agent?: ChatMessage['agent']; model?: string; title?: string; choices?: string[]; userQuestion?: ChatMessage['userQuestion']; fallback?: ChatMessage['fallback']; teamTurnId?: string }
+  | { type: 'completeSend'; memoryUsed?: ChatMessage['memoryUsed']; taskId?: string | null; tasks?: Chat['tasks']; bot?: string; botStatus?: ChatMessage['botStatus']; chatId: string; assistantMessageId: string; content: string; thinking?: string; tokens?: number; durationSec?: number; agent?: ChatMessage['agent']; model?: string; title?: string; choices?: string[]; userQuestion?: ChatMessage['userQuestion']; fallback?: ChatMessage['fallback']; teamTurnId?: string }
   | { type: 'errorSend'; chatId: string; assistantMessageId: string; error: string }
   | { type: 'stoppedSend'; chatId: string; text: string }
   | { type: 'clearRestore'; chatId: string }
@@ -90,9 +90,9 @@ type Action =
   | { type: 'dequeueMessage'; chatId: string }
   | { type: 'removeQueuedMessage'; chatId: string; id: string }
   | { type: 'resumeQueue'; chatId: string }
-  | { type: 'teamStart'; chatId: string; teamTurnId: string; teamName: string; mode: 'sequential' | 'graph' | 'auto' | 'roundtable'; workers?: Array<{ messageId: string; step: number; worker: string; agent?: ChatMessage['agent']; model?: string }> }
-  | { type: 'workerStart'; chatId: string; teamTurnId: string; messageId: string; step: number; worker: string; agent?: ChatMessage['agent']; model?: string; reason?: string }
-  | { type: 'workerEnd'; chatId: string; messageId: string; step: number; status: 'running' | 'done' | 'failed' | 'askedUser'; failureReason?: string; nextUserAction?: ChatMessage['workerNextUserAction'] }
+  | { type: 'teamStart'; chatId: string; teamTurnId: string; teamName: string; mode: 'sequential' | 'graph' | 'auto' | 'roundtable'; bots?: Array<{ messageId: string; step: number; bot: string; agent?: ChatMessage['agent']; model?: string }> }
+  | { type: 'botStart'; chatId: string; teamTurnId: string; messageId: string; step: number; bot: string; agent?: ChatMessage['agent']; model?: string; reason?: string }
+  | { type: 'botEnd'; chatId: string; messageId: string; step: number; status: 'running' | 'done' | 'failed' | 'askedUser'; failureReason?: string; nextUserAction?: ChatMessage['botNextUserAction'] }
   | { type: 'blackboardUpdate'; chatId: string; teamTurnId: string; messageId: string; blackboard: BlackboardSnapshot }
   | { type: 'teamEnd'; chatId: string; teamTurnId: string; summary: TeamRunSummary; taskBrief?: TaskBrief }
 
@@ -102,7 +102,7 @@ function reorder(order: string[], chatId: string): string[] {
 
 const EXTERNAL_TURN_EVENTS = new Set([
   'tool_start', 'tool_end', 'info', 'stream', 'thinking',
-  'team_start', 'worker_start', 'worker_end', 'blackboard_update', 'team_end',
+  'team_start', 'bot_start', 'bot_end', 'blackboard_update', 'team_end',
 ])
 
 /**
@@ -120,8 +120,8 @@ export function shouldAdoptExternalTurn(
   return EXTERNAL_TURN_EVENTS.has(ev.type)
 }
 
-function mkWorkerStub(teamTurnId: string, teamName: string, mode: ChatMessage['teamMode'], id: string, step: number, worker: string, reason?: string, agent?: ChatMessage['agent'], model?: string, status: NonNullable<ChatMessage['workerStatus']> = 'running'): ChatMessage {
-  return { id, role: 'assistant', content: '', timestamp: Date.now(), toolCalls: [], isComplete: false, teamTurnId, teamName, teamMode: mode, step, worker, workerStatus: status, advisorReason: reason, agent, model }
+function mkBotStub(teamTurnId: string, teamName: string, mode: ChatMessage['teamMode'], id: string, step: number, bot: string, reason?: string, agent?: ChatMessage['agent'], model?: string, status: NonNullable<ChatMessage['botStatus']> = 'running'): ChatMessage {
+  return { id, role: 'assistant', content: '', timestamp: Date.now(), toolCalls: [], isComplete: false, teamTurnId, teamName, teamMode: mode, step, bot, botStatus: status, advisorReason: reason, agent, model }
 }
 
 /** Keep the map free of empty arrays — an absent key and an empty queue mean
@@ -351,10 +351,10 @@ export function reducer(state: State, action: Action): State {
         timestamp: Date.now(),
         toolCalls: [],
         isComplete: false,
-        ...(chat.selection.type === 'worker' ? { worker: chat.selection.name } : {}),
+        ...(chat.selection.type === 'bot' ? { bot: chat.selection.name } : {}),
         // Provisional identity so the header exists while the reply streams
         // instead of appearing only once `done` lands. The caller passes the
-        // resolved agent/model (per-chat → worker → gateway default); the
+        // resolved agent/model (per-chat → bot → gateway default); the
         // chat's own overrides are the fallback for senders without that
         // context. `completeSend` overwrites both with what actually ran.
         agent: action.agent ?? chat.agent,
@@ -443,10 +443,10 @@ export function reducer(state: State, action: Action): State {
       const chat = state.chats[action.chatId]
       if (!chat) return state
       const initialStatus = action.mode === 'roundtable' ? 'running' : 'pending'
-      const stubs = (action.workers ?? []).map(w => mkWorkerStub(action.teamTurnId, action.teamName, action.mode, w.messageId, w.step, w.worker, undefined, w.agent, w.model, initialStatus))
+      const stubs = (action.bots ?? []).map(w => mkBotStub(action.teamTurnId, action.teamName, action.mode, w.messageId, w.step, w.bot, undefined, w.agent, w.model, initialStatus))
       const existing = new Set(chat.messages.map(m => m.id))
       // A normal send starts with a generic assistant placeholder. Once the
-      // gateway identifies the turn as a team run, the worker messages replace
+      // gateway identifies the turn as a team run, the bot messages replace
       // that placeholder; leaving it behind creates the empty bubble above the
       // team group (and later a duplicate combined transcript).
       const placeholderId = state.inFlight[action.chatId]?.assistantMessageId
@@ -456,12 +456,12 @@ export function reducer(state: State, action: Action): State {
       ]
       return { ...state, chats: { ...state.chats, [chat.id]: { ...chat, messages, updatedAt: Date.now() } } }
     }
-    case 'workerStart': {
+    case 'botStart': {
       const chat = state.chats[action.chatId]
       if (!chat) return state
       if (chat.messages.some(m => m.id === action.messageId)) {
         const messages = chat.messages.map(m => m.id === action.messageId ? {
-          ...m, workerStatus: 'running' as const, isComplete: false,
+          ...m, botStatus: 'running' as const, isComplete: false,
           ...(action.reason ? { advisorReason: action.reason } : {}),
           ...(action.agent ? { agent: action.agent } : {}),
           ...(action.model ? { model: action.model } : {}),
@@ -470,15 +470,15 @@ export function reducer(state: State, action: Action): State {
       }
       const teamName = chat.messages.find(m => m.teamTurnId === action.teamTurnId)?.teamName ?? (chat.selection.type === 'team' ? chat.selection.name ?? '' : '')
       const mode = chat.messages.find(m => m.teamTurnId === action.teamTurnId)?.teamMode ?? 'auto'
-      const stub = mkWorkerStub(action.teamTurnId, teamName, mode, action.messageId, action.step, action.worker, action.reason, action.agent, action.model)
+      const stub = mkBotStub(action.teamTurnId, teamName, mode, action.messageId, action.step, action.bot, action.reason, action.agent, action.model)
       const placeholderId = state.inFlight[action.chatId]?.assistantMessageId
       const messages = [...chat.messages.filter(m => m.id !== placeholderId), stub]
       return { ...state, chats: { ...state.chats, [chat.id]: { ...chat, messages, updatedAt: Date.now() } } }
     }
-    case 'workerEnd': {
+    case 'botEnd': {
       const chat = state.chats[action.chatId]
       if (!chat) return state
-      const messages = chat.messages.map(m => m.id === action.messageId ? { ...m, workerStatus: action.status, isComplete: action.status !== 'running', workerFailureReason: action.failureReason, workerNextUserAction: action.nextUserAction } : m)
+      const messages = chat.messages.map(m => m.id === action.messageId ? { ...m, botStatus: action.status, isComplete: action.status !== 'running', botFailureReason: action.failureReason, botNextUserAction: action.nextUserAction } : m)
       return { ...state, chats: { ...state.chats, [chat.id]: { ...chat, messages, updatedAt: Date.now() } } }
     }
     case 'blackboardUpdate': {
@@ -523,7 +523,7 @@ export function reducer(state: State, action: Action): State {
       let messages: ChatMessage[]
       if (action.teamTurnId) {
         const teamMessages = chat.messages.filter(m => m.teamTurnId === action.teamTurnId)
-        const firstWorker = teamMessages.find(m => m.worker)
+        const firstBot = teamMessages.find(m => m.bot)
         messages = chat.messages.filter(m => m.id !== action.assistantMessageId)
         // Keep the team wrap-up/whiteboard as group metadata rather than a
         // standalone assistant bubble. An empty response needs no footer.
@@ -536,16 +536,20 @@ export function reducer(state: State, action: Action): State {
             toolCalls: [],
             isComplete: true,
             tokens: action.tokens,
-            durationSec: action.durationSec,
+            memoryUsed: action.memoryUsed, durationSec: action.durationSec,
             agent: action.agent,
             model: action.model,
             choices: action.choices,
             userQuestion: action.userQuestion,
             fallback: action.fallback,
             teamTurnId: action.teamTurnId,
-            teamName: firstWorker?.teamName,
-            teamMode: firstWorker?.teamMode,
+            teamName: firstBot?.teamName,
+            teamMode: firstBot?.teamMode,
           }]
+        }
+        if (action.memoryUsed?.length) {
+          const last = messages.filter(m => m.teamTurnId === action.teamTurnId).pop();
+          if (last) messages = messages.map(m => m.id === last.id ? { ...m, memoryUsed: action.memoryUsed } : m);
         }
       } else if (chat.messages.some(m => m.id === action.assistantMessageId)) {
         messages = chat.messages.map(m =>
@@ -553,7 +557,7 @@ export function reducer(state: State, action: Action): State {
             // `?? m.thinking` rather than a plain assignment: thinking that
             // already streamed in through thinkingToken must not be wiped by a
             // done event that carries none.
-            ? { ...m, ...(action.worker ? { worker: action.worker, workerStatus: action.workerStatus } : {}), content: action.content, thinking: action.thinking ?? m.thinking, tokens: action.tokens, durationSec: action.durationSec, agent: action.agent, model: action.model, isComplete: true, choices: action.choices, userQuestion: action.userQuestion, fallback: action.fallback }
+            ? { ...m, ...(action.bot ? { bot: action.bot, botStatus: action.botStatus } : {}), content: action.content, thinking: action.thinking ?? m.thinking, tokens: action.tokens, memoryUsed: action.memoryUsed, durationSec: action.durationSec, agent: action.agent, model: action.model, isComplete: true, choices: action.choices, userQuestion: action.userQuestion, fallback: action.fallback }
             : m
         )
       } else {
@@ -563,14 +567,14 @@ export function reducer(state: State, action: Action): State {
           id: action.assistantMessageId,
           role: 'assistant',
           content: action.content,
-          worker: action.worker,
-          workerStatus: action.workerStatus,
+          bot: action.bot,
+          botStatus: action.botStatus,
           thinking: action.thinking,
           timestamp: Date.now(),
           toolCalls: [],
           isComplete: true,
           tokens: action.tokens,
-          durationSec: action.durationSec,
+          memoryUsed: action.memoryUsed, durationSec: action.durationSec,
           agent: action.agent,
           model: action.model,
           choices: action.choices,
@@ -648,7 +652,7 @@ export function reducer(state: State, action: Action): State {
       if (!chat) return state
       const messages = chat.messages.map(m =>
         m.id === action.assistantMessageId
-          ? { ...m, content: action.error, isComplete: true, ...(m.worker ? { workerStatus: 'failed' as const } : {}) }
+          ? { ...m, content: action.error, isComplete: true, ...(m.bot ? { botStatus: 'failed' as const } : {}) }
           : m
       )
       // Team startup removes the generic assistant stub. Keep terminal errors
@@ -847,13 +851,13 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           dispatch({ type: 'thinkingToken', chatId: ev.chatId, token: ev.token, step: ev.step, messageId: ev.messageId })
           break
         case 'team_start':
-          dispatch({ type: 'teamStart', chatId: ev.chatId, teamTurnId: ev.teamTurnId, teamName: ev.teamName, mode: ev.mode, workers: ev.workers })
+          dispatch({ type: 'teamStart', chatId: ev.chatId, teamTurnId: ev.teamTurnId, teamName: ev.teamName, mode: ev.mode, bots: ev.bots })
           break
-        case 'worker_start':
-          dispatch({ type: 'workerStart', chatId: ev.chatId, teamTurnId: ev.teamTurnId, messageId: ev.messageId, step: ev.step, worker: ev.worker, agent: ev.agent, model: ev.model, reason: ev.reason })
+        case 'bot_start':
+          dispatch({ type: 'botStart', chatId: ev.chatId, teamTurnId: ev.teamTurnId, messageId: ev.messageId, step: ev.step, bot: ev.bot, agent: ev.agent, model: ev.model, reason: ev.reason })
           break
-        case 'worker_end':
-          dispatch({ type: 'workerEnd', chatId: ev.chatId, messageId: ev.messageId, step: ev.step, status: ev.status, failureReason: ev.failureReason, nextUserAction: ev.nextUserAction })
+        case 'bot_end':
+          dispatch({ type: 'botEnd', chatId: ev.chatId, messageId: ev.messageId, step: ev.step, status: ev.status, failureReason: ev.failureReason, nextUserAction: ev.nextUserAction })
           break
         case 'blackboard_update':
           dispatch({ type: 'blackboardUpdate', chatId: ev.chatId, teamTurnId: ev.teamTurnId, messageId: ev.messageId, blackboard: ev.blackboard })
@@ -880,8 +884,8 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               chatId: ev.chatId,
               assistantMessageId: asstId,
               content: ev.response,
-              worker: ev.worker,
-              workerStatus: ev.workerStatus,
+              bot: ev.bot,
+              botStatus: ev.botStatus,
               // The agent may report thinking only at the end rather than
               // streaming it (claude-code does exactly that when the deltas
               // arrive as whole assistant blocks). Without this the renderer
@@ -889,7 +893,7 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               // persisted it, so the disclosure never appears until refetch.
               thinking: ev.thinking,
               tokens: ev.tokens,
-              durationSec: ev.durationSec,
+              memoryUsed: ev.memoryUsed, durationSec: ev.durationSec,
               agent: ev.agent,
               model: ev.model,
               title: ev.title,

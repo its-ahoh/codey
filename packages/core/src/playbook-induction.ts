@@ -146,9 +146,9 @@ export function stepsFrom(
 export interface ProcedureInput {
   runId: string;
   steps?: TraceStep[];
-  /** Team runs observe process at a coarser grain; worker names stand in for
+  /** Team runs observe process at a coarser grain; bot names stand in for
    *  tools so both kinds cluster on the same machinery. */
-  workerSequence?: string[];
+  botSequence?: string[];
 }
 
 export interface ProcedureCluster {
@@ -185,7 +185,7 @@ export const DEFAULT_MIN_DISTINCTIVENESS = 0.4;
 /** Tool sequence with consecutive repeats collapsed. */
 export function signatureOf(input: ProcedureInput): string[] {
   const names = (input.steps ?? []).map(s => s.tool);
-  if (names.length === 0 && input.workerSequence) names.push(...input.workerSequence);
+  if (names.length === 0 && input.botSequence) names.push(...input.botSequence);
   const collapsed: string[] = [];
   for (const name of names) {
     if (collapsed[collapsed.length - 1] !== name) collapsed.push(name);

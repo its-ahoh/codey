@@ -5,13 +5,13 @@ import { ChatManager } from './chats';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-const worker = (status: ChatMessage['workerStatus'] = 'done', extra: Partial<ChatMessage> = {}): ChatMessage => ({ id: 'w', role: 'assistant', worker: 'Alice', workerStatus: status, teamTurnId: 't', content: 'Implemented search', timestamp: 1, ...extra });
-const input = () => ({ teamTurnId: 't', task: 'Build search', messages: [worker()] });
+const bot = (status: ChatMessage['botStatus'] = 'done', extra: Partial<ChatMessage> = {}): ChatMessage => ({ id: 'w', role: 'assistant', bot: 'Alice', botStatus: status, teamTurnId: 't', content: 'Implemented search', timestamp: 1, ...extra });
+const input = () => ({ teamTurnId: 't', task: 'Build search', messages: [bot()] });
 describe('Aide terminal message', () => {
   it.each(['sequential', 'graph', 'auto', 'roundtable'] as const)('summarizes evidence across members in %s', async teamMode => {
     const run = vi.fn().mockResolvedValue('Search works; review is still blocked. Grant access.');
-    const message = await composeTeamFinal({ ...input(), messages: [worker('done', { teamMode }), worker('failed', { id: 'b', worker: 'Bob', workerFailureReason: 'No access', workerNextUserAction: { text: 'Grant access' } })], run });
-    expect(message).toMatchObject({ id: 'team-final:t', worker: 'Aide', builtinMember: 'aide', teamFinal: { source: 'aide', outcome: 'failed' } });
+    const message = await composeTeamFinal({ ...input(), messages: [bot('done', { teamMode }), bot('failed', { id: 'b', bot: 'Bob', botFailureReason: 'No access', botNextUserAction: { text: 'Grant access' } })], run });
+    expect(message).toMatchObject({ id: 'team-final:t', bot: 'Aide', builtinMember: 'aide', teamFinal: { source: 'aide', outcome: 'failed' } });
     expect(run.mock.calls[0][0]).toContain('Implemented search');
     expect(run.mock.calls[0][0]).toContain('No access');
     expect(run.mock.calls[0][0]).toContain('do not decide disagreements');
@@ -34,7 +34,7 @@ describe('Aide terminal message', () => {
     expect(message!.content).toContain('Implemented search');
   });
   it('reports no execution rather than claiming completion for a zero-step graph', async () => {
-    const message = await composeTeamFinal({ ...input(), messages: [worker('pending')], reason: 'Flow reached its end without executing a member' });
+    const message = await composeTeamFinal({ ...input(), messages: [bot('pending')], reason: 'Flow reached its end without executing a member' });
     expect(message!.content).toContain('No member executed');
     expect(message!.teamFinal!.outcome).toBe('empty');
   });
@@ -63,7 +63,7 @@ describe('Aide terminal message', () => {
     try {
       const manager = new ChatManager(root);
       const chat = manager.create({ workspaceName: 'ws', selection: { type: 'team', name: 'T' } });
-      manager.appendMessage(chat.id, worker());
+      manager.appendMessage(chat.id, bot());
       const emitted: ChatMessage[] = [];
       const store = { messages: () => manager.get(chat.id)!.messages, append: (m: ChatMessage) => { manager.appendMessage(chat.id, m); }, emit: (m: ChatMessage) => {
         const saved = JSON.parse(fs.readFileSync(path.join(root, 'ws', 'chats', `${chat.id}.json`), 'utf8'));
@@ -82,14 +82,14 @@ describe('Aide terminal message', () => {
 });
 
 describe('planTeamFooter', () => {
-  const msgs = (...workers: string[]): ChatMessage[] =>
-    workers.map((w, i) => worker('done', { id: `w${i}`, worker: w }));
+  const msgs = (...bots: string[]): ChatMessage[] =>
+    bots.map((w, i) => bot('done', { id: `w${i}`, bot: w }));
 
-  it('drops the transcript footer for a finished lone "@worker" run — the member bubble already shows it', () => {
+  it('drops the transcript footer for a finished lone "@bot" run — the member bubble already shows it', () => {
     expect(planTeamFooter({ hasFinal: false, footerText: '📊 Team **pm** results\n\n**pm**: done', hasSummary: true, pending: false, boundToTeam: false, messages: msgs('pm'), teamTurnId: 't' })).toBe('attach');
   });
 
-  it('keeps the footer while a lone "@worker" run is paused on a question', () => {
+  it('keeps the footer while a lone "@bot" run is paused on a question', () => {
     expect(planTeamFooter({ hasFinal: false, footerText: 'Which one?', hasSummary: false, pending: true, boundToTeam: false, messages: msgs('pm'), teamTurnId: 't' })).toBe('append');
   });
 

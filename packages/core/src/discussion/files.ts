@@ -11,8 +11,8 @@ export function opinionsDir(workspacesRoot: string, workspace: string, chatId: s
   return path.join(discussionDir(workspacesRoot, workspace, chatId), 'opinions');
 }
 
-export function opinionPath(workspacesRoot: string, workspace: string, chatId: string, worker: string): string {
-  return path.join(opinionsDir(workspacesRoot, workspace, chatId), `${worker}.md`);
+export function opinionPath(workspacesRoot: string, workspace: string, chatId: string, bot: string): string {
+  return path.join(opinionsDir(workspacesRoot, workspace, chatId), `${bot}.md`);
 }
 
 export function controlPath(workspacesRoot: string, workspace: string, chatId: string): string {
@@ -40,7 +40,7 @@ export async function initDiscussionDir(
   workspace: string,
   chatId: string,
   topic: string,
-  workers: string[]
+  bots: string[]
 ): Promise<void> {
   const dir = discussionDir(workspacesRoot, workspace, chatId);
   const opDir = opinionsDir(workspacesRoot, workspace, chatId);
@@ -53,7 +53,7 @@ export async function initDiscussionDir(
     await fsp.writeFile(controlPath(workspacesRoot, workspace, chatId), controlBlock());
     await fsp.writeFile(summaryPath(workspacesRoot, workspace, chatId), '# Summary\n\n(pending)\n');
     await fsp.writeFile(transcriptPath(workspacesRoot, workspace, chatId), '');
-    for (const w of workers) {
+    for (const w of bots) {
       await fsp.writeFile(opinionPath(workspacesRoot, workspace, chatId, w), `# ${w}'s opinion\n\n(not started)\n`);
     }
   } else {
@@ -62,7 +62,7 @@ export async function initDiscussionDir(
       `\n\n## Continuation (${new Date().toISOString()})\n\n${topic}\n`
     );
     await fsp.writeFile(controlPath(workspacesRoot, workspace, chatId), controlBlock());
-    for (const w of workers) {
+    for (const w of bots) {
       const p = opinionPath(workspacesRoot, workspace, chatId, w);
       if (!fs.existsSync(p)) {
         await fsp.writeFile(p, `# ${w}'s opinion\n\n(not started)\n`);

@@ -25,7 +25,7 @@ export interface ParallelFinalEvent {
   reason: DiscussionTerminatedReason;
   message: string;
   summary: string;
-  perWorker: Array<{ name: string; excerpt: string }>;
+  perBot: Array<{ name: string; excerpt: string }>;
 }
 
 export interface ParallelUserQuestion {
@@ -43,19 +43,19 @@ export interface ParallelTeamRunnerOptions {
   members: string[];
   topic: string;
   settings: RoundtableSettings;
-  workerRunner: (req: AgentRequest, worker: string) => Promise<AgentResponse>;
+  botRunner: (req: AgentRequest, bot: string) => Promise<AgentResponse>;
   advisorRunner: AgentRunner;
-  buildWorkerPrompt: (worker: string) => string;
+  buildBotPrompt: (bot: string) => string;
   onUserQuestion: (q: ParallelUserQuestion) => void;
   onFinal: (e: ParallelFinalEvent) => void;
-  /** Called when a worker's run finishes (success or failure). */
-  onWorkerDone?: (worker: string, ok: boolean, error?: string) => void;
+  /** Called when a bot's run finishes (success or failure). */
+  onBotDone?: (bot: string, ok: boolean, error?: string) => void;
 }
 
 export class ParallelTeamRunner {
   readonly discussionDir: string;
   private abort = new AbortController();
-  private workerAborts: AbortController[] = [];
+  private botAborts: AbortController[] = [];
   private done = false;
   private donePromise: Promise<void>;
   private resolveDone!: () => void;
@@ -77,9 +77,9 @@ export class ParallelTeamRunner {
     this.idleSince = this.startedAt;
     await appendTranscript(this.opts.workspacesRoot, this.opts.workspace, this.opts.chatId, { actor: 'system', kind: 'started' });
     void this.runAdvisorLoop();
-    this.spawnWorkers();
+    this.spawnBots();
     this.armSupervisors();
-    console.log(`[parallel-runner] all workers spawned, advisor loop running, supervisors armed`);
+    console.log(`[parallel-runner] all bots spawned, advisor loop running, supervisors armed`);
   }
 
   waitDone(): Promise<void> { return this.donePromise; }
@@ -94,21 +94,21 @@ export class ParallelTeamRunner {
         prev => ({ ...prev, status: 'terminated', directive: 'discussion ended' })).catch(() => undefined);
     } finally {
       this.abort.abort();
-      for (const a of this.workerAborts) a.abort();
+      for (const a of this.botAborts) a.abort();
       await this.emitFinal(reason, finalMessage);
       this.resolveDone();
     }
   }
 
-  private spawnWorkers(): void {
+  private spawnBots(): void {
     for (const w of this.opts.members) {
       const ac = new AbortController();
-      this.workerAborts.push(ac);
-      void this.runWorkerLoop(w, ac);
+      this.botAborts.push(ac);
+      void this.runBotLoop(w, ac);
     }
   }
 
-  private async runWorkerLoop(worker: string, ac: AbortController): Promise<void> {
+  private async runBotLoop(bot: string, ac: AbortController): Promise<void> {
     const wsRoot = this.opts.workspacesRoot;
     const ws = this.opts.workspace;
     const chat = this.opts.chatId;
@@ -118,24 +118,24 @@ export class ParallelTeamRunner {
 
     while (!this.done && !ac.signal.aborted) {
       round++;
-      console.log(`[parallel-runner] worker "${worker}" starting round ${round}`);
-      const prompt = this.opts.buildWorkerPrompt(worker);
-      console.log(`[parallel-runner] worker "${worker}" prompt length: ${prompt.length}`);
+      console.log(`[parallel-runner] bot "${bot}" starting round ${round}`);
+      const prompt = this.opts.buildBotPrompt(bot);
+      console.log(`[parallel-runner] bot "${bot}" prompt length: ${prompt.length}`);
       const req: AgentRequest = { prompt, signal: ac.signal } as AgentRequest;
 
       try {
-        const res = await this.opts.workerRunner(req, worker);
-        console.log(`[parallel-runner] worker "${worker}" round ${round} done. success=${res.success} output=${(res.output || '').substring(0, 100)}`);
+        const res = await this.opts.botRunner(req, bot);
+        console.log(`[parallel-runner] bot "${bot}" round ${round} done. success=${res.success} output=${(res.output || '').substring(0, 100)}`);
         await appendTranscript(wsRoot, ws, chat, {
-          actor: worker, kind: res.success ? 'worker_done' : 'worker_failed',
+          actor: bot, kind: res.success ? 'bot_done' : 'bot_failed',
           note: res.error || `round ${round}`,
         });
-        if (!res.success) { this.opts.onWorkerDone?.(worker, false, res.error); finalized = true; break; }
+        if (!res.success) { this.opts.onBotDone?.(bot, false, res.error); finalized = true; break; }
       } catch (err) {
         await appendTranscript(wsRoot, ws, chat, {
-          actor: worker, kind: 'worker_error', note: (err as Error).message,
+          actor: bot, kind: 'bot_error', note: (err as Error).message,
         });
-        this.opts.onWorkerDone?.(worker, false, (err as Error).message); finalized = true;
+        this.opts.onBotDone?.(bot, false, (err as Error).message); finalized = true;
         break;
       }
 
@@ -150,7 +150,7 @@ export class ParallelTeamRunner {
       const status = ctrl?.status ?? 'running';
       if (status === 'terminated') break;
       if (status === 'finalizing') {
-        await appendTranscript(wsRoot, ws, chat, { actor: worker, kind: 'worker_done', note: 'finalizing exit' });
+        await appendTranscript(wsRoot, ws, chat, { actor: bot, kind: 'bot_done', note: 'finalizing exit' });
         break;
       }
       if (status === 'paused') {
@@ -162,9 +162,9 @@ export class ParallelTeamRunner {
         }
       }
     }
-    // Worker exited the loop via termination, finalizing, or external abort
-    // (not due to a worker-level failure/error, which finalized above).
-    if (!finalized) this.opts.onWorkerDone?.(worker, round > 0);
+    // Bot exited the loop via termination, finalizing, or external abort
+    // (not due to a bot-level failure/error, which finalized above).
+    if (!finalized) this.opts.onBotDone?.(bot, round > 0);
   }
   private async runAdvisorLoop(): Promise<void> {
     const wsRoot = this.opts.workspacesRoot;
@@ -294,7 +294,7 @@ export class ParallelTeamRunner {
   }
   private async emitFinal(reason: DiscussionTerminatedReason, message: string): Promise<void> {
     const summary = safeRead(summaryPath(this.opts.workspacesRoot, this.opts.workspace, this.opts.chatId));
-    const perWorker: Array<{ name: string; excerpt: string }> = [];
+    const perBot: Array<{ name: string; excerpt: string }> = [];
     for (const w of this.opts.members) {
       const text = safeRead(opinionPath(this.opts.workspacesRoot, this.opts.workspace, this.opts.chatId, w));
       const contentLines = text.split('\n').filter(l => {
@@ -302,9 +302,9 @@ export class ParallelTeamRunner {
         return t.length > 0 && !t.startsWith('#') && !t.startsWith('(not started');
       });
       const excerpt = contentLines.slice(0, 3).join(' ').slice(0, 300);
-      perWorker.push({ name: w, excerpt: excerpt || '(no content)' });
+      perBot.push({ name: w, excerpt: excerpt || '(no content)' });
     }
-    this.opts.onFinal({ reason, message, summary, perWorker });
+    this.opts.onFinal({ reason, message, summary, perBot });
   }
 }
 
@@ -312,13 +312,13 @@ function safeRead(p: string): string {
   try { return fs.readFileSync(p, 'utf-8'); } catch { return ''; }
 }
 
-function extractPendingAsks(opinions: Array<{ name: string; text: string }>): Array<{ worker: string; question: string }> {
-  const out: Array<{ worker: string; question: string }> = [];
+function extractPendingAsks(opinions: Array<{ name: string; text: string }>): Array<{ bot: string; question: string }> {
+  const out: Array<{ bot: string; question: string }> = [];
   for (const o of opinions) {
     const lines = o.text.split('\n');
     for (const line of lines) {
       const m = /^\[ASK_ADVISOR\]:\s*(.+)$/.exec(line.trim());
-      if (m) out.push({ worker: o.name, question: m[1] });
+      if (m) out.push({ bot: o.name, question: m[1] });
     }
   }
   return out;

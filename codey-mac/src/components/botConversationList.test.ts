@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { Chat } from '../types'
-import type { WorkerDto } from '../services/api'
+import type { BotDto } from '../services/api'
 import { BotMessageSearchCache, botConversationList, readBotPins } from './botConversationList'
-const bot = { name: 'Alice', personality: { role: 'Designer' }, config: {} } as WorkerDto
+const bot = { name: 'Alice', personality: { role: 'Designer' }, config: {} } as BotDto
 const chat = (id: string, kind: 'direct' | 'group', timestamp: number): Chat => ({
   id, title: id, workspaceName: '.bot-chats', selection: { type: 'none' }, createdAt: 1, updatedAt: 999,
   botChat: { kind, members: kind === 'direct' ? ['Alice'] : ['Alice', 'Ben'], homeDir: '/tmp' },

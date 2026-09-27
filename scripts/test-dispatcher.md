@@ -4,7 +4,7 @@ Project has no test runner; this is the canonical verification surface for the t
 
 ## Setup
 
-Two workers in `./workers/`:
+Two bots in `./bots/`:
 - `architect` with `## Role\nDesigns systems`
 - `reviewer` with `## Role\nAudits code`
 
@@ -26,7 +26,7 @@ Run `npm run dev`, switch to workspace `test`, then exercise each case below.
 
 ## Cases
 
-1. **Legacy format unchanged.** `/team legacy refactor module X` → both workers run, sequential carry chain, no dispatcher invocation. Header: `👥 Running team **legacy** (architect → reviewer)`.
+1. **Legacy format unchanged.** `/team legacy refactor module X` → both bots run, sequential carry chain, no dispatcher invocation. Header: `👥 Running team **legacy** (architect → reviewer)`.
 
 2. **`dispatch: 'all'` explicit.** Edit team to `{ "members": [...], "dispatch": "all" }`, repeat command, same behavior as 1.
 

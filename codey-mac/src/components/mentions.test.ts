@@ -258,23 +258,23 @@ describe('resource mentions', () => {
   })
 })
 
-describe('worker mentions', () => {
-  const alice = resourceEntry('worker', 'alice', 'writes the backend')
+describe('bot mentions', () => {
+  const alice = resourceEntry('bot', 'alice', 'writes the backend')
   const browser = resourceEntry('skill', 'browser', 'drives a web page')
   const resolve = (p: string) => [alice, browser].find(e => e.path === p)
 
-  it('classifies worker: tokens as the worker kind', () => {
-    expect(mentionKindOf('worker:alice')).toBe('worker')
+  it('classifies bot: tokens as the bot kind', () => {
+    expect(mentionKindOf('bot:alice')).toBe('bot')
   })
 
-  it('lists workers among resource mentions so they can be highlighted', () => {
-    expect(findResourceMentions('@worker:alice use @skill:browser', resolve)).toEqual([alice, browser])
+  it('lists bots among resource mentions so they can be highlighted', () => {
+    expect(findResourceMentions('@bot:alice use @skill:browser', resolve)).toEqual([alice, browser])
   })
 
-  it('does not append a prompt hint for workers, only for real capabilities', () => {
+  it('does not append a prompt hint for bots, only for real capabilities', () => {
     expect(appendMentionContext('go', [alice])).toBe('go')
     const withSkill = appendMentionContext('go', [alice, browser])
     expect(withSkill).toContain('skill "browser"')
-    expect(withSkill).not.toContain('worker')
+    expect(withSkill).not.toContain('bot')
   })
 })

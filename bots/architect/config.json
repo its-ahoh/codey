@@ -1,0 +1,7 @@
+{
+  "tools": [
+    "file-system",
+    "git",
+    "web-search"
+  ]
+}

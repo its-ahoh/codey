@@ -49,7 +49,7 @@ const STATUS_ICON: Record<NodeRunStatus, string> = {
   done: '✓', running: '◐', failed: '✕', askedUser: '?', pending: '○',
 }
 
-export function WorkerNodeView({ data, selected }: NodeProps) {
+export function BotNodeView({ data, selected }: NodeProps) {
   const d = data as { label: string; role?: string; bad?: boolean; status?: NodeRunStatus }
   const sBorder = statusBorder(d.status)
   return (
@@ -87,7 +87,7 @@ export function TerminalNodeView({ data, selected }: NodeProps) {
   )
 }
 
-export const nodeTypes = { workerNode: WorkerNodeView, conditionNode: ConditionNodeView, terminalNode: TerminalNodeView }
+export const nodeTypes = { botNode: BotNodeView, conditionNode: ConditionNodeView, terminalNode: TerminalNodeView }
 
 export function FlowEdgeView({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, label, data, selected }: EdgeProps) {
   const [edgePath, labelX, labelY] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition })
@@ -119,4 +119,4 @@ export const edgeTypes = { flowEdge: FlowEdgeView }
 
 // data.type -> React Flow node type (mirrors the inline mapping FlowEditor used).
 export const rfNodeType = (t: string): string =>
-  t === 'worker' ? 'workerNode' : t === 'condition' ? 'conditionNode' : 'terminalNode'
+  t === 'bot' ? 'botNode' : t === 'condition' ? 'conditionNode' : 'terminalNode'

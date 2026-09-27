@@ -384,7 +384,7 @@ const Shell: React.FC = () => {
             </div>
           )}
         </div>
-        {settingsOpen && <SettingsOverlay initialTab={settingsTab} onClose={() => { setSettingsOpen(false); setSettingsTab(undefined); refreshWorkspaces(); refreshChats(); window.dispatchEvent(new Event('codey:workers-changed')) }} />}
+        {settingsOpen && <SettingsOverlay initialTab={settingsTab} onClose={() => { setSettingsOpen(false); setSettingsTab(undefined); refreshWorkspaces(); refreshChats(); window.dispatchEvent(new Event('codey:bots-changed')) }} />}
         {automationsOpen && (
           <AutomationsView
             onClose={() => setAutomationsOpen(false)}

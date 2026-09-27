@@ -23,7 +23,7 @@ export function summarizePriorHistory(
   const sel = chat.selection;
   const selectionLabel =
     sel?.type === 'team' ? `team:${sel.name ?? '(workspace default)'}`
-    : sel?.type === 'worker' ? `worker:${sel.name ?? '?'}`
+    : sel?.type === 'bot' ? `bot:${sel.name ?? '?'}`
     : 'solo';
   const header =
     `📋 Linked to chat "${chat.title}"\n` +

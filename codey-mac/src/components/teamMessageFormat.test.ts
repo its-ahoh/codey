@@ -28,8 +28,8 @@ describe('parseTeamMessage', () => {
     expect(r).not.toBeNull()
     expect(r!.summary).toBe('All done.')
     expect(r!.steps).toHaveLength(2)
-    expect(r!.steps[0]).toEqual({ step: 1, worker: 'alice', output: 'alice did a thing.' })
-    expect(r!.steps[1]).toEqual({ step: 2, worker: 'bob', output: 'bob also did a thing.' })
+    expect(r!.steps[0]).toEqual({ step: 1, bot: 'alice', output: 'alice did a thing.' })
+    expect(r!.steps[1]).toEqual({ step: 2, bot: 'bob', output: 'bob also did a thing.' })
   })
 
   it('parses steps without a summary', () => {
@@ -44,10 +44,10 @@ describe('parseTeamMessage', () => {
     expect(r!.steps).toHaveLength(1)
   })
 
-  it('preserves "(revision)" suffix in worker name', () => {
+  it('preserves "(revision)" suffix in bot name', () => {
     const input = '### Step 3: alice (revision)\n\nfixed it'
     const r = parseTeamMessage(input)
-    expect(r!.steps[0].worker).toBe('alice (revision)')
+    expect(r!.steps[0].bot).toBe('alice (revision)')
   })
 
   it('returns null when any chunk fails to match the step pattern', () => {
@@ -61,9 +61,9 @@ describe('parseTeamMessage', () => {
 
   // The Sequential / `all` dispatch paths (authored-graph teams) emit a
   // different transcript than the `### Step` auto/advisor format: a
-  // "📊 Team **X** flow results" header followed by "**worker**:" blocks,
+  // "📊 Team **X** flow results" header followed by "**bot**:" blocks,
   // optionally trailed by a "🧠 Team blackboard" section.
-  it('parses the Sequential "flow results" / **worker**: format', () => {
+  it('parses the Sequential "flow results" / **bot**: format', () => {
     const input = [
       '📊 Team **Feature** flow results',
       '',
@@ -79,13 +79,13 @@ describe('parseTeamMessage', () => {
     expect(r).not.toBeNull()
     expect(r!.steps).toHaveLength(2)
     expect(r!.steps[0]).toEqual({
-      step: 1, worker: 'product-manager',
+      step: 1, bot: 'product-manager',
       output: 'PM wrote the spec.\n\nIt has **bold** mid-output and a blank line.',
     })
-    expect(r!.steps[1]).toMatchObject({ step: 2, worker: 'architect', output: 'Design done.' })
+    expect(r!.steps[1]).toMatchObject({ step: 2, bot: 'architect', output: 'Design done.' })
   })
 
-  it('captures same-line worker output (failed step) and excludes the blackboard', () => {
+  it('captures same-line bot output (failed step) and excludes the blackboard', () => {
     const input = [
       '📊 Team **Feature** flow results',
       '',
@@ -103,7 +103,7 @@ describe('parseTeamMessage', () => {
     ].join('\n')
     const r = parseTeamMessage(input)
     expect(r!.steps).toHaveLength(2)
-    expect(r!.steps[1]).toMatchObject({ step: 2, worker: 'developer', output: '❌ Failed - build error' })
+    expect(r!.steps[1]).toMatchObject({ step: 2, bot: 'developer', output: '❌ Failed - build error' })
   })
 
   it('drops the renamed "Team whiteboard" section too', () => {
@@ -121,13 +121,13 @@ describe('parseTeamMessage', () => {
       '- *alice* — ship it',
     ].join('\n')
     const r = parseTeamMessage(input)
-    expect(r!.steps).toEqual([{ step: 1, worker: 'alice', output: 'did a thing' }])
+    expect(r!.steps).toEqual([{ step: 1, bot: 'alice', output: 'did a thing' }])
   })
 
   it('also parses the "results" header without the "flow" word (all path)', () => {
     const input = '📊 Team **Crew** results\n\n**alice**:\ndid a thing'
     const r = parseTeamMessage(input)
-    expect(r!.steps).toEqual([{ step: 1, worker: 'alice', output: 'did a thing' }])
+    expect(r!.steps).toEqual([{ step: 1, bot: 'alice', output: 'did a thing' }])
   })
 })
 

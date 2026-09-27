@@ -29,19 +29,19 @@ describe('formatRunLogEvent', () => {
     expect(line.length).toBeLessThan(EVENT_PAYLOAD_CAP + 100);
   });
 
-  it('formats team and worker lifecycle events', () => {
+  it('formats team and bot lifecycle events', () => {
     expect(formatRunLogEvent(
       { type: 'team_start', chatId: 'c', teamTurnId: 't', teamName: 'devs', mode: 'sequential' }, T,
     )).toBe(`${STAMP} team_start devs (sequential)`);
     expect(formatRunLogEvent(
-      { type: 'worker_start', chatId: 'c', teamTurnId: 't', messageId: 'm', step: 2, worker: 'coder', agent: 'claude-code', model: 'sonnet' }, T,
-    )).toBe(`${STAMP} worker_start #2 coder [claude-code/sonnet]`);
+      { type: 'bot_start', chatId: 'c', teamTurnId: 't', messageId: 'm', step: 2, bot: 'coder', agent: 'claude-code', model: 'sonnet' }, T,
+    )).toBe(`${STAMP} bot_start #2 coder [claude-code/sonnet]`);
     expect(formatRunLogEvent(
-      { type: 'worker_end', chatId: 'c', messageId: 'm', step: 2, status: 'done', durationSec: 12, tokens: 340 }, T,
-    )).toBe(`${STAMP} worker_end #2 done (12s) 340 tokens`);
+      { type: 'bot_end', chatId: 'c', messageId: 'm', step: 2, status: 'done', durationSec: 12, tokens: 340 }, T,
+    )).toBe(`${STAMP} bot_end #2 done (12s) 340 tokens`);
     expect(formatRunLogEvent({
       type: 'team_end', chatId: 'c', teamTurnId: 't',
-      summary: { completed: [{ worker: 'coder', step: 2, text: 'done' }], failures: [], nextUserActions: [], finalizedAt: T },
+      summary: { completed: [{ bot: 'coder', step: 2, text: 'done' }], failures: [], nextUserActions: [], finalizedAt: T },
     }, T)).toBe(`${STAMP} team_end completed=1 failures=0 next_actions=0`);
   });
 

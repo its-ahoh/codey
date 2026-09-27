@@ -6,7 +6,7 @@ const g: TeamGraph = {
   entry: 'start', maxHops: 10,
   nodes: [
     { id: 'start', type: 'start', x: 0, y: 0 },
-    { id: 'n1', type: 'worker', worker: 'coder', x: 50, y: 0 },
+    { id: 'n1', type: 'bot', bot: 'coder', x: 50, y: 0 },
     { id: 'end', type: 'end', x: 100, y: 0 },
   ],
   edges: [
@@ -39,7 +39,7 @@ const gHandles: TeamGraph = {
   entry: 'start', maxHops: 20,
   nodes: [
     { id: 'start', type: 'start', x: 0, y: 0 },
-    { id: 'w1', type: 'worker', worker: 'coder', x: 100, y: 0 },
+    { id: 'w1', type: 'bot', bot: 'coder', x: 100, y: 0 },
     { id: 'c1', type: 'condition', x: 200, y: 0 },
     { id: 'end', type: 'end', x: 300, y: 0 },
   ],
@@ -69,7 +69,7 @@ describe('flowEditorModel diamond + maxCalls round-trip', () => {
     entry: 'start', maxHops: 20,
     nodes: [
       { id: 'start', type: 'start', x: 0, y: 0 },
-      { id: 'w1', type: 'worker', worker: 'coder', maxCalls: 3, width: 220, height: 90, x: 1, y: 0 },
+      { id: 'w1', type: 'bot', bot: 'coder', maxCalls: 3, width: 220, height: 90, x: 1, y: 0 },
       { id: 'd1', type: 'condition', condition: 'tests pass?', x: 2, y: 0 },
       { id: 'end', type: 'end', x: 3, y: 0 },
     ],

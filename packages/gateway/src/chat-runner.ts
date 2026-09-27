@@ -53,13 +53,13 @@ export type ChatStreamEvent =
   | { type: 'checklist'; chatId: string; message: string; items: ChecklistItem[] }
   | { type: 'stream'; chatId: string; token: string; messageId?: string; step?: number }
   | { type: 'thinking'; chatId: string; token: string; step?: number; messageId?: string }
-  | { type: 'team_start'; chatId: string; teamTurnId: string; teamName: string; mode: 'sequential' | 'graph' | 'auto' | 'roundtable'; workers?: Array<{ messageId: string; step: number; worker: string; agent?: CodingAgent; model?: string }> }
-  | { type: 'worker_start'; chatId: string; teamTurnId: string; messageId: string; step: number; worker: string; agent?: CodingAgent; model?: string; reason?: string }
-  | { type: 'worker_end'; chatId: string; messageId: string; step: number; status: 'done' | 'failed' | 'askedUser'; tokens?: number; durationSec?: number; failureReason?: string; nextUserAction?: { text: string; options?: string[] } }
+  | { type: 'team_start'; chatId: string; teamTurnId: string; teamName: string; mode: 'sequential' | 'graph' | 'auto' | 'roundtable'; bots?: Array<{ messageId: string; step: number; bot: string; agent?: CodingAgent; model?: string }> }
+  | { type: 'bot_start'; chatId: string; teamTurnId: string; messageId: string; step: number; bot: string; agent?: CodingAgent; model?: string; reason?: string }
+  | { type: 'bot_end'; chatId: string; messageId: string; step: number; status: 'done' | 'failed' | 'askedUser'; tokens?: number; durationSec?: number; failureReason?: string; nextUserAction?: { text: string; options?: string[] } }
   | { type: 'blackboard_update'; chatId: string; teamTurnId: string; messageId: string; blackboard: BlackboardSnapshot }
   | { type: 'team_end'; chatId: string; teamTurnId: string; summary: TeamRunSummary; taskBrief?: TaskBrief }
   | { type: 'workspace_ready'; chatId: string }
-  | { type: 'done'; taskId?: string | null; tasks?: Chat['tasks']; chatId: string; response: string; worker?: string; workerStatus?: 'pending' | 'running' | 'done' | 'failed' | 'askedUser'; thinking?: string; tokens?: number; durationSec?: number; agent?: 'claude-code' | 'opencode' | 'codex' | 'pi'; model?: string; title?: string; choices?: string[]; userQuestion?: { question: string; options: Array<{ label: string; description?: string }> }; fallback?: { from: string; to: string; reason?: string }; teamTurnId?: string }
+  | { type: 'done'; memoryUsed?: import('@codey/core').ChatMessage['memoryUsed']; taskId?: string | null; tasks?: Chat['tasks']; chatId: string; response: string; bot?: string; botStatus?: 'pending' | 'running' | 'done' | 'failed' | 'askedUser'; thinking?: string; tokens?: number; durationSec?: number; agent?: 'claude-code' | 'opencode' | 'codex' | 'pi'; model?: string; title?: string; choices?: string[]; userQuestion?: { question: string; options: Array<{ label: string; description?: string }> }; fallback?: { from: string; to: string; reason?: string }; teamTurnId?: string }
   | { type: 'stopped'; chatId: string; userMessageId: string; text: string }
   | { type: 'error'; chatId: string; message: string }
   | { type: 'permission_denials'; chatId: string; denials: Array<{ toolName: string; toolInput?: Record<string, unknown> }> };
@@ -311,7 +311,7 @@ export function buildChatCatchupPrompt(
 
 export function assistantPrefixForSelection(chat: Chat): string {
   switch (chat.selection.type) {
-    case 'worker': return `[worker:${chat.selection.name}]\n`;
+    case 'bot': return `[bot:${chat.selection.name}]\n`;
     case 'team': return `[team:${chat.selection.name ?? '(unset)'}]\n`;
     default: return '';
   }
@@ -353,7 +353,7 @@ export interface QQHistoryEntry {
 export type QQStreamEvent =
   | { type: 'stream'; chatId: string; token: string }
   | { type: 'tool'; chatId: string; message: string; tool?: string }
-  | { type: 'done'; chatId: string; response: string; worker?: string; workerStatus?: 'pending' | 'running' | 'done' | 'failed' | 'askedUser'; tokens?: number; durationSec?: number }
+  | { type: 'done'; chatId: string; response: string; bot?: string; botStatus?: 'pending' | 'running' | 'done' | 'failed' | 'askedUser'; tokens?: number; durationSec?: number }
   | { type: 'stopped'; chatId: string }
   | { type: 'error'; chatId: string; message: string };
 

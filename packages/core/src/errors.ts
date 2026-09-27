@@ -6,9 +6,9 @@ export class CodeyError extends Error {
   }
 }
 
-export class WorkerNotFoundError extends CodeyError {
-  constructor(public readonly workerName: string) {
-    super(`Worker not found: ${workerName}`);
+export class BotNotFoundError extends CodeyError {
+  constructor(public readonly botName: string) {
+    super(`Bot not found: ${botName}`);
   }
 }
 

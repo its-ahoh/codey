@@ -23,16 +23,8 @@ import { atomicWrite } from './utils/fs';
 
 export type MemoryType = 'fact' | 'preference' | 'lesson' | 'decision' | 'context';
 
-/**
- * Visibility scope for a memory entry. Controls which agents/workers see this
- * entry when `buildContext({ forWorker })` filters the candidate set.
- *
- *  - `'workspace'` (or undefined) — visible to everyone in the workspace
- *  - `{ worker: 'alice' }` — only visible when alice is the running worker
- *    AND to the main chat (the chat is the orchestrator, it sees everything)
- *  - `{ workers: ['alice', 'bob'] }` — visible when any of those workers run
- */
-export type MemoryScope = 'workspace' | { worker: string } | { workers: string[] };
+/** Legacy Bot scopes are retained on disk for inspection, but no longer recalled or shared. */
+export type MemoryScope = 'workspace' | { bot: string } | { bots: string[] };
 
 export interface MemoryEntry {
   id: string;
@@ -247,9 +239,9 @@ export class MemoryStore {
    * IDF is computed across all entries so common tokens stop dominating once
    * the store has any meaningful size.
    */
-  search(query: string, limit: number = 10, forWorker?: string): MemoryEntry[] {
+  search(query: string, limit: number = 10, _forBot?: string): MemoryEntry[] {
     const queryTerms = tokenize(query);
-    const visible = this.index.entries.filter(e => isVisibleTo(e, forWorker));
+    const visible = this.index.entries.filter(e => isSharedMemoryEntry(e));
     if (queryTerms.length === 0) return visible.slice(0, limit);
 
     const entries = visible;
@@ -324,12 +316,11 @@ export class MemoryStore {
   }
 
   /**
-   * Get the N most recently updated memories. Optionally restrict to
-   * entries visible to the given worker (chat/null sees everything).
+   * Get the N most recently updated user/project memories.
    */
-  getRecent(limit: number = 10, forWorker?: string): MemoryEntry[] {
+  getRecent(limit: number = 10, _forBot?: string): MemoryEntry[] {
     return this.index.entries
-      .filter(e => isVisibleTo(e, forWorker))
+      .filter(e => isSharedMemoryEntry(e))
       .sort((a, b) => b.updatedAt - a.updatedAt)
       .slice(0, limit);
   }
@@ -340,25 +331,23 @@ export class MemoryStore {
    * Build a memory context block to include in agent prompts.
    * Selects the most relevant memories within a token budget.
    *
-   * Pass `forWorker` when building for a specific worker run — entries scoped
-   * to other workers will be filtered out. Omit for main chat or single-worker
-   * paths (main chat sees everything).
+   * Legacy Bot-scoped entries stay archived regardless of the caller.
    */
   buildContext(
     query?: string,
     maxTokens: number = 2000,
     maxTokensPerEntry: number = 200,
-    forWorker?: string,
+    _forBot?: string,
   ): string {
     let selected: MemoryEntry[];
 
     if (query) {
-      const relevant = this.search(query, 8, forWorker);
-      const recent = this.getRecent(4, forWorker);
+      const relevant = this.search(query, 8);
+      const recent = this.getRecent(4);
       const ids = new Set(relevant.map(e => e.id));
       selected = [...relevant, ...recent.filter(e => !ids.has(e.id))];
     } else {
-      selected = this.getRecent(12, forWorker);
+      selected = this.getRecent(12);
     }
 
     if (selected.length === 0) return '';
@@ -527,6 +516,7 @@ export class MemoryStore {
 
     const byType = new Map<MemoryType, MemoryEntry[]>();
     for (const entry of this.index.entries) {
+      if (!isSharedMemoryEntry(entry)) continue;
       const list = byType.get(entry.type) || [];
       list.push(entry);
       byType.set(entry.type, list);
@@ -609,20 +599,9 @@ function avg(nums: number[]): number {
  *  - `auto` heuristic extractions are deliberately under-weighted; they're
  *    cheap to produce and noisy.
  */
-/**
- * Visibility predicate. `forWorker === undefined` means main-chat context —
- * the chat is the orchestrator and is allowed to see every entry. When a
- * specific worker is running we hide entries scoped to other workers.
- */
-function isVisibleTo(entry: MemoryEntry, forWorker: string | undefined): boolean {
-  if (forWorker === undefined) return true;
-  const scope = entry.scope;
-  if (!scope || scope === 'workspace') return true;
-  if (typeof scope === 'object') {
-    if ('worker' in scope) return scope.worker === forWorker;
-    if ('workers' in scope) return scope.workers.includes(forWorker);
-  }
-  return true;
+/** Do not silently promote retired Bot-scoped entries into shared memory. */
+export function isSharedMemoryEntry(entry: { scope?: unknown }): boolean {
+  return entry.scope === undefined || entry.scope === 'workspace';
 }
 
 function sourceWeight(source: string): number {

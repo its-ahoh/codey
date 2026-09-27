@@ -7,7 +7,7 @@ import { UIIcon } from './UIIcons'
 /**
  * Renders a stream of ToolCallEntry items as an expandable timeline.
  * Shared by the single-agent TOOLS tab (`ToolTimeline`) and the team run-flow
- * worker drawer, so both surfaces present tool calls identically.
+ * bot drawer, so both surfaces present tool calls identically.
  *
  * Returns null when there are no rows and no `emptyHint` is given (matches the
  * single-agent panel, which hides the section entirely when empty).

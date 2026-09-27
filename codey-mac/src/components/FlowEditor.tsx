@@ -23,19 +23,19 @@ const menuItemStyle = {
 
 interface Props {
   teamName: string
-  workerNames: string[]
-  workerRoles?: Record<string, string>
+  botNames: string[]
+  botRoles?: Record<string, string>
   graph: TeamGraph
   onSave: (graph: TeamGraph) => void
   onClose: () => void
 }
 
-function FlowEditorInner({ teamName, workerNames, workerRoles = {}, graph, onSave, onClose }: Props) {
+function FlowEditorInner({ teamName, botNames, botRoles = {}, graph, onSave, onClose }: Props) {
   const effectiveTheme = useEffectiveTheme()
   const withTypes = (ns: Node[]): Node[] => ns.map(n => {
     const t = (n.data as any).type
     const rfType = rfNodeType(t)
-    const role = t === 'worker' ? workerRoles[(n.data as any).worker] : undefined
+    const role = t === 'bot' ? botRoles[(n.data as any).bot] : undefined
     return { ...n, type: rfType, data: { ...n.data, role } }
   })
 
@@ -51,7 +51,7 @@ function FlowEditorInner({ teamName, workerNames, workerRoles = {}, graph, onSav
 
   const current = (): TeamGraph =>
     fromFlow(nodes as any, edges as any, graph.entry, maxHops)
-  const problems = validateGraph(current(), workerNames)
+  const problems = validateGraph(current(), botNames)
 
   // Which nodes/edges does validation complain about? Problem messages quote the
   // offending id (e.g. condition node "n_5"), so pull those out and flag them.
@@ -85,10 +85,10 @@ function FlowEditorInner({ teamName, workerNames, workerRoles = {}, graph, onSav
     }), [nodes])
 
   const rf = useReactFlow()
-  const addWorker = (worker: string) => {
+  const addBot = (bot: string) => {
     setNodes(ns => {
       const id = newNodeId(ns.map(n => n.id))
-      return [...ns, { id, type: 'workerNode', position: { x: 200, y: 60 + ns.length * 70 }, data: { label: worker, type: 'worker', worker, role: workerRoles[worker] } } as any]
+      return [...ns, { id, type: 'botNode', position: { x: 200, y: 60 + ns.length * 70 }, data: { label: bot, type: 'bot', bot, role: botRoles[bot] } } as any]
     })
   }
   const addCondition = () => {
@@ -101,7 +101,7 @@ function FlowEditorInner({ teamName, workerNames, workerRoles = {}, graph, onSav
     e.preventDefault()
     const raw = e.dataTransfer.getData('application/codey-node')
     if (!raw) return
-    let payload: { kind: 'worker' | 'condition'; worker?: string }
+    let payload: { kind: 'bot' | 'condition'; bot?: string }
     try { payload = JSON.parse(raw) } catch { return }
     const position = rf.screenToFlowPosition({ x: e.clientX, y: e.clientY })
     if (payload.kind === 'condition') {
@@ -110,13 +110,13 @@ function FlowEditorInner({ teamName, workerNames, workerRoles = {}, graph, onSav
         return [...ns, { id, type: 'conditionNode', position, data: { label: 'condition', type: 'condition' } } as any]
       })
     } else {
-      if (!payload.worker) return
+      if (!payload.bot) return
       setNodes(ns => {
         const id = newNodeId(ns.map(n => n.id))
-        return [...ns, { id, type: 'workerNode', position, data: { label: payload.worker, type: 'worker', worker: payload.worker, role: workerRoles[payload.worker!] } } as any]
+        return [...ns, { id, type: 'botNode', position, data: { label: payload.bot, type: 'bot', bot: payload.bot, role: botRoles[payload.bot!] } } as any]
       })
     }
-  }, [rf, workerRoles])
+  }, [rf, botRoles])
   const onDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }, [])
   const updateEdge = (id: string, patch: any) =>
     setEdges(es => es.map(e => e.id === id ? { ...e, data: { ...(e as any).data, ...patch }, label: patch.isDefault ? 'default' : patch.condition ?? (e as any).data?.condition } : e))
@@ -224,10 +224,10 @@ function FlowEditorInner({ teamName, workerNames, workerRoles = {}, graph, onSav
             <div style={{ width: 178, borderRight: `1px solid ${C.border}`, padding: '13px 10px', overflowY: 'auto', background: C.surface2 }}>
               <div style={{ padding: '0 3px', fontSize: 10, fontWeight: 720, letterSpacing: 0.65, textTransform: 'uppercase', color: C.fg3 }}>Steps</div>
               <div style={{ padding: '3px 3px 10px', fontSize: 9, color: C.fg3 }}>Click or drag onto the canvas</div>
-              {workerNames.map(w => (
+              {botNames.map(w => (
                 <button key={w} draggable
-                  onDragStart={e => e.dataTransfer.setData('application/codey-node', JSON.stringify({ kind: 'worker', worker: w }))}
-                  onClick={() => addWorker(w)}
+                  onDragStart={e => e.dataTransfer.setData('application/codey-node', JSON.stringify({ kind: 'bot', bot: w }))}
+                  onClick={() => addBot(w)}
                   style={{ display: 'flex', width: '100%', alignItems: 'center', gap: 7, textAlign: 'left', marginBottom: 5, fontSize: 11, padding: '8px', background: C.surface, color: C.fg, border: `1px solid ${C.border}`, borderRadius: 8, cursor: 'grab' }}>
                   <span style={{ color: C.accent, display: 'inline-flex' }}><UIIcon name="bot" size={13} /></span><span style={{ fontWeight: 680, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{w}</span>
                 </button>
@@ -248,15 +248,15 @@ function FlowEditorInner({ teamName, workerNames, workerRoles = {}, graph, onSav
               </ReactFlow>
             </div>
           )}
-          {!showRaw && selN && (selN.data?.type === 'worker' || selN.data?.type === 'condition') && (
+          {!showRaw && selN && (selN.data?.type === 'bot' || selN.data?.type === 'condition') && (
             <div style={{ width: 250, borderLeft: `1px solid ${C.border}`, padding: 15, overflowY: 'auto', background: C.surface2 }}>
-              {selN.data?.type === 'worker' ? (
+              {selN.data?.type === 'bot' ? (
                 <>
                   <div style={{ fontSize: 9, fontWeight: 720, letterSpacing: 0.65, textTransform: 'uppercase', color: C.fg3, marginBottom: 9 }}>Selected step</div>
                   <span style={{ width: 30, height: 30, display: 'grid', placeItems: 'center', borderRadius: 8, background: C.accentDim, color: C.accent, marginBottom: 10 }}><UIIcon name="bot" size={15} /></span>
-                  <div style={{ fontSize: 13, color: C.fg, fontWeight: 720, marginBottom: 5 }}>{selN.data.worker}</div>
+                  <div style={{ fontSize: 13, color: C.fg, fontWeight: 720, marginBottom: 5 }}>{selN.data.bot}</div>
                   <div style={{ fontSize: 10, lineHeight: 1.45, color: C.fg2, marginBottom: 14, whiteSpace: 'pre-wrap' }}>
-                    {workerRoles[selN.data.worker] || 'No description.'}
+                    {botRoles[selN.data.bot] || 'No description.'}
                   </div>
                   {selfLoops && (
                     <label style={{ fontSize: 10, color: C.fg2, display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: 10, borderTop: `1px solid ${C.border}` }}>

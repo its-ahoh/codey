@@ -22,7 +22,7 @@ const baseInput: AdvisorInput = {
     { name: 'reviewer', hint: 'Critiques designs' },
   ],
   history: [],
-  lastWorker: null,
+  lastBot: null,
   lastOutput: null,
 };
 
@@ -33,7 +33,7 @@ function reply(overrides: Record<string, unknown>): string {
 }
 
 describe('runAdvisor routing', () => {
-  it('picks the first worker on the opening turn', async () => {
+  it('picks the first bot on the opening turn', async () => {
     const runner = makeRunner([reply({
       next: 'architect', instruction: 'Draft the auth flow', reason: 'Architect should start',
     })]);
@@ -47,11 +47,11 @@ describe('runAdvisor routing', () => {
     expect(turn.summary_of_last).toBe('');
   });
 
-  it('hands off to the next worker mid-run and summarises the last one', async () => {
+  it('hands off to the next bot mid-run and summarises the last one', async () => {
     const input: AdvisorInput = {
       ...baseInput,
-      history: [{ worker: 'architect', summary: 'Drafted v1 of auth flow' }],
-      lastWorker: 'architect',
+      history: [{ bot: 'architect', summary: 'Drafted v1 of auth flow' }],
+      lastBot: 'architect',
       lastOutput: 'Here is the v1 draft of the auth flow...',
     };
     const runner = makeRunner([reply({
@@ -102,7 +102,7 @@ describe('runAdvisor termination', () => {
 });
 
 describe('runAdvisor fallback', () => {
-  it('falls back when the Advisor names a worker outside the roster', async () => {
+  it('falls back when the Advisor names a bot outside the roster', async () => {
     const runner = makeRunner([reply({ next: 'designer', instruction: 'do design' })]);
 
     expect((await runAdvisor(baseInput, { agent: 'claude-code', runner })).fallback).toBe(true);

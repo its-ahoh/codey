@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { WorkerManager, TeamBlackboard, type Chat, type AgentRequest } from '@codey/core';
+import { BotManager, TeamBlackboard, type Chat, type AgentRequest } from '@codey/core';
 import { ChatManager } from './chats';
 import { Codey } from './gateway';
 import { RunSemaphore } from './chat-runner';
@@ -20,14 +20,15 @@ function setup() {
   manager.createTask(chat.id, 'Website');
   manager.createTask(chat.id, 'Icon');
   const calls: AgentRequest[] = [];
-  const workers = new WorkerManager(path.join(root, 'bots'));
+  const bots = new BotManager(path.join(root, 'bots'));
   const run = vi.fn(async (_agent: string, request: AgentRequest) => {
     calls.push(request);
     return { success: true, output: `Result ${calls.length}`, sessionId: request.resumeSessionId ?? `session-${calls.length}` };
   });
   const ctx = {
+    coMemo: { context: async () => ({ context: '', settings: { paused: false, saveMode: 'auto' } }), instructions: () => '' },
     chatManager: manager,
-    workspaceManager: { getWorkspacesRoot: () => root, getWorkerManager: () => workers },
+    workspaceManager: { getWorkspacesRoot: () => root, getBotManager: () => bots },
     parallelResumes: new Map(),
     chatAborts: new Map(), chatSemaphore: new RunSemaphore(),
     workingDir: root, config: {},
@@ -50,7 +51,7 @@ function setup() {
     gateway, chat.id, text, () => {}, undefined, undefined,
     taskId === undefined ? undefined : { taskId },
   );
-  return { root, gateway, manager, chat, calls, run, send, workers, a: chat.tasks![0].id, b: chat.tasks![1].id };
+  return { root, gateway, manager, chat, calls, run, send, bots, a: chat.tasks![0].id, b: chat.tasks![1].id };
 }
 
 describe('task execution integration', () => {
@@ -88,11 +89,11 @@ describe('task execution integration', () => {
     expect(chat.messages.every(message => message.taskId === a)).toBe(true);
   });
   it('uses the selected Bot personality with the chat execution settings', async () => {
-    const { workers, manager, chat, calls, send, a, gateway } = setup();
+    const { bots, manager, chat, calls, send, a, gateway } = setup();
     gateway.getDefaultModelConfig = () => ({ provider: 'openai', model: 'default-model' });
-    await workers.saveWorker('alice', { role: 'Design reviewer', soul: 'Concise and thoughtful', instructions: 'Explain the tradeoffs.' },
+    await bots.saveBot('alice', { role: 'Design reviewer', soul: 'Concise and thoughtful', instructions: 'Explain the tradeoffs.' },
       { tools: [] });
-    manager.updateSelection(chat.id, { type: 'worker', name: 'alice' });
+    manager.updateSelection(chat.id, { type: 'bot', name: 'alice' });
     await send('Review the homepage', a);
     expect(calls[0].agent).toBe('codex');
     expect(calls[0].model?.model).toBe('default-model');
@@ -111,23 +112,24 @@ describe('task execution integration', () => {
 
 
 describe('global Bot conversations', () => {
-  it('keeps active workspace memory out of global Bot prompts', () => {
-    const { gateway } = setup();
-    const projectMemory = vi.fn(() => '## Project Memory\nPRIVATE PROJECT');
-    Object.assign((gateway as any).workspaceManager, {
-      getGlobalMemoryStore: () => ({ buildContext: () => '## Project Memory\nUSER PREFERENCE' }),
-      getMemoryStore: () => ({ buildContext: projectMemory }),
-    });
-    const prompt = (gateway as any).wrapPromptWithMemory('Review', 'Review', 'alice', true);
-    expect(prompt).toContain('## User-Global Memory\nUSER PREFERENCE');
-    expect(prompt).not.toContain('PRIVATE PROJECT');
-    expect(projectMemory).not.toHaveBeenCalled();
-    expect((gateway as any).wrapPromptWithMemory('Review', 'Review', 'alice')).toContain('PRIVATE PROJECT');
+  it('keeps active workspace memory out of global Bot prompts', async () => {
+    const { gateway, root } = setup();
+    const context = vi.fn(async (_query: string, project?: string) => ({
+      context: project ? 'USER PREFERENCE\nPROJECT RULE' : 'USER PREFERENCE',
+      settings: { paused: false, saveMode: 'auto' },
+    }));
+    Object.assign(gateway, { coMemo: { context, instructions: () => '' } });
+    const prompt = await (gateway as any).wrapPromptWithMemory('Review', 'Review', 'alice', true);
+    expect(prompt).toContain('USER PREFERENCE');
+    expect(prompt).not.toContain('PROJECT RULE');
+    expect(context).toHaveBeenLastCalledWith('Review', undefined);
+    expect(await (gateway as any).wrapPromptWithMemory('Review', 'Review', 'alice', false, 'main')).toContain('PROJECT RULE');
+    expect(context).toHaveBeenLastCalledWith('Review', root);
   });
   async function bots() {
     const h = setup();
     for (const name of ['alice', 'ben', 'claire']) {
-      await h.workers.saveWorker(name, { role: name, soul: 'Helpful', instructions: 'Do the task.' },
+      await h.bots.saveBot(name, { role: name, soul: 'Helpful', instructions: 'Do the task.' },
         { tools: [] });
     }
     return h;
@@ -158,10 +160,10 @@ describe('global Bot conversations', () => {
     expect(direct.tasks).toHaveLength(1);
   });
   it('renames Bot references without losing direct conversation identity', async () => {
-    const { gateway, workers } = await bots();
+    const { gateway, bots: botManager } = await bots();
     const direct = await gateway.openBotChat('alice');
     const group = await gateway.createBotGroup('Product', ['alice', 'ben']);
-    await workers.renameWorker('alice', 'designer');
+    await botManager.renameBot('alice', 'designer');
     gateway.renameBotChats('alice', 'designer');
     expect((await gateway.openBotChat('designer')).id).toBe(direct.id);
     expect(group.botChat?.members).toEqual(['designer', 'ben']);
@@ -236,5 +238,49 @@ describe('global Bot conversations', () => {
     expect(dispatch.mock.calls[1][1].members).toEqual(['ben']);
     await expect(gateway.sendToChat(group.id, '@claire Read this', () => {})).rejects.toThrow('Only members');
     expect(manager.get(group.id)?.title).toBe('Product');
+  });
+});
+
+describe('shared memory for Bot execution', () => {
+  it('reads Co-memo for the bound chat across Bots/backends and records the actual injected snapshot', async () => {
+    const { root, gateway, bots, chat, manager, send, a, calls } = setup();
+    for (const name of ['alice', 'bob']) {
+      await bots.saveBot(name, { role: 'Reviewer', soul: 'Careful', instructions: 'Review changes.' }, { tools: [] });
+    }
+    const context = vi.fn(async (_query: string, project: string) => ({
+      context: project === root ? 'Prefer concise reviews. Run project checks.' : 'WRONG PROJECT',
+      settings: { paused: false, saveMode: 'auto' },
+    }));
+    Object.assign(gateway, { coMemo: { context, instructions: () => 'Co-memo CLI access' } });
+    manager.updateSelection(chat.id, { type: 'bot', name: 'alice' });
+    await send('Review this', a);
+    manager.updateSelection(chat.id, { type: 'bot', name: 'bob' });
+    chat.agent = 'pi';
+    await send('Review again', a);
+    for (const call of calls) {
+      expect(call.prompt).toContain('Prefer concise reviews. Run project checks.');
+      expect(call.prompt).toContain('Co-memo CLI access');
+      expect(call.prompt).not.toContain('WRONG PROJECT');
+      expect(call.prompt).not.toContain('<codey-memory>');
+    }
+    expect(calls[1].agent).toBe('pi');
+    const trace = manager.get(chat.id)!.messages.filter(m => m.role === 'assistant').at(-1)!.memoryUsed!;
+    expect(trace).toHaveLength(1);
+    expect(trace[0].id).toMatch(/^co-memo:/);
+    expect(calls[1].prompt).toContain(trace[0].content);
+    (gateway as any).config.memory = { enabled: false };
+    await send('Review once more', a);
+    expect(context).toHaveBeenCalledTimes(2);
+    expect(calls[2].prompt).not.toContain('Prefer concise reviews');
+    expect(manager.get(chat.id)!.messages.filter(m => m.role === 'assistant').at(-1)!.memoryUsed).toEqual([]);
+  });
+  it('continues a task without injecting unavailable or paused shared context', async () => {
+    const { gateway, send, calls, a } = setup();
+    Object.assign(gateway, { coMemo: { context: async () => { throw new Error('offline'); }, instructions: () => '' } });
+    await send('Continue', a);
+    expect(calls[0].prompt).toContain('Continue');
+    Object.assign(gateway, { coMemo: { context: async () => ({ context: 'HIDDEN', settings: { paused: true } }), instructions: () => '' } });
+    await send('Next', a);
+    expect(calls[1].prompt).not.toContain('HIDDEN');
   });
 });

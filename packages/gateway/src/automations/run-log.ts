@@ -32,15 +32,15 @@ export function formatRunLogEvent(e: ChatStreamEvent, now: number): string | nul
     }
     case 'team_start':
       return `[${t}] team_start ${e.teamName} (${e.mode})`;
-    case 'worker_start': {
+    case 'bot_start': {
       const agent = e.agent ? ` [${e.agent}${e.model ? `/${e.model}` : ''}]` : '';
       const reason = e.reason ? ` — ${cap(oneLine(e.reason))}` : '';
-      return `[${t}] worker_start #${e.step} ${e.worker}${agent}${reason}`;
+      return `[${t}] bot_start #${e.step} ${e.bot}${agent}${reason}`;
     }
-    case 'worker_end': {
+    case 'bot_end': {
       const duration = e.durationSec != null ? ` (${e.durationSec}s)` : '';
       const tokens = e.tokens != null ? ` ${e.tokens} tokens` : '';
-      return `[${t}] worker_end #${e.step} ${e.status}${duration}${tokens}`;
+      return `[${t}] bot_end #${e.step} ${e.status}${duration}${tokens}`;
     }
     case 'team_end':
       return `[${t}] team_end completed=${e.summary.completed.length} failures=${e.summary.failures.length} next_actions=${e.summary.nextUserActions.length}`;

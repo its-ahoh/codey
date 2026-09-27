@@ -237,49 +237,6 @@ export const ProjectMemorySection: React.FC<{ workspace: string }> = ({ workspac
  * deliver; Codey drops its own injection while sharing is on so no fact
  * reaches the model twice.
  */
-export const GlobalMemoryPanel: React.FC = () => {
-  const [enabled, setEnabled] = useState(false)
-  const [targets, setTargets] = useState<Array<{ agent: string; path: string }>>([])
-  const [error, setError] = useState<string | null>(null)
-
-  const reload = useCallback(async () => {
-    setError(null)
-    try {
-      const res = unwrap(await window.codey.memory.shared.get())
-      setEnabled(res.enabled)
-      setTargets(res.targets)
-    } catch (e: any) { setError(e?.message ?? String(e)) }
-  }, [])
-
-  useEffect(() => { void reload() }, [reload])
-
-  const toggle = async (next: boolean) => {
-    setEnabled(next)
-    setError(null)
-    try { unwrap(await window.codey.memory.shared.setEnabled(next)) }
-    catch (e: any) { setEnabled(!next); setError(e?.message ?? String(e)) }
-  }
-
-  return (
-    <>
-      {error && <ErrorBox message={error} />}
-      <MemoryPanel
-        scope="global"
-        description="Standing facts and preferences about you, used in every project."
-        banner={
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 0', borderTop: `1px solid ${C.border}` }}>
-            <div>
-              <div style={{ color: C.fg, fontSize: 13 }}>Share with every agent</div>
-              <div style={{ color: C.fg3, fontSize: 11, marginTop: 2 }}>
-                {enabled
-                  ? `Written into ${targets.length} agent memory file${targets.length === 1 ? '' : 's'} below, inside a Codey-managed block.`
-                  : 'Off — only Codey itself uses these memories. The block is removed from the agent files below.'}
-              </div>
-            </div>
-            <Toggle on={enabled} onChange={v => void toggle(v)} label="Share memory with every agent" />
-          </div>
-        }
-      />
-    </>
-  )
-}
+export const GlobalMemoryPanel: React.FC = () => (
+  <MemoryPanel scope="global" description="Personal preferences shared through Co-memo across your projects and connected agents." />
+)

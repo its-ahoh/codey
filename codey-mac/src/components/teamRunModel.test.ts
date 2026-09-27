@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { deriveWorkerRuns, groupTeamMessagesByMember, teamFinalAnswer } from './teamRunModel'
+import { deriveBotRuns, groupTeamMessagesByMember, teamFinalAnswer } from './teamRunModel'
 import type { ChatMessage } from '../types'
 
 const teamTurn = (over: Partial<ChatMessage> = {}): ChatMessage => ({
@@ -9,45 +9,45 @@ const teamTurn = (over: Partial<ChatMessage> = {}): ChatMessage => ({
   ...over,
 })
 
-describe('deriveWorkerRuns', () => {
-  it('maps each step to a worker run with output and thinking', () => {
-    const runs = deriveWorkerRuns(teamTurn(), false)
+describe('deriveBotRuns', () => {
+  it('maps each step to a bot run with output and thinking', () => {
+    const runs = deriveBotRuns(teamTurn(), false)
     expect(runs).toHaveLength(2)
-    expect(runs[0]).toMatchObject({ step: 1, worker: 'product-manager', output: 'PM output here.', thinking: 'pm reasoning', status: 'done' })
-    expect(runs[1]).toMatchObject({ step: 2, worker: 'developer', thinking: 'dev reasoning' })
+    expect(runs[0]).toMatchObject({ step: 1, bot: 'product-manager', output: 'PM output here.', thinking: 'pm reasoning', status: 'done' })
+    expect(runs[1]).toMatchObject({ step: 2, bot: 'developer', thinking: 'dev reasoning' })
   })
 
   it('marks the last step running while streaming', () => {
-    const runs = deriveWorkerRuns(teamTurn(), true)
+    const runs = deriveBotRuns(teamTurn(), true)
     expect(runs[1].status).toBe('running')
   })
 
   it('marks a failed-output step failed when not streaming', () => {
-    const runs = deriveWorkerRuns(teamTurn(), false)
+    const runs = deriveBotRuns(teamTurn(), false)
     expect(runs[1].status).toBe('failed')
   })
 
   it('returns [] for a non-team turn', () => {
-    const runs = deriveWorkerRuns(teamTurn({ content: 'just a normal reply' }), false)
+    const runs = deriveBotRuns(teamTurn({ content: 'just a normal reply' }), false)
     expect(runs).toEqual([])
   })
 
-  // Mid-run, the Sequential transcript has no `**worker**:` structure yet —
-  // only live `info` step markers exist. deriveWorkerRuns must surface those so
-  // the overlay can highlight the active worker live.
-  it('derives live worker runs from info step markers when content is unstructured', () => {
+  // Mid-run, the Sequential transcript has no `**bot**:` structure yet —
+  // only live `info` step markers exist. deriveBotRuns must surface those so
+  // the overlay can highlight the active bot live.
+  it('derives live bot runs from info step markers when content is unstructured', () => {
     const turn = teamTurn({
-      content: 'raw streamed tokens with no worker headers yet',
+      content: 'raw streamed tokens with no bot headers yet',
       thinkingByStep: undefined,
       toolCalls: [
         { id: 'a', type: 'info', message: '🔄 Step 1: **product-manager** is working...' },
         { id: 'b', type: 'info', message: '🔄 Step 2: **architect** is working...' },
       ] as any,
     })
-    const runs = deriveWorkerRuns(turn, true)
+    const runs = deriveBotRuns(turn, true)
     expect(runs).toHaveLength(2)
-    expect(runs[0]).toMatchObject({ step: 1, worker: 'product-manager', status: 'done' })
-    expect(runs[1]).toMatchObject({ step: 2, worker: 'architect', status: 'running' })
+    expect(runs[0]).toMatchObject({ step: 1, bot: 'product-manager', status: 'done' })
+    expect(runs[1]).toMatchObject({ step: 2, bot: 'architect', status: 'running' })
   })
 
   it('merges live info steps with structured output (output wins, live fills the running step)', () => {
@@ -59,23 +59,23 @@ describe('deriveWorkerRuns', () => {
         { id: 'b', type: 'info', message: '🔄 Step 2: **architect** is working...' },
       ] as any,
     })
-    const runs = deriveWorkerRuns(turn, true)
+    const runs = deriveBotRuns(turn, true)
     expect(runs).toHaveLength(2)
-    expect(runs[0]).toMatchObject({ step: 1, worker: 'product-manager', output: 'PM done.', status: 'done' })
-    expect(runs[1]).toMatchObject({ step: 2, worker: 'architect', output: '', status: 'running' })
+    expect(runs[0]).toMatchObject({ step: 1, bot: 'product-manager', output: 'PM done.', status: 'done' })
+    expect(runs[1]).toMatchObject({ step: 2, bot: 'architect', output: '', status: 'running' })
   })
 
-  it('parses the auto-path info marker (Step N: worker — reason)', () => {
+  it('parses the auto-path info marker (Step N: bot — reason)', () => {
     const turn = teamTurn({
       content: 'unstructured', thinkingByStep: undefined,
       toolCalls: [{ id: 'a', type: 'info', message: 'Step 1: alice — picked alice to start' }] as any,
     })
-    const runs = deriveWorkerRuns(turn, true)
-    expect(runs[0]).toMatchObject({ step: 1, worker: 'alice', status: 'running' })
+    const runs = deriveBotRuns(turn, true)
+    expect(runs[0]).toMatchObject({ step: 1, bot: 'alice', status: 'running' })
   })
 
-  // Authored-graph (Sequential) teams emit the "flow results" / **worker**:
-  // transcript, not the `### Step` format. deriveWorkerRuns must handle it too.
+  // Authored-graph (Sequential) teams emit the "flow results" / **bot**:
+  // transcript, not the `### Step` format. deriveBotRuns must handle it too.
   it('derives runs from the Sequential "flow results" transcript', () => {
     const content = [
       '📊 Team **Feature** flow results',
@@ -85,38 +85,38 @@ describe('deriveWorkerRuns', () => {
       '',
       '**developer**: ❌ Failed - build error',
     ].join('\n')
-    const runs = deriveWorkerRuns(teamTurn({ content, thinkingByStep: undefined }), false)
+    const runs = deriveBotRuns(teamTurn({ content, thinkingByStep: undefined }), false)
     expect(runs).toHaveLength(2)
-    expect(runs[0]).toMatchObject({ step: 1, worker: 'product-manager', output: 'PM output here.', status: 'done' })
-    expect(runs[1]).toMatchObject({ step: 2, worker: 'developer', status: 'failed' })
+    expect(runs[0]).toMatchObject({ step: 1, bot: 'product-manager', output: 'PM output here.', status: 'done' })
+    expect(runs[1]).toMatchObject({ step: 2, bot: 'developer', status: 'failed' })
   })
 })
 
-import { synthesizeChainGraph, nodeStatuses, toolCallsForStep, deriveWorkerRunsFromGroup } from './teamRunModel'
-import type { WorkerRun } from './teamRunModel'
+import { synthesizeChainGraph, nodeStatuses, toolCallsForStep, deriveBotRunsFromGroup } from './teamRunModel'
+import type { BotRun } from './teamRunModel'
 import { validateGraph } from '../../../packages/core/src/team-graph'
 
-const w = (step: number, worker: string, status: any, content: string): ChatMessage =>
-  ({ id: `w${step}`, role: 'assistant', content, timestamp: 0, teamTurnId: 'tt', worker, step, workerStatus: status })
+const w = (step: number, bot: string, status: any, content: string): ChatMessage =>
+  ({ id: `w${step}`, role: 'assistant', content, timestamp: 0, teamTurnId: 'tt', bot, step, botStatus: status })
 
-describe('deriveWorkerRunsFromGroup', () => {
+describe('deriveBotRunsFromGroup', () => {
   it('builds ordered runs from the group, carrying status + output', () => {
-    const runs = deriveWorkerRunsFromGroup([w(2, 'b', 'running', 'B'), w(1, 'a', 'done', 'A')])
-    expect(runs.map(r => [r.step, r.worker, r.status, r.output])).toEqual([
+    const runs = deriveBotRunsFromGroup([w(2, 'b', 'running', 'B'), w(1, 'a', 'done', 'A')])
+    expect(runs.map(r => [r.step, r.bot, r.status, r.output])).toEqual([
       [1, 'a', 'done', 'A'], [2, 'b', 'running', 'B'],
     ])
   })
 })
 
 describe('groupTeamMessagesByMember', () => {
-  it('collects revisited workers into ordered rounds and preserves member order', () => {
+  it('collects revisited bots into ordered rounds and preserves member order', () => {
     const groups = groupTeamMessagesByMember([
       w(1, 'pm', 'done', 'scope'),
       w(4, 'architect', 'done', 'revision'),
       w(2, 'architect', 'done', 'design'),
       w(3, 'developer', 'running', 'build'),
     ])
-    expect(groups.map(group => [group.worker, group.messages.map(message => message.step)])).toEqual([
+    expect(groups.map(group => [group.bot, group.messages.map(message => message.step)])).toEqual([
       ['pm', [1]], ['architect', [2, 4]], ['developer', [3]],
     ])
     expect(groups[1].latest.content).toBe('revision')
@@ -128,7 +128,7 @@ describe('groupTeamMessagesByMember', () => {
       w(1, 'pm', 'running', ''),
       w(2, 'developer', 'pending', ''),
     ])
-    expect(groups.map(group => [group.worker, group.status])).toEqual([
+    expect(groups.map(group => [group.bot, group.status])).toEqual([
       ['pm', 'running'], ['developer', 'pending'],
     ])
   })
@@ -158,8 +158,8 @@ describe('toolCallsForStep', () => {
   })
 })
 
-const run = (step: number, worker: string, status: WorkerRun['status']): WorkerRun =>
-  ({ step, worker, status, output: 'o' })
+const run = (step: number, bot: string, status: BotRun['status']): BotRun =>
+  ({ step, bot, status, output: 'o' })
 
 describe('synthesizeChainGraph', () => {
   it('builds start -> w1 -> w2 -> end and validates', () => {
@@ -168,31 +168,31 @@ describe('synthesizeChainGraph', () => {
     expect(g.entry).toBe('start')
     expect(g.nodes.find(n => n.type === 'start')).toBeTruthy()
     expect(g.nodes.find(n => n.type === 'end')).toBeTruthy()
-    expect(g.nodes.filter(n => n.type === 'worker').map(n => n.worker)).toEqual(['pm', 'dev'])
+    expect(g.nodes.filter(n => n.type === 'bot').map(n => n.bot)).toEqual(['pm', 'dev'])
     expect(validateGraph(g, ['pm', 'dev'])).toEqual([])
   })
 
-  it('dedupes a revisited worker into one node', () => {
+  it('dedupes a revisited bot into one node', () => {
     const g = synthesizeChainGraph([run(1, 'pm', 'done'), run(2, 'dev', 'done'), run(3, 'pm', 'done')])
-    expect(g.nodes.filter(n => n.type === 'worker')).toHaveLength(2)
+    expect(g.nodes.filter(n => n.type === 'bot')).toHaveLength(2)
   })
 })
 
 describe('nodeStatuses', () => {
-  it('maps run status onto matching worker nodes, pending for unreached', () => {
+  it('maps run status onto matching bot nodes, pending for unreached', () => {
     const runs = [run(1, 'pm', 'done')]
     const g = synthesizeChainGraph([run(1, 'pm', 'done'), run(2, 'dev', 'done')])
     const st = nodeStatuses(g, runs)
-    const pmNode = g.nodes.find(n => n.worker === 'pm')!
-    const devNode = g.nodes.find(n => n.worker === 'dev')!
+    const pmNode = g.nodes.find(n => n.bot === 'pm')!
+    const devNode = g.nodes.find(n => n.bot === 'dev')!
     expect(st[pmNode.id]).toBe('done')
     expect(st[devNode.id]).toBe('pending')
   })
 
-  it('marks the asking worker askedUser', () => {
+  it('marks the asking bot askedUser', () => {
     const g = synthesizeChainGraph([run(1, 'pm', 'done'), run(2, 'dev', 'running')])
     const st = nodeStatuses(g, [run(1, 'pm', 'done'), run(2, 'dev', 'running')], 'dev')
-    const devNode = g.nodes.find(n => n.worker === 'dev')!
+    const devNode = g.nodes.find(n => n.bot === 'dev')!
     expect(st[devNode.id]).toBe('askedUser')
   })
 
@@ -205,37 +205,37 @@ describe('nodeStatuses', () => {
 })
 
 describe('teamFinalAnswer', () => {
-  const worker = (over: Partial<ChatMessage>): ChatMessage => ({
+  const bot = (over: Partial<ChatMessage>): ChatMessage => ({
     id: over.id ?? `w-${over.step}`, role: 'assistant', timestamp: 0, isComplete: true,
     content: '', teamTurnId: 'tt1', ...over,
   })
 
-  it('returns null while any worker is still running', () => {
+  it('returns null while any bot is still running', () => {
     const msgs = [
-      worker({ step: 1, worker: 'a', workerStatus: 'done', content: 'first' }),
-      worker({ step: 2, worker: 'b', workerStatus: 'running', content: '' }),
+      bot({ step: 1, bot: 'a', botStatus: 'done', content: 'first' }),
+      bot({ step: 2, bot: 'b', botStatus: 'running', content: '' }),
     ]
     expect(teamFinalAnswer(msgs, 'auto')).toBeNull()
   })
 
-  it('returns null while a worker is waiting on the user', () => {
-    const msgs = [worker({ step: 1, worker: 'a', workerStatus: 'askedUser', content: 'Which one?' })]
+  it('returns null while a bot is waiting on the user', () => {
+    const msgs = [bot({ step: 1, bot: 'a', botStatus: 'askedUser', content: 'Which one?' })]
     expect(teamFinalAnswer(msgs, 'sequential')).toBeNull()
   })
 
-  it('uses the last finished worker output for auto and sequential, without whiteboard markers', () => {
+  it('uses the last finished bot output for auto and sequential, without whiteboard markers', () => {
     const msgs = [
-      worker({ step: 1, worker: 'a', workerStatus: 'done', content: 'first' }),
-      worker({ step: 2, worker: 'b', workerStatus: 'done', content: 'Final answer.\n\n[FACT]: seen' }),
-      worker({ id: 'footer', workerStatus: undefined, content: '📊 Team **t** results\n\n**a**: first\n\n**b**: Final answer.' }),
+      bot({ step: 1, bot: 'a', botStatus: 'done', content: 'first' }),
+      bot({ step: 2, bot: 'b', botStatus: 'done', content: 'Final answer.\n\n[FACT]: seen' }),
+      bot({ id: 'footer', botStatus: undefined, content: '📊 Team **t** results\n\n**a**: first\n\n**b**: Final answer.' }),
     ]
-    expect(teamFinalAnswer(msgs, 'auto')).toEqual({ worker: 'b', text: 'Final answer.' })
-    expect(teamFinalAnswer(msgs, 'sequential')).toEqual({ worker: 'b', text: 'Final answer.' })
+    expect(teamFinalAnswer(msgs, 'auto')).toEqual({ bot: 'b', text: 'Final answer.' })
+    expect(teamFinalAnswer(msgs, 'sequential')).toEqual({ bot: 'b', text: 'Final answer.' })
   })
 
-  it('surfaces a failed last worker as the answer', () => {
-    const msgs = [worker({ step: 1, worker: 'a', workerStatus: 'failed', content: '❌ build broke' })]
-    expect(teamFinalAnswer(msgs, 'auto')).toEqual({ worker: 'a', text: '❌ build broke' })
+  it('surfaces a failed last bot as the answer', () => {
+    const msgs = [bot({ step: 1, bot: 'a', botStatus: 'failed', content: '❌ build broke' })]
+    expect(teamFinalAnswer(msgs, 'auto')).toEqual({ bot: 'a', text: '❌ build broke' })
   })
 
   it('uses the Advisor summary for roundtable', () => {
@@ -245,10 +245,10 @@ describe('teamFinalAnswer', () => {
       '## Viewpoints', '**a**: yes', '', 'Done.',
     ].join('\n')
     const msgs = [
-      worker({ step: 1, worker: 'a', workerStatus: 'done', content: 'yes' }),
-      worker({ id: 'footer', workerStatus: undefined, content: footer }),
+      bot({ step: 1, bot: 'a', botStatus: 'done', content: 'yes' }),
+      bot({ id: 'footer', botStatus: undefined, content: footer }),
     ]
-    expect(teamFinalAnswer(msgs, 'roundtable')).toEqual({ worker: 'Advisor', text: 'We agree on X.' })
+    expect(teamFinalAnswer(msgs, 'roundtable')).toEqual({ bot: 'Advisor', text: 'We agree on X.' })
   })
 
   it('returns null for an empty run', () => {
@@ -257,9 +257,9 @@ describe('teamFinalAnswer', () => {
 
   it('ignores unselected pending roster members after a serial run finishes', () => {
     const msgs = [
-      worker({ step: 1, worker: 'a', workerStatus: 'done', content: 'Final answer.' }),
-      worker({ step: 2, worker: 'b', workerStatus: 'pending', content: '' }),
+      bot({ step: 1, bot: 'a', botStatus: 'done', content: 'Final answer.' }),
+      bot({ step: 2, bot: 'b', botStatus: 'pending', content: '' }),
     ]
-    expect(teamFinalAnswer(msgs, 'auto')).toEqual({ worker: 'a', text: 'Final answer.' })
+    expect(teamFinalAnswer(msgs, 'auto')).toEqual({ bot: 'a', text: 'Final answer.' })
   })
 })

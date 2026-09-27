@@ -1,6 +1,6 @@
 export interface TeamStep {
   step: number
-  worker: string
+  bot: string
   output: string
 }
 
@@ -33,7 +33,7 @@ export function parseTeamMessage(content: string): ParsedTeamMessage | null {
     if (!m) return null
     steps.push({
       step: parseInt(m[1], 10),
-      worker: m[2].trim(),
+      bot: m[2].trim(),
       output: m[3].trim(),
     })
   }
@@ -47,22 +47,22 @@ export function parseTeamMessage(content: string): ParsedTeamMessage | null {
 //
 //   📊 Team **X** flow results
 //
-//   **worker-a**:
+//   **bot-a**:
 //   <output, may span blank lines and contain **bold**>
 //
-//   **worker-b**: ❌ Failed - ...
+//   **bot-b**: ❌ Failed - ...
 //
 //   ---
 //   ### 🧠 Team whiteboard
 //   ...
 //
-// A "**name**:" worker header has its colon OUTSIDE the bold, which
+// A "**name**:" bot header has its colon OUTSIDE the bold, which
 // distinguishes it from whiteboard labels like "**Decisions:**" (colon inside).
 // The heading was renamed from "blackboard" to "whiteboard"; transcripts
 // persisted before the rename still carry the old wording, so match both.
 const SEQ_HEADER = /^📊 Team \*\*.+?\*\* (?:flow )?results\s*\n+/
 const WHITEBOARD_MARKER = /### 🧠 Team (?:whiteboard|blackboard)/
-const WORKER_HEADER = /^\*\*([^\n*]+?)\*\*:[ \t]?(.*)$/
+const BOT_HEADER = /^\*\*([^\n*]+?)\*\*:[ \t]?(.*)$/
 
 function parseSequentialTeamMessage(content: string): ParsedTeamMessage | null {
   const header = content.match(SEQ_HEADER)
@@ -74,15 +74,15 @@ function parseSequentialTeamMessage(content: string): ParsedTeamMessage | null {
   if (bbIdx !== -1) body = body.slice(0, bbIdx).replace(/\n*-{3,}\s*$/, '').trimEnd()
 
   const steps: TeamStep[] = []
-  let current: { worker: string; lines: string[] } | null = null
+  let current: { bot: string; lines: string[] } | null = null
   const flush = () => {
-    if (current) steps.push({ step: steps.length + 1, worker: current.worker.trim(), output: current.lines.join('\n').trim() })
+    if (current) steps.push({ step: steps.length + 1, bot: current.bot.trim(), output: current.lines.join('\n').trim() })
   }
   for (const line of body.split('\n')) {
-    const m = line.match(WORKER_HEADER)
+    const m = line.match(BOT_HEADER)
     if (m) {
       flush()
-      current = { worker: m[1], lines: m[2] ? [m[2]] : [] }
+      current = { bot: m[1], lines: m[2] ? [m[2]] : [] }
     } else if (current) {
       current.lines.push(line)
     }

@@ -28,38 +28,38 @@ function baseState(): State {
 }
 
 describe('team reducer routing', () => {
-  it('teamStart exposes the full serial roster as pending and workerStart promotes one card', () => {
+  it('teamStart exposes the full serial roster as pending and botStart promotes one card', () => {
     let s = baseState();
     s.chats.c1.messages = [{ id: 'asst-x', role: 'assistant', content: '', timestamp: 1, isComplete: false }]
     s = reducer(s, {
       type: 'teamStart', chatId: 'c1', teamTurnId: 'tt1', teamName: 'team', mode: 'auto',
-      workers: [
-        { messageId: 'w1', step: 1, worker: 'pm' },
-        { messageId: 'w2', step: 2, worker: 'developer' },
+      bots: [
+        { messageId: 'w1', step: 1, bot: 'pm' },
+        { messageId: 'w2', step: 2, bot: 'developer' },
       ],
     });
-    expect(s.chats.c1.messages.map(message => [message.worker, message.workerStatus])).toEqual([
+    expect(s.chats.c1.messages.map(message => [message.bot, message.botStatus])).toEqual([
       ['pm', 'pending'], ['developer', 'pending'],
     ]);
 
-    s = reducer(s, { type: 'workerStart', chatId: 'c1', teamTurnId: 'tt1', messageId: 'w1', step: 1, worker: 'pm', reason: 'kickoff' });
-    expect(s.chats.c1.messages.find(message => message.id === 'w1')).toMatchObject({ workerStatus: 'running', advisorReason: 'kickoff' });
+    s = reducer(s, { type: 'botStart', chatId: 'c1', teamTurnId: 'tt1', messageId: 'w1', step: 1, bot: 'pm', reason: 'kickoff' });
+    expect(s.chats.c1.messages.find(message => message.id === 'w1')).toMatchObject({ botStatus: 'running', advisorReason: 'kickoff' });
     expect(s.chats.c1.messages).toHaveLength(2);
   });
 
-  it('workerStart appends a running worker message with the backend id', () => {
+  it('botStart appends a running bot message with the backend id', () => {
     let s = baseState();
     s.chats.c1.messages = [{ id: 'asst-x', role: 'assistant', content: '', timestamp: 1, isComplete: false }]
-    s = reducer(s, { type: 'workerStart', chatId: 'c1', teamTurnId: 'tt1', messageId: 'w1', step: 1, worker: 'pm', reason: 'kickoff', agent: 'codex', model: 'gpt-5' });
+    s = reducer(s, { type: 'botStart', chatId: 'c1', teamTurnId: 'tt1', messageId: 'w1', step: 1, bot: 'pm', reason: 'kickoff', agent: 'codex', model: 'gpt-5' });
     const m = s.chats.c1.messages.find(x => x.id === 'w1')!;
-    expect(m).toMatchObject({ id: 'w1', role: 'assistant', teamTurnId: 'tt1', worker: 'pm', workerStatus: 'running', advisorReason: 'kickoff', agent: 'codex', model: 'gpt-5' });
+    expect(m).toMatchObject({ id: 'w1', role: 'assistant', teamTurnId: 'tt1', bot: 'pm', botStatus: 'running', advisorReason: 'kickoff', agent: 'codex', model: 'gpt-5' });
     expect(s.chats.c1.messages.some(x => x.id === 'asst-x')).toBe(false)
   });
 
   it('streamToken/toolCall route to the event messageId, not the single inFlight id', () => {
     let s = baseState();
-    s = reducer(s, { type: 'workerStart', chatId: 'c1', teamTurnId: 'tt1', messageId: 'w1', step: 1, worker: 'a', reason: '' });
-    s = reducer(s, { type: 'workerStart', chatId: 'c1', teamTurnId: 'tt1', messageId: 'w2', step: 2, worker: 'b', reason: '' });
+    s = reducer(s, { type: 'botStart', chatId: 'c1', teamTurnId: 'tt1', messageId: 'w1', step: 1, bot: 'a', reason: '' });
+    s = reducer(s, { type: 'botStart', chatId: 'c1', teamTurnId: 'tt1', messageId: 'w2', step: 2, bot: 'b', reason: '' });
     s = reducer(s, { type: 'streamToken', chatId: 'c1', token: 'hi', messageId: 'w1' });
     s = reducer(s, { type: 'toolCall', chatId: 'c1', entry: { id: 't', type: 'tool_start', tool: 'Read', message: 'Read(a)' }, status: 'working', messageId: 'w2' });
     expect(s.chats.c1.messages.find(x => x.id === 'w1')!.content).toBe('hi');
@@ -67,18 +67,18 @@ describe('team reducer routing', () => {
     expect(s.chats.c1.messages.find(x => x.id === 'w1')!.toolCalls ?? []).toHaveLength(0);
   });
 
-  it('workerEnd sets status', () => {
+  it('botEnd sets status', () => {
     let s = baseState();
-    s = reducer(s, { type: 'workerStart', chatId: 'c1', teamTurnId: 'tt1', messageId: 'w1', step: 1, worker: 'a', reason: '' });
-    s = reducer(s, { type: 'workerEnd', chatId: 'c1', messageId: 'w1', step: 1, status: 'done' });
-    expect(s.chats.c1.messages.find(x => x.id === 'w1')!.workerStatus).toBe('done');
+    s = reducer(s, { type: 'botStart', chatId: 'c1', teamTurnId: 'tt1', messageId: 'w1', step: 1, bot: 'a', reason: '' });
+    s = reducer(s, { type: 'botEnd', chatId: 'c1', messageId: 'w1', step: 1, status: 'done' });
+    expect(s.chats.c1.messages.find(x => x.id === 'w1')!.botStatus).toBe('done');
   });
 
-  it('stores live blackboard updates on the worker message', () => {
+  it('stores live blackboard updates on the bot message', () => {
     let s = baseState();
-    s = reducer(s, { type: 'workerStart', chatId: 'c1', teamTurnId: 'tt1', messageId: 'w1', step: 1, worker: 'a', reason: '' });
+    s = reducer(s, { type: 'botStart', chatId: 'c1', teamTurnId: 'tt1', messageId: 'w1', step: 1, bot: 'a', reason: '' });
     const blackboard = {
-      facts: [{ worker: 'a', step: 1, text: 'The API is stable' }],
+      facts: [{ bot: 'a', step: 1, text: 'The API is stable' }],
       decisions: [],
       handoffs: [],
       open: [],
@@ -89,10 +89,10 @@ describe('team reducer routing', () => {
 
   it('attaches a terminal team summary only when teamEnd arrives', () => {
     let s = baseState();
-    s = reducer(s, { type: 'workerStart', chatId: 'c1', teamTurnId: 'tt1', messageId: 'w1', step: 1, worker: 'a', reason: '' });
+    s = reducer(s, { type: 'botStart', chatId: 'c1', teamTurnId: 'tt1', messageId: 'w1', step: 1, bot: 'a', reason: '' });
     expect(s.chats.c1.messages.find(x => x.id === 'w1')!.teamSummary).toBeUndefined();
     const summary = {
-      completed: [{ worker: 'a', step: 1, text: 'Implemented change' }],
+      completed: [{ bot: 'a', step: 1, text: 'Implemented change' }],
       failures: [],
       nextUserActions: [],
       finalizedAt: 100,
@@ -111,7 +111,7 @@ describe('team reducer routing', () => {
   it('concatenates thinking tokens without changing language or whitespace', () => {
     let s = baseState();
     const source = `\n\u4FDD\u7559\u539F\u6587\nEnglish text  `;
-    s = reducer(s, { type: 'workerStart', chatId: 'c1', teamTurnId: 'tt1', messageId: 'w1', step: 1, worker: 'a', reason: '' });
+    s = reducer(s, { type: 'botStart', chatId: 'c1', teamTurnId: 'tt1', messageId: 'w1', step: 1, bot: 'a', reason: '' });
     s = reducer(s, { type: 'thinkingToken', chatId: 'c1', token: source.slice(0, 4), step: 1, messageId: 'w1' });
     s = reducer(s, { type: 'thinkingToken', chatId: 'c1', token: source.slice(4), step: 1, messageId: 'w1' });
     expect(s.chats.c1.messages.find(x => x.id === 'w1')!.thinkingByStep?.[1]).toBe(source);
@@ -119,11 +119,11 @@ describe('team reducer routing', () => {
 
   it('stores a team completion as group metadata instead of a standalone bubble', () => {
     let s = baseState()
-    s = reducer(s, { type: 'workerStart', chatId: 'c1', teamTurnId: 'tt1', messageId: 'w1', step: 1, worker: 'a', reason: '' })
+    s = reducer(s, { type: 'botStart', chatId: 'c1', teamTurnId: 'tt1', messageId: 'w1', step: 1, bot: 'a', reason: '' })
     s = reducer(s, { type: 'completeSend', chatId: 'c1', assistantMessageId: 'asst-x', content: '### 🧠 Team blackboard\n\n**Facts:**\n- useful', teamTurnId: 'tt1' })
     const footer = s.chats.c1.messages.find(x => x.id === 'asst-x')!
     expect(footer).toMatchObject({ teamTurnId: 'tt1', teamName: 'team', isComplete: true })
-    expect(footer.worker).toBeUndefined()
+    expect(footer.bot).toBeUndefined()
     expect(s.inFlight.c1).toBeUndefined()
   })
 });
@@ -289,24 +289,24 @@ describe('message queue', () => {
 })
 
 describe('member identity and failure delivery', () => {
-  it('keeps the selected worker identity while streaming and receives terminal failure', () => {
-    let s: State = { ...emptyState(), chats: { c1: makeChat({ selection: { type: 'worker', name: 'alice' } }) } }
+  it('keeps the selected bot identity while streaming and receives terminal failure', () => {
+    let s: State = { ...emptyState(), chats: { c1: makeChat({ selection: { type: 'bot', name: 'alice' } }) } }
     s = reducer(s, { type: 'startSend', chatId: 'c1', assistantMessageId: 'a', userMessage: { id: 'u2', role: 'user', content: 'go', timestamp: 2 } })
-    expect(s.chats.c1.messages.at(-1)?.worker).toBe('alice')
-    s = reducer(s, { type: 'completeSend', chatId: 'c1', assistantMessageId: 'a', content: 'Could not complete', worker: 'alice', workerStatus: 'failed' })
-    expect(s.chats.c1.messages.at(-1)?.workerStatus).toBe('failed')
+    expect(s.chats.c1.messages.at(-1)?.bot).toBe('alice')
+    s = reducer(s, { type: 'completeSend', chatId: 'c1', assistantMessageId: 'a', content: 'Could not complete', bot: 'alice', botStatus: 'failed' })
+    expect(s.chats.c1.messages.at(-1)?.botStatus).toBe('failed')
   })
-  it('delivers worker failure details before history is reloaded', () => {
+  it('delivers bot failure details before history is reloaded', () => {
     let s = baseState()
-    s = reducer(s, { type: 'workerStart', chatId: 'c1', teamTurnId: 't', messageId: 'a', step: 1, worker: 'alice' })
-    s = reducer(s, { type: 'workerEnd', chatId: 'c1', messageId: 'a', step: 1, status: 'failed', failureReason: 'Missing permission', nextUserAction: { text: 'Grant access' } })
-    expect(s.chats.c1.messages.find(m => m.id === 'a')).toMatchObject({ workerStatus: 'failed', workerFailureReason: 'Missing permission', workerNextUserAction: { text: 'Grant access' } })
+    s = reducer(s, { type: 'botStart', chatId: 'c1', teamTurnId: 't', messageId: 'a', step: 1, bot: 'alice' })
+    s = reducer(s, { type: 'botEnd', chatId: 'c1', messageId: 'a', step: 1, status: 'failed', failureReason: 'Missing permission', nextUserAction: { text: 'Grant access' } })
+    expect(s.chats.c1.messages.find(m => m.id === 'a')).toMatchObject({ botStatus: 'failed', botFailureReason: 'Missing permission', botNextUserAction: { text: 'Grant access' } })
   })
 })
 
  it('keeps terminal team errors after the generic stub has been removed', () => {
     let s = baseState()
-    s = reducer(s, { type: 'workerStart', chatId: 'c1', teamTurnId: 't', messageId: 'a', step: 1, worker: 'alice' })
+    s = reducer(s, { type: 'botStart', chatId: 'c1', teamTurnId: 't', messageId: 'a', step: 1, bot: 'alice' })
     s = reducer(s, { type: 'errorSend', chatId: 'c1', assistantMessageId: 'asst-x', error: 'Team interrupted by an error' })
     expect(s.chats.c1.messages.at(-1)?.content).toBe('Team interrupted by an error')
     expect(s.inFlight.c1).toBeUndefined()
@@ -343,5 +343,19 @@ describe('task identity through the conversation UI', () => {
     state = reducer(state, { type: 'stoppedSend', chatId: 'c1', text: 'Website' })
     expect(state.pendingRestoreTasks?.c1).toBe('website')
     expect(state.queuedMessages.c1[0].taskRoute?.taskId).toBe('icon')
+  })
+})
+
+describe('memory usage on completion', () => {
+  const memoryUsed = [{ id: 'memory-1', version: 2, content: 'Use npm', audience: 'private' as const, source: 'Remember to use npm', botName: 'alice' }]
+  it('keeps snapshots on direct replies and on team replies without a footer', () => {
+    for (const team of [false, true]) {
+      const s = baseState()
+      s.chats.c1.messages = [{ id: 'bot-message', role: 'assistant', content: 'Done', timestamp: 1,
+        ...(team ? { bot: 'alice', teamTurnId: 'tt' } : {}) }]
+      const next = reducer(s, { type: 'completeSend', chatId: 'c1', assistantMessageId: team ? 'placeholder' : 'bot-message',
+        content: team ? '' : 'Done', memoryUsed, ...(team ? { teamTurnId: 'tt' } : {}) })
+      expect(next.chats.c1.messages.find(m => m.id === 'bot-message')!.memoryUsed).toEqual(memoryUsed)
+    }
   })
 })

@@ -93,7 +93,7 @@ describe('buildSliceDigest', () => {
     expect(digest.split('\n')).toHaveLength(1);
   });
 
-  it('prefers a worker or agent label over the bare role', () => {
+  it('prefers a bot or agent label over the bare role', () => {
     const digest = buildSliceDigest([JSON.stringify({ role: 'assistant', agent: 'codex', text: 'hi' })], 1);
     expect(digest).toContain('[codex]');
   });

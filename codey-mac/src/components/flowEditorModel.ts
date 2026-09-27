@@ -1,13 +1,13 @@
 import type { TeamGraph, TeamGraphNode, TeamGraphEdge } from '../../../packages/core/src/team-graph'
 
-export interface FlowNode { id: string; position: { x: number; y: number }; data: { label: string; type: TeamGraphNode['type']; worker?: string; condition?: string; maxCalls?: number }; type?: string; width?: number; height?: number }
+export interface FlowNode { id: string; position: { x: number; y: number }; data: { label: string; type: TeamGraphNode['type']; bot?: string; condition?: string; maxCalls?: number }; type?: string; width?: number; height?: number }
 export interface FlowEdge { id: string; source: string; target: string; sourceHandle?: string; targetHandle?: string; label?: string; data: { condition?: string; isDefault?: boolean; branch?: 'yes' | 'no' } }
 
 export function toFlow(g: TeamGraph): { nodes: FlowNode[]; edges: FlowEdge[] } {
   const nodes = g.nodes.map(n => ({
     id: n.id,
     position: { x: n.x, y: n.y },
-    data: { label: n.type === 'worker' ? (n.worker ?? '?') : n.type, type: n.type, worker: n.worker, condition: n.condition, maxCalls: n.maxCalls },
+    data: { label: n.type === 'bot' ? (n.bot ?? '?') : n.type, type: n.type, bot: n.bot, condition: n.condition, maxCalls: n.maxCalls },
     ...(n.width !== undefined ? { width: n.width } : {}),
     ...(n.height !== undefined ? { height: n.height } : {}),
   }))
@@ -23,7 +23,7 @@ export function toFlow(g: TeamGraph): { nodes: FlowNode[]; edges: FlowEdge[] } {
 export function fromFlow(nodes: FlowNode[], edges: FlowEdge[], entry: string, maxHops: number): TeamGraph {
   const gNodes: TeamGraphNode[] = nodes.map(n => {
     const node: TeamGraphNode = { id: n.id, type: n.data.type, x: Math.round(n.position.x), y: Math.round(n.position.y) }
-    if (n.data.worker !== undefined) node.worker = n.data.worker
+    if (n.data.bot !== undefined) node.bot = n.data.bot
     if (n.data.condition !== undefined) node.condition = n.data.condition
     if (n.data.maxCalls !== undefined) node.maxCalls = n.data.maxCalls
     if (n.width !== undefined) node.width = n.width
