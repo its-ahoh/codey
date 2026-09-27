@@ -1,3 +1,5 @@
+import type { CoMemoConflictView, CoMemoDetails } from '@codey/core'
+export type { CoMemoConflictView, CoMemoDetails }
 import type { Chat, ChatSelection } from '../../packages/core/src/types/chat'
 import type { ChatStreamEvent, QQStreamEvent } from '../../packages/gateway/src/chat-runner'
 import type { TaskBrief } from '../types'
@@ -444,9 +446,12 @@ declare global {
         }
         /** Codey's own remembered entries — what it injects into prompts. */
         codey: {
+          details: (scope: MemoryStoreScope, workspace: string | undefined, id: string) => Promise<IpcResult<CoMemoDetails>>
+          restore: (scope: MemoryStoreScope, workspace: string | undefined, id: string, version: number) => Promise<IpcResult<{ restored: boolean }>>
+          resolve: (scope: MemoryStoreScope, workspace: string | undefined, id: string, revision: string, choice: { take: string } | { content: string }) => Promise<IpcResult<{ resolved: boolean }>>
           targets: (workspace: string) => Promise<IpcResult<Array<{ id: string; label: string; path: string }>>>
           openConsole: (scope: MemoryStoreScope, workspace?: string) => Promise<IpcResult<{ opened: boolean }>>
-          list: (scope: MemoryStoreScope, workspace?: string) => Promise<IpcResult<{ entries: CodeyMemoryItem[]; legacyCount?: number }>>
+          list: (scope: MemoryStoreScope, workspace?: string) => Promise<IpcResult<{ entries: CodeyMemoryItem[]; archived: CodeyMemoryItem[]; conflicts: CoMemoConflictView[]; legacyCount?: number }>>
           importLegacy: (scope: MemoryStoreScope, workspace?: string) => Promise<IpcResult<{ imported: number; skipped: number; errors: string[] }>>
           add: (scope: MemoryStoreScope, workspace: string | undefined, content: string, type?: string) => Promise<IpcResult<CodeyMemoryItem>>
           update: (scope: MemoryStoreScope, workspace: string | undefined, id: string, content: string, version: number) => Promise<IpcResult<{ updated: boolean }>>

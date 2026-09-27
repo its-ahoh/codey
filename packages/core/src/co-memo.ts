@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { spawn, ChildProcess } from 'node:child_process';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -10,6 +11,15 @@ export interface CoMemoNote {
   content: string; deleted: boolean; createdAt: number; updatedAt: number; origin: string;
   metadata?: { kind?: string; source?: { excerpt?: string } | null };
 }
+export interface CoMemoConflict {
+  id: string; memoryId: string; currentVersion: number; currentContent: string | null;
+  proposals: Array<{ replicaId: string; agent?: string; content: string | null }>;
+  candidates: Array<{ id: string; content: string }>;
+  createdAt: number;
+}
+export interface CoMemoConflictView extends CoMemoConflict { revision: string }
+export interface CoMemoDetails { memory: CoMemoNote; history: CoMemoNote[]; conflicts: CoMemoConflict[] }
+const conflictRevision = (conflict: CoMemoConflict) => createHash('sha256').update(JSON.stringify(conflict)).digest('hex');
 export interface CoMemoSettings { paused: boolean; saveMode: 'auto' | 'explicit'; defaultScope: CoMemoScope }
 export interface CoMemoContext { context: string; settings: CoMemoSettings; sync?: CoMemoSync }
 interface CoMemoSync { errors?: unknown[]; conflicts?: unknown[] }
@@ -130,6 +140,36 @@ export class CoMemoClient {
       } catch (error) { errors.push(`Entry ${index + 1}: ${(error as Error).message}`); }
     }
     return { imported, skipped, errors };
+  }
+  async details(id: string, scope: CoMemoScope, projectPath?: string): Promise<CoMemoDetails> {
+    this.requireProject(scope, projectPath);
+    const result = await this.call<CoMemoDetails>('memory_get', { id, history: true }, projectPath);
+    if (result.memory.scope !== scope) throw new Error('Memory scope does not match this panel');
+    return result;
+  }
+  async conflicts(scope: CoMemoScope, projectPath?: string): Promise<CoMemoConflictView[]> {
+    this.requireProject(scope, projectPath);
+    const conflicts = await this.call<CoMemoConflict[]>('memory_conflicts', {}, projectPath);
+    const visible: CoMemoConflictView[] = [];
+    for (const conflict of conflicts) {
+      const { memory } = await this.call<{ memory: CoMemoNote }>('memory_get', { id: conflict.memoryId }, projectPath);
+      if (memory.scope === scope) visible.push({ ...conflict, revision: conflictRevision(conflict) });
+    }
+    return visible;
+  }
+  async restore(id: string, version: number, scope: CoMemoScope, projectPath?: string) {
+    const { memory } = await this.details(id, scope, projectPath);
+    if (memory.version !== version || !memory.deleted) throw new Error('Memory changed; refresh before restoring');
+    const result = await this.call<CoMemoWrite>('memory_restore', { id, version, userRequested: true }, projectPath);
+    await this.verify(result.memory, projectPath);
+    return result.memory;
+  }
+  async resolve(id: string, revision: string, choice: { take: string } | { content: string }, scope: CoMemoScope, projectPath?: string) {
+    const current = (await this.conflicts(scope, projectPath)).find(c => c.id === id);
+    if (!current || current.revision !== revision) throw new Error('Conflict changed; refresh and review the alternatives again');
+    const result = await this.call<CoMemoWrite>('memory_resolve', { id, ...choice, userRequested: true }, projectPath);
+    await this.verify(result.memory, projectPath);
+    return result.memory;
   }
   settings(projectPath?: string): Promise<{ effective: CoMemoSettings }> {
     return this.call('memory_settings_get', {}, projectPath);

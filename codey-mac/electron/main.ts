@@ -5127,7 +5127,8 @@ app.whenReady().then(async () => {
       const target = await coMemoTarget(scope, workspace)
       const notes = await target.provider.list(target.scope, target.project, undefined, true)
       const old = await legacyContents(scope, workspace)
-      return { entries: notes.filter(note => !note.deleted).map(toCoMemoItem), legacyCount: old.filter(content => !notes.some(n => n.content.trim() === content)).length }
+      const conflicts = await target.provider.conflicts(target.scope, target.project)
+      return { entries: notes.filter(note => !note.deleted).map(toCoMemoItem), archived: notes.filter(note => note.deleted).map(toCoMemoItem), conflicts, legacyCount: old.filter(content => !notes.some(n => n.content.trim() === content)).length }
     })
   )
   ipcMain.handle('codeyMemory:importLegacy', async (_e, scope: MemoryStoreScope, workspace?: string) =>
@@ -5137,6 +5138,22 @@ app.whenReady().then(async () => {
       finally { await inProcessGateway?.invalidateMemorySessions() }
     })
   )
+  ipcMain.handle('codeyMemory:details', async (_e, scope: MemoryStoreScope, workspace: string | undefined, id: string) => wrap(async () => {
+    const target = await coMemoTarget(scope, workspace)
+    return target.provider.details(id, target.scope, target.project)
+  }))
+  ipcMain.handle('codeyMemory:restore', async (_e, scope: MemoryStoreScope, workspace: string | undefined, id: string, version: number) => wrap(async () => {
+    const target = await coMemoTarget(scope, workspace)
+    try { await target.provider.restore(id, version, target.scope, target.project); return { restored: true } }
+    finally { await inProcessGateway?.invalidateMemorySessions() }
+  }))
+  ipcMain.handle('codeyMemory:resolve', async (_e, scope: MemoryStoreScope, workspace: string | undefined, id: string, revision: string, choice: { take: string } | { content: string }) => wrap(async () => {
+    const target = await coMemoTarget(scope, workspace)
+    if (!choice || typeof choice !== 'object' || ('take' in choice) === ('content' in choice)) throw new Error('Select a conflict alternative or enter merged content')
+    const selected = 'take' in choice ? { take: choice.take } : { content: validateContent(choice.content) }
+    try { await target.provider.resolve(id, revision, selected, target.scope, target.project); return { resolved: true } }
+    finally { await inProcessGateway?.invalidateMemorySessions() }
+  }))
   ipcMain.handle('codeyMemory:add', async (_e, scope: MemoryStoreScope, workspace: string | undefined, content: string) =>
     wrap(async () => {
       const target = await coMemoTarget(scope, workspace)

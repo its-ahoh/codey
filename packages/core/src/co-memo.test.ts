@@ -73,3 +73,44 @@ describe('Co-memo management', () => {
     } finally { client.closeConsoles(); }
   }, 30000);
 });
+
+it('restores archives with version checks and exposes revision history in the selected scope', async () => {
+  const { client, a, b } = fixture();
+  const note = await client.remember('Original project fact', 'project', a);
+  const edited = await client.change(note.id, note.version, 'project', a, 'Corrected project fact');
+  const archived = await client.change(note.id, edited.version, 'project', a);
+  await expect(client.restore(note.id, edited.version, 'project', a)).rejects.toThrow(/changed/);
+  await expect(client.details(note.id, 'project', b)).rejects.toThrow();
+  await expect(client.restore(note.id, archived.version, 'user', a)).rejects.toThrow(/scope/);
+  const restored = await client.restore(note.id, archived.version, 'project', a);
+  expect(restored.deleted).toBe(false);
+  const details = await client.details(note.id, 'project', a);
+  expect(details.history.map(n => n.content)).toContain('Original project fact');
+  expect(details.history.some(n => n.deleted)).toBe(true);
+}, 30000);
+
+it.each(['current', 'candidate', 'merge'])('resolves %s only after scoped, unchanged conflict review', async (selection) => {
+  const { client, a, b } = fixture();
+  const note = await client.remember('Current fact', 'project', a);
+  const { randomUUID } = await import('node:crypto');
+  const propose = () => client.call('memory_submit', {
+    requestId: randomUUID(), intent: 'explicit', candidates: [{
+      action: 'conflict', id: note.id, version: note.version, content: 'Alternative fact', kind: 'note',
+      source: { agent: 'codey-test', sessionId: 'conflict-test', messageId: 'proposal', excerpt: 'Alternative fact' },
+    }],
+  }, a);
+  await propose();
+  const [conflict] = await client.conflicts('project', a);
+  expect(conflict.currentContent).toBe('Current fact');
+  expect(conflict.candidates[0].content).toBe('Alternative fact');
+  expect(await client.list('project', a)).toEqual([]);
+  expect(await client.conflicts('user', a)).toEqual([]);
+  expect(await client.conflicts('project', b)).toEqual([]);
+  await expect(client.resolve(conflict.id, 'stale', { take: 'current' }, 'project', a)).rejects.toThrow(/changed/);
+  await expect(client.resolve(conflict.id, conflict.revision, { take: 'current' }, 'user', a)).rejects.toThrow(/changed/);
+  const choice = selection === 'merge' ? { content: 'Merged fact' } : { take: selection === 'current' ? 'current' : conflict.candidates[0].id };
+  const resolved = await client.resolve(conflict.id, conflict.revision, choice, 'project', a);
+  expect(resolved.content).toBe(selection === 'merge' ? 'Merged fact' : selection === 'current' ? 'Current fact' : 'Alternative fact');
+  expect(await client.conflicts('project', a)).toEqual([]);
+  await expect(client.resolve(conflict.id, conflict.revision, { content: 'Obsolete merge' }, 'project', a)).rejects.toThrow(/changed/);
+}, 30000);
