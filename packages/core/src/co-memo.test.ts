@@ -46,18 +46,6 @@ describe('Co-memo 0.7 public MCP integration', () => {
   }, 30000);
 });
 
-describe('Co-memo management', () => {
-  it('opens and reuses a scoped console against the same store', async () => {
-    const { client, a } = fixture();
-    try {
-      const url = await client.openConsole(a);
-      expect(await client.openConsole(a)).toBe(url);
-      expect(url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
-      expect((await fetch(url)).ok).toBe(true);
-    } finally { client.closeConsoles(); }
-  }, 30000);
-});
-
 it('restores archives with version checks and exposes revision history in the selected scope', async () => {
   const { client, a, b } = fixture();
   const note = await client.remember('Original project fact', 'project', a);
@@ -97,4 +85,26 @@ it.each(['current', 'candidate', 'merge'])('resolves %s only after scoped, uncha
   expect(resolved.content).toBe(selection === 'merge' ? 'Merged fact' : selection === 'current' ? 'Current fact' : 'Alternative fact');
   expect(await client.conflicts('project', a)).toEqual([]);
   await expect(client.resolve(conflict.id, conflict.revision, { content: 'Obsolete merge' }, 'project', a)).rejects.toThrow(/changed/);
+}, 30000);
+
+it('permanently deletes only an explicitly selected archived version in the right scope', async () => {
+  const { client, a, b } = fixture();
+  const note = await client.remember('Temporary note', 'project', a);
+  await expect(client.purge(note.id, note.version, 'project', a)).rejects.toThrow(/Archive/);
+  const archived = await client.change(note.id, note.version, 'project', a);
+  await expect(client.purge(note.id, archived.version, 'project', b)).rejects.toThrow();
+  await expect(client.purge(note.id, note.version, 'project', a)).rejects.toThrow(/refresh/);
+  await client.purge(note.id, archived.version, 'project', a);
+  await expect(client.details(note.id, 'project', a)).rejects.toThrow();
+}, 30000);
+
+it('pauses and resumes memory through native settings without weakening user restrictions', async () => {
+  const { client, a } = fixture();
+  await client.setPaused('project', true, a);
+  expect((await client.settings(a)).effective.paused).toBe(true);
+  await client.setPaused('user', true);
+  await client.setPaused('project', false, a);
+  expect((await client.settings(a)).effective.paused).toBe(true);
+  await client.setPaused('user', false);
+  expect((await client.settings(a)).effective.paused).toBe(false);
 }, 30000);

@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import { spawn, ChildProcess } from 'node:child_process';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import * as path from 'node:path';
@@ -29,43 +28,6 @@ export interface CoMemoOptions { home?: string; node?: string; cli?: string; per
 /** Public MCP protocol only: Codey never opens Co-memo's database or imports its internals. */
 export class CoMemoClient {
   private options: CoMemoOptions;
-  private consoles = new Map<string, { child: ChildProcess; ready: Promise<string> }>();
-
-  /** Reuse a scoped loopback console, and stop it with the owning desktop process. */
-  openConsole(projectPath?: string): Promise<string> {
-    const key = projectPath ?? '';
-    const existing = this.consoles.get(key);
-    if (existing) return existing.ready;
-    const launch = this.launch();
-    const child = spawn(launch.node, [launch.launcher, launch.cli,
-      ...(launch.home ? ['--home', launch.home] : []),
-      ...(projectPath ? ['--project', projectPath] : []), 'ui', '--port', '0', '--no-open'], {
-      cwd: launch.cwd, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    const ready = new Promise<string>((resolve, reject) => {
-      let output = '';
-      const timer = setTimeout(() => { child.kill(); reject(new Error('Memory console timed out')); }, 15000);
-      child.stdout?.on('data', data => {
-        output = (output + data.toString()).slice(-8192);
-        const url = output.match(/http:\/\/127\.0\.0\.1:\d+[^\s]*/)?.[0];
-        if (url) { clearTimeout(timer); resolve(url); }
-      });
-      child.stderr?.on('data', () => {});
-      child.once('error', error => { clearTimeout(timer); reject(error); });
-      child.once('exit', () => { clearTimeout(timer); reject(new Error('Memory console stopped')); });
-    });
-    this.consoles.set(key, { child, ready });
-    const remove = () => { if (this.consoles.get(key)?.child === child) this.consoles.delete(key); };
-    child.once('exit', remove);
-    void ready.catch(() => { child.kill(); remove(); });
-    return ready;
-  }
-
-  closeConsoles(): void {
-    for (const { child } of this.consoles.values()) child.kill();
-    this.consoles.clear();
-  }
-
   constructor(options: CoMemoOptions = {}) { this.options = options; }
 
   private launch() {
@@ -158,13 +120,22 @@ export class CoMemoClient {
   settings(projectPath?: string): Promise<{ effective: CoMemoSettings }> {
     return this.call('memory_settings_get', {}, projectPath);
   }
+  async purge(id: string, version: number, scope: CoMemoScope, projectPath?: string): Promise<void> {
+    const { memory } = await this.details(id, scope, projectPath);
+    if (!memory.deleted || memory.version !== version) throw new Error('Archive this memory and refresh before deleting it permanently');
+    await this.call('memory_delete', { id, version, userRequested: true }, projectPath);
+  }
+  setPaused(scope: CoMemoScope, paused: boolean, projectPath?: string) {
+    this.requireProject(scope, projectPath);
+    return this.call<{ effective: CoMemoSettings }>('memory_settings_set', { scope, patch: { paused }, userRequested: true }, projectPath);
+  }
   setSaveMode(saveMode: 'auto' | 'explicit'): Promise<{ effective: CoMemoSettings }> {
     return this.call('memory_settings_set', { scope: 'user', patch: { saveMode }, userRequested: true });
   }
   async remember(content: string, scope: CoMemoScope, projectPath?: string, intent: 'explicit' | 'automatic' = 'explicit'): Promise<CoMemoNote> {
     this.requireProject(scope, projectPath);
     const result = await this.call<CoMemoWrite>('memory_remember', { content, scope, intent }, projectPath);
-    if (result.memory.deleted) throw new Error('An identical note is archived; restore it in Co-memo instead of saving a duplicate.');
+    if (result.memory.deleted) throw new Error('An identical note is archived; restore it from Archived instead of saving a duplicate.');
     await this.verify(result.memory, projectPath);
     return result.memory;
   }

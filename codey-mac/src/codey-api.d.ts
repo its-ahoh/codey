@@ -435,12 +435,13 @@ declare global {
         project: (workspace?: string) => Promise<IpcResult<ProjectMemoryResult>>
         /** Co-memo user/project memory management. */
         codey: {
+          purge: (scope: MemoryPanelScope, workspace: string | undefined, id: string, version: number) => Promise<IpcResult<{ deleted: boolean }>>
+          setPaused: (scope: MemoryPanelScope, workspace: string | undefined, paused: boolean) => Promise<IpcResult<{ paused: boolean }>>
           details: (scope: MemoryPanelScope, workspace: string | undefined, id: string) => Promise<IpcResult<CoMemoDetails>>
           restore: (scope: MemoryPanelScope, workspace: string | undefined, id: string, version: number) => Promise<IpcResult<{ restored: boolean }>>
           resolve: (scope: MemoryPanelScope, workspace: string | undefined, id: string, revision: string, choice: { take: string } | { content: string }) => Promise<IpcResult<{ resolved: boolean }>>
           targets: (workspace: string) => Promise<IpcResult<Array<{ id: string; label: string; path: string }>>>
-          openConsole: (scope: MemoryPanelScope, workspace?: string) => Promise<IpcResult<{ opened: boolean }>>
-          list: (scope: MemoryPanelScope, workspace?: string) => Promise<IpcResult<{ entries: CodeyMemoryItem[]; archived: CodeyMemoryItem[]; conflicts: CoMemoConflictView[] }>>
+          list: (scope: MemoryPanelScope, workspace?: string) => Promise<IpcResult<{ entries: CodeyMemoryItem[]; archived: CodeyMemoryItem[]; conflicts: CoMemoConflictView[]; paused?: boolean; pausedByUser?: boolean }>>
           add: (scope: MemoryPanelScope, workspace: string | undefined, content: string, type?: string) => Promise<IpcResult<CodeyMemoryItem>>
           update: (scope: MemoryPanelScope, workspace: string | undefined, id: string, content: string, version: number) => Promise<IpcResult<{ updated: boolean }>>
           remove: (scope: MemoryPanelScope, workspace: string | undefined, id: string, version: number) => Promise<IpcResult<{ removed: boolean }>>

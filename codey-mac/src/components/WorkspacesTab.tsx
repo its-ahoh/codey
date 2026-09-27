@@ -145,7 +145,7 @@ export const WorkspacesTab: React.FC<WorkspacesTabProps> = ({ isGatewayRunning }
   return (
     <div style={styles.container}>
       <div style={styles.header}>
-        <span style={{ color: C.fg3, fontSize: 11, lineHeight: 1.5 }}>Manage project folders and their Co-memo project memory.</span>
+        <span style={{ color: C.fg3, fontSize: 11, lineHeight: 1.5 }}>Manage project folders and their project memory.</span>
         <button
           onClick={pickAndCreate}
           disabled={creating}
