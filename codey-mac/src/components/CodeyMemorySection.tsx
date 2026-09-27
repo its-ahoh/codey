@@ -96,6 +96,7 @@ export const MemoryPanel: React.FC<PanelProps> = ({ scope, workspace, title, des
   const [entries, setEntries] = useState<CodeyMemoryItem[]>([])
   const [draft, setDraft] = useState('')
   const [legacyCount, setLegacyCount] = useState(0)
+  const [notice, setNotice] = useState('')
   const [adding, setAdding] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -142,11 +143,19 @@ export const MemoryPanel: React.FC<PanelProps> = ({ scope, workspace, title, des
       )}
 
       {banner}
+      <button style={smallButton()} onClick={() => void run(async () => {
+        unwrap(await window.codey.memory.codey.openConsole(scope, workspace))
+      })}>Open Co-memo: archives, history &amp; conflicts</button>
+      <p style={{ color: C.fg3, fontSize: 11 }}>Conflicted notes are withheld from this list. Manage them in Co-memo, then refresh here.</p>
+      {notice && <p role="status" style={{ fontSize: 12 }}>{notice}</p>}
       {legacyCount > 0 && <div style={{ marginBottom: 12, color: C.fg3, fontSize: 12 }}>
         {legacyCount} previous Codey memories are available. Original files will be kept.
         <button disabled={loading || adding} style={smallButton()} onClick={() => void run(async () => {
           setAdding(true)
-          try { unwrap(await window.codey.memory.codey.importLegacy(scope, workspace)) } finally { setAdding(false) }
+          try {
+            const result = unwrap(await window.codey.memory.codey.importLegacy(scope, workspace))
+            setNotice(`Imported ${result.imported}; skipped ${result.skipped}. ${result.errors.join(' ')}`)
+          } finally { setAdding(false) }
         })}>Import into Co-memo</button>
       </div>}
 
@@ -189,14 +198,32 @@ export const MemoryPanel: React.FC<PanelProps> = ({ scope, workspace, title, des
 }
 
 /** What Codey remembers about one workspace. */
-export const CodeyMemorySection: React.FC<{ workspace: string }> = ({ workspace }) => (
-  <MemoryPanel
-    scope="workspace"
-    workspace={workspace}
-    title="Shared memory"
-    description="Project facts and decisions stored in Co-memo for this project path."
-  />
-)
+export const CodeyMemorySection: React.FC<{ workspace: string }> = ({ workspace }) => {
+  const [targets, setTargets] = useState<Array<{ id: string; label: string; path: string }>>([])
+  const [selected, setSelected] = useState(workspace)
+  const [error, setError] = useState('')
+  useEffect(() => {
+    let active = true
+    setSelected(workspace)
+    setTargets([])
+    setError('')
+    window.codey.memory.codey.targets(workspace).then(result => {
+      const next = unwrap(result)
+      if (active) setTargets(next)
+    }).catch(e => { if (active) setError(e.message) })
+    return () => { active = false }
+  }, [workspace])
+  const target = targets.find(t => t.id === selected)
+  return <div>
+    {error && <p role="alert">{error}</p>}
+    <label>Project directory <select aria-label="Memory project directory" value={selected} onChange={e => setSelected(e.target.value)}>
+      {!targets.length && <option value={workspace}>{workspace}</option>}
+      {targets.map(t => <option key={t.id} value={t.id}>{t.label} — {t.path}</option>)}
+    </select></label>
+    <MemoryPanel key={selected} scope="workspace" workspace={selected} title="Shared memory"
+      description={target ? `Co-memo project: ${target.path}` : 'Project facts and decisions stored in Co-memo.'} />
+  </div>
+}
 
 /** The two switches that decide whether Codey remembers anything at all. */
 export const CodeyMemorySettings: React.FC = () => {
@@ -256,7 +283,7 @@ export const CodeyMemorySettings: React.FC = () => {
       )}
       {paused && <p>Co-memo is paused. Resume it in Co-memo to read or save memories.</p>}
       {row('Use memory in prompts', 'Controls memory that Codey adds to new prompts; existing sessions and agent hooks may already contain notes.', enabled, v => void patch({ enabled: v }))}
-      {row('Allow automatic memory saves', 'Applies to connected Co-memo agents. Agents select durable information; no background extraction runs.', autoExtract, v => void patch({ autoExtract: v }), !enabled)}
+      {row('Allow automatic memory saves', 'Applies to connected Co-memo agents. Agents select durable information. Playbook learning has its own Skills settings.', autoExtract, v => void patch({ autoExtract: v }), !enabled)}
     </div>
   )
 }

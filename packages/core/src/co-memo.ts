@@ -1,3 +1,4 @@
+import { spawn, ChildProcess } from 'node:child_process';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import * as path from 'node:path';
@@ -18,6 +19,43 @@ export interface CoMemoOptions { home?: string; node?: string; cli?: string; per
 /** Public MCP protocol only: Codey never opens Co-memo's database or imports its internals. */
 export class CoMemoClient {
   private options: CoMemoOptions;
+  private consoles = new Map<string, { child: ChildProcess; ready: Promise<string> }>();
+
+  /** Reuse a scoped loopback console, and stop it with the owning desktop process. */
+  openConsole(projectPath?: string): Promise<string> {
+    const key = projectPath ?? '';
+    const existing = this.consoles.get(key);
+    if (existing) return existing.ready;
+    const launch = this.launch();
+    const child = spawn(launch.node, [launch.launcher, launch.cli,
+      ...(launch.home ? ['--home', launch.home] : []),
+      ...(projectPath ? ['--project', projectPath] : []), 'ui', '--port', '0', '--no-open'], {
+      cwd: launch.cwd, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const ready = new Promise<string>((resolve, reject) => {
+      let output = '';
+      const timer = setTimeout(() => { child.kill(); reject(new Error('Memory console timed out')); }, 15000);
+      child.stdout?.on('data', data => {
+        output = (output + data.toString()).slice(-8192);
+        const url = output.match(/http:\/\/127\.0\.0\.1:\d+[^\s]*/)?.[0];
+        if (url) { clearTimeout(timer); resolve(url); }
+      });
+      child.stderr?.on('data', () => {});
+      child.once('error', error => { clearTimeout(timer); reject(error); });
+      child.once('exit', () => { clearTimeout(timer); reject(new Error('Memory console stopped')); });
+    });
+    this.consoles.set(key, { child, ready });
+    const remove = () => { if (this.consoles.get(key)?.child === child) this.consoles.delete(key); };
+    child.once('exit', remove);
+    void ready.catch(() => { child.kill(); remove(); });
+    return ready;
+  }
+
+  closeConsoles(): void {
+    for (const { child } of this.consoles.values()) child.kill();
+    this.consoles.clear();
+  }
+
   constructor(options: CoMemoOptions = {}) { this.options = options; }
 
   private launch() {
@@ -72,10 +110,26 @@ export class CoMemoClient {
   context(query: string, projectPath?: string): Promise<CoMemoContext> {
     return this.call('memory_context', { query: query.slice(0, 16000) }, projectPath);
   }
-  async list(scope: CoMemoScope, projectPath?: string, query?: string): Promise<CoMemoNote[]> {
+  async list(scope: CoMemoScope, projectPath?: string, query?: string, includeDeleted = false): Promise<CoMemoNote[]> {
     this.requireProject(scope, projectPath);
-    const result = await this.call<{ memories: CoMemoNote[] }>('memory_recall', { ...(query ? { query } : {}) }, projectPath);
-    return result.memories.filter(note => note.scope === scope && !note.deleted);
+    const result = await this.call<{ memories: CoMemoNote[] }>('memory_recall', { ...(query ? { query } : {}), includeDeleted }, projectPath);
+    return result.memories.filter(note => note.scope === scope && (includeDeleted || !note.deleted));
+  }
+  /** Explicit migration never revives archives and continues after individual failures. */
+  async importLegacy(contents: string[], scope: CoMemoScope, projectPath?: string) {
+    const known = await this.list(scope, projectPath, undefined, true);
+    const seen = new Set(known.map(note => note.content.trim()));
+    let imported = 0; let skipped = 0;
+    const errors: string[] = [];
+    for (const [index, text] of contents.entries()) {
+      const content = text.trim();
+      if (!content || seen.has(content)) { skipped++; continue; }
+      try {
+        await this.remember(content, scope, projectPath);
+        seen.add(content); imported++;
+      } catch (error) { errors.push(`Entry ${index + 1}: ${(error as Error).message}`); }
+    }
+    return { imported, skipped, errors };
   }
   settings(projectPath?: string): Promise<{ effective: CoMemoSettings }> {
     return this.call('memory_settings_get', {}, projectPath);
