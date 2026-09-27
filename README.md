@@ -406,3 +406,7 @@ The gateway recalls context before execution and records the injected text in **
 Workspace memory panels include the actual checkout paths of their project chats, so isolated worktree memories can be managed alongside the base workspace. Legacy import includes the earlier user `~/.codey/memory/MEMORY.md` file, skips existing/archived notes, preserves source files and reports partial failures. Resumed ordinary and Bot sessions receive current retrieval; Codey memory mutations invalidate both kinds of session anchors.
 
 Automatic memory saving and Playbook learning are separate settings: Co-memo controls durable user/project facts, while Skills controls execution traces and procedure evolution. Conversation history, summaries and team blackboards remain task state managed by Codey.
+
+New Codey-created worktrees inherit a one-time copy of the workspace main directory's active, non-conflicted project notes. Every worktree keeps its own Co-memo project ID; user notes remain shared. Later parent/worktree edits do not propagate, and merging a PR does not merge memory. Existing worktrees are not backfilled automatically.
+
+Inheritance snapshots and source-note IDs/versions are retained under the Codey workspace's `memory-inheritance/` directory, outside the code checkout. Interrupted copies resume from the frozen snapshot before the first agent run. A paused or explicit-only Co-memo policy blocks automatic copying and leaves the worktree available for retry; no policy is bypassed. Already linked Co-memo projects are rejected rather than silently shared.

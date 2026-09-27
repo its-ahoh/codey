@@ -1,3 +1,4 @@
+import { inheritWorktreeMemory } from './worktree-memory';
 import { CoMemoClient } from '@codey/core';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { matchAutomaticChatTask } from './automatic-chat-task';
@@ -927,7 +928,10 @@ export class Codey {
     if (!chat) throw new Error(`Chat not found: ${chatId}`);
     if (chat.executionMode !== 'isolated-worktree') return chat;
     if (chat.chatWorkspace) {
-      if (fs.existsSync(chat.chatWorkspace.workingDir)) return chat;
+      if (fs.existsSync(chat.chatWorkspace.workingDir)) {
+        if (chat.chatWorkspace.memoryInheritance === 'pending') return this.initializeWorktreeMemory(chat);
+        return chat;
+      }
       throw new Error(`Chat workspace is missing: ${chat.chatWorkspace.workingDir}`);
     }
     if (!worktreeName) throw new Error('Create and name a worktree from the Branch Selector first');
@@ -937,12 +941,25 @@ export class Codey {
       workspaceWorkingDir: this.resolveWorkspaceWorkingDir(chat.workspaceName),
       worktreeName,
     }).then(workspace => {
-      const updated = this.chatManager.setChatWorkspace(chat.id, workspace);
-      return updated;
+      const updated = this.chatManager.setChatWorkspace(chat.id, { ...workspace, memoryInheritance: 'pending' });
+      return this.initializeWorktreeMemory(updated);
     })
       .finally(() => this.pendingChatWorkspaces.delete(chatId));
     this.pendingChatWorkspaces.set(chatId, provision);
     return provision;
+  }
+
+  private async initializeWorktreeMemory(chat: Chat): Promise<Chat> {
+    const workspace = chat.chatWorkspace!;
+    const source = this.resolveWorkspaceWorkingDir(chat.workspaceName);
+    const key = createHash('sha256').update(`${workspace.worktreePath}:${workspace.createdAt}`).digest('hex');
+    const manifest = path.join(this.workspaceManager.getWorkspacesRoot(), chat.workspaceName, 'memory-inheritance', `${key}.json`);
+    try {
+      await inheritWorktreeMemory(this.getCoMemo(), source, workspace.workingDir, manifest);
+      return this.chatManager.setChatWorkspace(chat.id, { ...workspace, memoryInheritance: 'complete' });
+    } catch (error) {
+      throw new Error(`Worktree created, but memory inheritance is pending: ${(error as Error).message}. Retry by selecting this worktree.`);
+    }
   }
 
   /** Adopt a worktree that an agent created for this chat. No model call is
@@ -1844,7 +1861,7 @@ export class Codey {
       provision: (worktreeName) => provisionChatWorktree({
         workspaceWorkingDir: this.resolveWorkspaceWorkingDir(a.target.workspaceName),
         worktreeName,
-      }),
+      }).then(workspace => ({ ...workspace, memoryInheritance: 'pending' as const })),
       bind: (workspace) => { this.chatManager.setChatWorkspace(chatId, workspace); },
       current: () => this.chatManager.get(chatId)?.chatWorkspace,
       discard: (workspace) => discardDisposableWorktree(workspace),

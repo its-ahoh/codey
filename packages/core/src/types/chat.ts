@@ -238,6 +238,8 @@ export interface Chat {
     worktreePath: string;
     workingDir: string;
     baseCommit: string;
+    /** New worktrees snapshot project memory before the first agent run. */
+    memoryInheritance?: 'pending' | 'complete';
     createdAt: number;
   };
   /** Pull request delivery state associated with this chat's current branch. */

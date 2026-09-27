@@ -177,9 +177,9 @@ export class CoMemoClient {
   setSaveMode(saveMode: 'auto' | 'explicit'): Promise<{ effective: CoMemoSettings }> {
     return this.call('memory_settings_set', { scope: 'user', patch: { saveMode }, userRequested: true });
   }
-  async remember(content: string, scope: CoMemoScope, projectPath?: string): Promise<CoMemoNote> {
+  async remember(content: string, scope: CoMemoScope, projectPath?: string, intent: 'explicit' | 'automatic' = 'explicit'): Promise<CoMemoNote> {
     this.requireProject(scope, projectPath);
-    const result = await this.call<CoMemoWrite>('memory_remember', { content, scope, intent: 'explicit' }, projectPath);
+    const result = await this.call<CoMemoWrite>('memory_remember', { content, scope, intent }, projectPath);
     if (result.memory.deleted) throw new Error('An identical note is archived; restore it in Co-memo instead of saving a duplicate.');
     await this.verify(result.memory, projectPath);
     return result.memory;
