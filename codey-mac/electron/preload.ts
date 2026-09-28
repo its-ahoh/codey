@@ -221,6 +221,11 @@ contextBridge.exposeInMainWorld('codey', {
     send: (payload: { chatId: string; text: string; attachments?: any[]; taskRoute?: import('@codey/core').ChatTaskRoute }) =>
       ipcRenderer.invoke('chats:send', payload),
     stop: (chatId: string) => ipcRenderer.invoke('chats:stop', chatId),
+    onResume: (handler: () => void) => {
+      const listener = () => handler()
+      ipcRenderer.on('chats:resume', listener)
+      return () => ipcRenderer.removeListener('chats:resume', listener)
+    },
     onEvent: (handler: (ev: any) => void) => {
       const listener = (_e: Electron.IpcRendererEvent, ev: any) => handler(ev)
       ipcRenderer.on('chats:event', listener)
