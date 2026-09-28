@@ -359,3 +359,24 @@ describe('memory usage on completion', () => {
     }
   })
 })
+
+
+describe('settled turn reconciliation', () => {
+  it('recovers a missed terminal event and replaces optimistic messages', () => {
+    const state = baseState()
+    state.chats.c1.messages = [{ id: 'asst-x', role: 'assistant', content: 'partial', timestamp: 2, isComplete: false }]
+    state.pendingPermissions.c1 = ['Bash']
+    state.queuedMessages.c1 = [{ id: 'next', text: 'follow up' }]
+    const chat = makeChat({ messages: [{ id: 'server-reply', role: 'assistant', content: 'Finished', timestamp: 3, isComplete: true }] })
+    const next = reducer(state, { type: 'reconcileSettled', chat, assistantMessageId: 'asst-x' })
+    expect(next.chats.c1).toEqual(chat)
+    expect(next.inFlight.c1).toBeUndefined()
+    expect(next.pendingPermissions.c1).toBeUndefined()
+    expect(next.queuedMessages.c1).toEqual(state.queuedMessages.c1)
+  })
+
+  it('ignores a snapshot for a previous turn', () => {
+    const state = baseState()
+    expect(reducer(state, { type: 'reconcileSettled', chat: makeChat(), assistantMessageId: 'old-turn' })).toBe(state)
+  })
+})

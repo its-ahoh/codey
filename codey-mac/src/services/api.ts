@@ -119,6 +119,8 @@ export const apiService = {
     unwrap(await window.codey.globalTeams.set(teams)),
 
   chats: {
+    settled: async (id: string): Promise<Chat | null> =>
+      unwrap(await window.codey.chats.settled(id)),
     list: async (workspaceName?: string): Promise<Chat[]> =>
       unwrap(await window.codey.chats.list(workspaceName)),
     get: async (id: string): Promise<Chat> =>

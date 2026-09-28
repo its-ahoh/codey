@@ -54,6 +54,7 @@ export interface State {
 }
 
 type Action =
+  | { type: 'reconcileSettled'; chat: Chat; assistantMessageId: string }
   | { type: 'teamFinal'; chatId: string; message: ChatMessage }
   | { type: 'loaded'; chats: Chat[] }
   | { type: 'tasksUpdated'; chatId: string; tasks: Chat['tasks'] }
@@ -178,6 +179,20 @@ export function reducer(state: State, action: Action): State {
         chats[c.id] = localOnly.length > 0 ? { ...c, messages: [...c.messages, ...localOnly] } : c
       }
       return { ...state, chats, order: sorted.map(c => c.id) }
+    }
+    case 'reconcileSettled': {
+      const id = action.chat.id
+      if (state.inFlight[id]?.assistantMessageId !== action.assistantMessageId) return state
+      const inFlight = { ...state.inFlight }
+      const pendingPermissions = { ...state.pendingPermissions }
+      delete inFlight[id]
+      delete pendingPermissions[id]
+      // Replace the optimistic transcript too: server message IDs differ from
+      // renderer placeholders, so an upsert would leave duplicate unfinished rows.
+      return {
+        ...state, inFlight, pendingPermissions,
+        chats: { ...state.chats, [id]: action.chat },
+      }
     }
     case 'setWorkspaces':
       return { ...state, workspaces: action.workspaces }
@@ -952,6 +967,40 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // `state` as a dependency (sendMessage is handed to children and would churn).
   const stateRef = useRef(state)
   stateRef.current = state
+
+  useEffect(() => {
+    let disposed = false
+    let checking = false
+    const reconcile = async () => {
+      if (checking || disposed) return
+      checking = true
+      try {
+        await Promise.all(Object.entries(pendingAssistantId.current).map(async ([chatId, assistantMessageId]) => {
+          try {
+            const chat = await apiService.chats.settled(chatId)
+            // A terminal event or a new send may have overtaken this IPC reply.
+            if (!chat || disposed || pendingAssistantId.current[chatId] !== assistantMessageId) return
+            delete pendingAssistantId.current[chatId]
+            adopting.current.delete(chatId)
+            dispatch({ type: 'reconcileSettled', chat, assistantMessageId })
+          } catch { /* Keep the run visible; retry when the gateway is reachable. */ }
+        }))
+      } finally { checking = false }
+    }
+    const onVisible = () => { if (!document.hidden) void reconcile() }
+    // Timers resume after sleep even when the window never changes focus.
+    const timer = window.setInterval(() => { void reconcile() }, 15_000)
+    window.addEventListener('focus', onVisible)
+    window.addEventListener('online', onVisible)
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      disposed = true
+      window.clearInterval(timer)
+      window.removeEventListener('focus', onVisible)
+      window.removeEventListener('online', onVisible)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [])
 
   const deliverMessage = useCallback(async (
     chatId: string,

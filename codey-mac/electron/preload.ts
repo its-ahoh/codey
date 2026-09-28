@@ -186,6 +186,7 @@ contextBridge.exposeInMainWorld('codey', {
       ipcRenderer.invoke('chats:upload', chatId, fileName, mimeType, data),
     list: (workspaceName?: string) => ipcRenderer.invoke('chats:list', workspaceName),
     get: (id: string) => ipcRenderer.invoke('chats:get', id),
+    settled: (id: string) => ipcRenderer.invoke('chats:settled', id),
     create: (input: { workspaceName: string; selection?: any; title?: string }) =>
       ipcRenderer.invoke('chats:create', input),
     rename: (id: string, title: string) => ipcRenderer.invoke('chats:rename', id, title),
