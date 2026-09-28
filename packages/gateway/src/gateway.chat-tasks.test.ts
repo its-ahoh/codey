@@ -30,6 +30,7 @@ function setup() {
     chatManager: manager,
     workspaceManager: { getWorkspacesRoot: () => root, getBotManager: () => bots },
     parallelResumes: new Map(),
+    pendingChatTurns: new Map(),
     chatAborts: new Map(), chatSemaphore: new RunSemaphore(),
     workingDir: root, config: {},
     adoptAgentCreatedWorktree: async () => undefined,

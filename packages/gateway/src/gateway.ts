@@ -280,6 +280,16 @@ export class Codey {
   private chatSemaphore = new RunSemaphore();
   /** In-flight Quick Question runs, keyed by parent chatId, for cancellation. */
   private qqAborts = new Map<string, AbortController>();
+  private pendingChatTurns = new Map<string, number>();
+
+  /** An atomic persisted snapshot, available only after every turn has settled. */
+  getSettledChat(chatId: string): Chat | null {
+    if (this.pendingChatTurns.has(chatId)) return null;
+    const chat = this.chatManager.get(chatId);
+    if (!chat) throw new Error(`Chat not found: ${chatId}`);
+    return chat;
+  }
+
   private chatAborts: Map<string, AbortController> = new Map();
   private parallelResumes = new Map<string, (answer: string) => Promise<void>>();
   private activeParallelRuns = new Map<string, ParallelTeamRunner>();
@@ -6041,7 +6051,14 @@ Example: /model gpt-4.1 write a Python script`;
     },
     taskRoute?: ChatTaskRoute,
   ): Promise<{ response: string; chatId: string; tokens?: number; durationSec?: number }> {
-    return memoryUsageContext.run(new Map(), () => this.sendToChatWithMemoryTrace(chatId, userTextParam, sinkParam, attachments, origin, taskRoute));
+    this.pendingChatTurns.set(chatId, (this.pendingChatTurns.get(chatId) ?? 0) + 1);
+    try {
+      return await memoryUsageContext.run(new Map(), () => this.sendToChatWithMemoryTrace(chatId, userTextParam, sinkParam, attachments, origin, taskRoute));
+    } finally {
+      const remaining = (this.pendingChatTurns.get(chatId) ?? 1) - 1;
+      if (remaining) this.pendingChatTurns.set(chatId, remaining);
+      else this.pendingChatTurns.delete(chatId);
+    }
   }
 
   private async sendToChatWithMemoryTrace(
