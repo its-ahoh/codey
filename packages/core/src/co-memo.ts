@@ -4,6 +4,10 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import * as path from 'node:path';
 import * as os from 'node:os';
 
+// Read at runtime rather than imported: `rootDir` is ./src, and ../package.json
+// resolves to this package from both src/ and dist/.
+const { version: CODEY_VERSION } = require('../package.json') as { version: string };
+
 export type CoMemoScope = 'user' | 'project';
 export interface CoMemoNote {
   id: string; version: number; scope: CoMemoScope; projectId: string | null;
@@ -53,7 +57,7 @@ export class CoMemoClient {
     });
     // Drain warnings without logging memory content or subprocess input.
     transport.stderr?.on('data', () => {});
-    const client = new Client({ name: 'codey', version: '0.13.1' });
+    const client = new Client({ name: 'codey', version: CODEY_VERSION });
     const timeout = this.options.timeoutMs ?? 15000;
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
