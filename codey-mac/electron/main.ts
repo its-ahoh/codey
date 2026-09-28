@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, ipcMain, Tray, nativeImage, shell, dialog, protocol, net, globalShortcut, clipboard, Notification, systemPreferences, screen, session } from 'electron'
+import { app, BrowserWindow, Menu, ipcMain, Tray, nativeImage, shell, dialog, protocol, net, globalShortcut, clipboard, Notification, systemPreferences, screen, session, powerMonitor } from 'electron'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { captureAccelerator, screenshotAccelerator, resolveCaptureSubmit, normalizeAccelerator } from './capture'
@@ -2045,6 +2045,7 @@ async function pickBrowserPasskey(request: BrowserPasskeyPickerRequest): Promise
 }
 
 app.whenReady().then(async () => {
+  powerMonitor.on('resume', () => sendToRenderer('chats:resume'))
   if (isDistributionSmokeTest) {
     console.log('CODEY_DIST_SMOKE_OK')
     app.quit()
