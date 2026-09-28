@@ -1,4 +1,3 @@
-import { MemoryUsageDisclosure } from './MemoryUsageDisclosure'
 import React from 'react'
 import { C } from '../theme'
 import { fallbackErrorText, turnHeaderMeta } from './turnHeaderModel'
@@ -109,7 +108,7 @@ export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onTogg
   // otherwise nothing to show.
   const isEmpty = (leftAvatar || leftLabel) ? false : meta.isEmpty
   const rule = <div style={styles.rule} />
-  if (isEmpty && !hasThinking) return <>{rule}<MemoryUsageDisclosure entries={msg.memoryUsed} /></>
+  if (isEmpty && !hasThinking) return rule
 
   return (
     <div>
@@ -155,7 +154,6 @@ export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onTogg
         </div>
       </div>
       {rule}
-      <MemoryUsageDisclosure entries={msg.memoryUsed} />
     </div>
   )
 }
