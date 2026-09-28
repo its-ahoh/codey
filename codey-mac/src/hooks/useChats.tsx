@@ -983,21 +983,23 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             delete pendingAssistantId.current[chatId]
             adopting.current.delete(chatId)
             dispatch({ type: 'reconcileSettled', chat, assistantMessageId })
-          } catch { /* Keep the run visible; retry when the gateway is reachable. */ }
+          } catch { /* Keep the run visible until the next recovery event. */ }
         }))
       } finally { checking = false }
     }
     const onVisible = () => { if (!document.hidden) void reconcile() }
-    // Timers resume after sleep even when the window never changes focus.
-    const timer = window.setInterval(() => { void reconcile() }, 15_000)
+    // A wake can happen without a focus/visibility transition. Each recovery
+    // event checks once; active turns continue through their normal stream.
+    const offResume = window.codey.chats.onResume(() => { void reconcile() })
+    const onOnline = () => { void reconcile() }
     window.addEventListener('focus', onVisible)
-    window.addEventListener('online', onVisible)
+    window.addEventListener('online', onOnline)
     document.addEventListener('visibilitychange', onVisible)
     return () => {
       disposed = true
-      window.clearInterval(timer)
+      offResume()
       window.removeEventListener('focus', onVisible)
-      window.removeEventListener('online', onVisible)
+      window.removeEventListener('online', onOnline)
       document.removeEventListener('visibilitychange', onVisible)
     }
   }, [])

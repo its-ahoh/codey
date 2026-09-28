@@ -525,6 +525,7 @@ declare global {
         createTask: (chatId: string, title: string) => Promise<IpcResult<Chat>>
         send: (payload: { chatId: string; text: string; taskRoute?: import('@codey/core').ChatTaskRoute; attachments?: Array<{ id: string; name: string; path: string; mimeType: string; size: number }> }) => Promise<IpcResult<{ response: string; chatId: string; tokens?: number; durationSec?: number }>>
         stop: (chatId: string) => Promise<IpcResult<boolean>>
+        onResume: (handler: () => void) => () => void
         onEvent: (handler: (ev: ChatStreamEvent) => void) => () => void
         link: (chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string) => Promise<IpcResult<Chat>>
         unlink: (chatId: string, channel: 'telegram' | 'discord' | 'imessage', channelUserId: string) => Promise<IpcResult<Chat>>
