@@ -70,6 +70,27 @@ jobs:
             exit 1
           fi
 
+      # electron-builder resolves the release by `v<version>`, not by the tag
+      # that triggered this run. When they disagree it can't find the release,
+      # and its two publisher instances (dmg and zip) then race to create one —
+      # the loser gets a 422 and its artifacts, `latest-mac.yml` included, never
+      # upload. Pin the two together, and create the release up front so both
+      # publishers only ever upload.
+      - name: Create the GitHub release up front
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version=$(node -p "require('./codey-mac/package.json').version")
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match codey-mac version $version. Tag the release as v$version."
+            exit 1
+          fi
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists; electron-builder will upload into it."
+          else
+            gh release create "$GITHUB_REF_NAME" --title "$version" --generate-notes
+          fi
+
       - name: Build & publish codey-mac
         working-directory: codey-mac
         env:
