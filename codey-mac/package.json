@@ -98,7 +98,12 @@
     },
     "files": [
       "dist/**/*",
-      "dist-electron/**/*"
+      "dist-electron/**/*",
+      "!node_modules/better-sqlite3/deps/**",
+      "!node_modules/better-sqlite3/build/Release/obj/**",
+      "!node_modules/better-sqlite3/src/**",
+      "!node_modules/react-dom/umd/**",
+      "!node_modules/**/*.map"
     ],
     "publish": {
       "provider": "github",
