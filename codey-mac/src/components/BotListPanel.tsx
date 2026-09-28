@@ -107,11 +107,15 @@ export function BotListPanel(props: Props) {
         const running = !!chat && !!state.inFlight[chat.id]
         const queued = !!chat && !!state.inFlight[chat.id]?.queuedPosition
         const last = chat?.messages[chat.messages.length - 1]
-        const awaiting = !running && last?.role === 'assistant' && (!!last.userQuestion || !!last.choices?.length)
+        const awaiting = !running && last?.role === 'assistant' && (last.botStatus === 'askedUser' || !!last.userQuestion || !!last.choices?.length)
+        const unread = chat && !active ? state.unreadChats[chat.id] : undefined
+        const avatarState = queued ? 'waiting' : running ? 'working'
+          : unread && (unread === 'error' || last?.botStatus === 'failed') ? 'failed'
+          : awaiting ? 'reply' : unread ? 'done' : 'idle'
         const pinned = pins.includes(key)
         return <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 2, background: active ? C.accentDim : 'transparent', borderRadius: 10, marginBottom: 3 }}>
           <button onClick={() => chat ? selectChat(chat.id) : bot && void open(bot.name)} disabled={!chat && opening !== null} aria-pressed={active} style={{ ...textButton, flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', textAlign: 'left', gap: 10, padding: '10px 7px' }}>
-            {chat?.botChat?.kind === 'group' ? <span style={{ width: 34, flexShrink: 0, display: 'grid', placeItems: 'center' }}><UIIcon name="users" size={26} /></span> : <BotAvatar name={title} config={bot?.config.avatar} size={34} state={queued ? 'waiting' : running ? 'working' : awaiting ? 'reply' : 'idle'} />}
+            {chat?.botChat?.kind === 'group' ? <span style={{ width: 34, flexShrink: 0, display: 'grid', placeItems: 'center' }}><UIIcon name="users" size={26} /></span> : <BotAvatar name={title} config={bot?.config.avatar} size={34} state={avatarState} />}
             <span style={{ minWidth: 0, flex: 1 }}>
               <strong style={{ display: 'block', color: C.fg, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}{chat && state.unreadChats[chat.id] ? ' ·' : ''}</strong>
               <span title={messageMatch?.snippet} style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11, color: C.fg3, marginTop: 4 }}>{messageMatch?.snippet ?? (opening === bot?.name ? 'Opening…' : queued ? 'Queued' : running ? 'Working' : awaiting ? 'Waiting for you' : last?.content || bot?.personality.role.split('\n')[0] || chat?.botChat?.members.join(', ') || 'Ready to chat')}</span>
