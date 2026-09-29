@@ -10,6 +10,8 @@ export interface BotPersonality {
 }
 
 export interface BotConfig {
+  /** User-facing name; routing and storage continue to use Bot.name. */
+  displayName?: string;
   avatar?: { shape: 'circle' | 'square' | 'triangle' | 'capsule'; color: string };
   tools: string[];
   /**
@@ -40,6 +42,7 @@ export interface ParallelPromptInputs {
 /** Whitelist role metadata so legacy execution settings never reach callers or disk on save. */
 function roleConfig(config: BotConfig): BotConfig {
   return {
+    ...(typeof config.displayName === 'string' && config.displayName.trim() ? { displayName: config.displayName.trim() } : {}),
     ...(config.avatar ? { avatar: config.avatar } : {}),
     tools: Array.isArray(config.tools) ? config.tools : [],
     ...(typeof config.dispatchHint === 'string' ? { dispatchHint: config.dispatchHint } : {}),

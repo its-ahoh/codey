@@ -9,6 +9,15 @@ const chat = (id: string, kind: 'direct' | 'group', timestamp: number): Chat => 
   messages: [{ id: `${id}-message`, role: 'user', content: 'Hello', timestamp }],
 })
 describe('unified Bot chat list', () => {
+  it('uses display names for default titles and search while preserving custom titles and keys', () => {
+    const named = { ...bot, config: { ...bot.config, displayName: 'Alice \u52a9\u624b' } }
+    const direct = chat('Alice', 'direct', 20)
+    expect(botConversationList([named], [], [], '\u52a9\u624b')[0]).toMatchObject({ key: 'bot:Alice', title: 'Alice \u52a9\u624b' })
+    expect(botConversationList([named], [direct], [], '\u52a9\u624b')[0]).toMatchObject({ key: 'Alice', title: 'Alice \u52a9\u624b' })
+    direct.title = 'My project'
+    expect(botConversationList([named], [direct], [], '\u52a9\u624b')[0].title).toBe('My project')
+    expect(direct.botChat?.members).toEqual(['Alice'])
+  })
   it('reuses normalized messages and refreshes matches for new queries and edited content', () => {
     const cache = new BotMessageSearchCache()
     const message = chat('Alice', 'direct', 20).messages[0]

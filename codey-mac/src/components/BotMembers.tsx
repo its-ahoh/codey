@@ -52,7 +52,7 @@ function MembersDialog({ chat, locked, onClose }: { chat: Chat; locked: boolean;
   const botsByName = new Map(bots.map(bot => [bot.name.toLowerCase(), bot]))
   const names = [...new Set([...bots.map(bot => bot.name), ...chat.botChat!.members])]
   const query = search.trim().toLowerCase()
-  const visibleNames = names.filter(name => `${name} ${botsByName.get(name.toLowerCase())?.personality.role ?? ''}`.toLowerCase().includes(query))
+  const visibleNames = names.filter(name => `${name} ${botsByName.get(name.toLowerCase())?.config.displayName ?? ''} ${botsByName.get(name.toLowerCase())?.personality.role ?? ''}`.toLowerCase().includes(query))
   const labelStyle: React.CSSProperties = { display: 'grid', gap: 7, fontSize: 12, fontWeight: 600 }
   const errorLine = error.trim().split(/\r?\n/)[0] ?? ''
   const errorSummary = errorLine.length > 140 ? `${errorLine.slice(0, 137)}…` : errorLine
@@ -91,7 +91,7 @@ function MembersDialog({ chat, locked, onClose }: { chat: Chat; locked: boolean;
           {members.length > 0 && <div aria-label="Selected Bots" style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
             {members.map(name => <span key={name} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, maxWidth: '100%', minWidth: 0, boxSizing: 'border-box', padding: '4px 8px 4px 4px', borderRadius: 20, background: C.surface2, border: `1px solid ${C.border}` }}>
               <BotAvatar name={name} config={botsByName.get(name.toLowerCase())?.config.avatar} size={24} />
-              <span style={{ fontSize: 11, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+              <span style={{ fontSize: 11, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{botsByName.get(name.toLowerCase())?.config.displayName || name}</span>
             </span>)}
           </div>}
           <input type="search" aria-label="Search Bots" placeholder="Search by name or role…" value={search} disabled={loading || busy} onChange={e => setSearch(e.target.value)} style={field} />
@@ -104,10 +104,10 @@ function MembersDialog({ chat, locked, onClose }: { chat: Chat; locked: boolean;
               return <label key={name} title={`${name}${original ? ' · Included' : !bot ? ' · Profile unavailable' : ''}`} style={{ display: 'flex', minWidth: 0, gap: 7, alignItems: 'center', padding: '7px 10px', border: `1px solid ${selected ? C.accent : C.border}`, borderRadius: 11, background: selected ? C.accentDim : C.surface2, cursor: disabled ? 'default' : 'pointer', opacity: !bot ? 0.65 : 1 }}>
                 <BotAvatar name={name} config={bot?.config.avatar} size={30} />
                 <span style={{ flex: 1, minWidth: 0 }}>
-                  <span style={{ display: 'block', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+                  <span style={{ display: 'block', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{botsByName.get(name.toLowerCase())?.config.displayName || name}</span>
                   {!bot && <span style={{ color: C.fg3, fontSize: 11 }}>Profile unavailable</span>}
                 </span>
-                <input type="checkbox" aria-label={`Include ${name}`} checked={selected} disabled={disabled} onChange={e => setMembers(current => e.target.checked ? [...current, name] : current.filter(n => n !== name))} style={{ accentColor: C.accent, width: 16, height: 16, flexShrink: 0, margin: 0 }} />
+                <input type="checkbox" aria-label={`Include ${bot?.config.displayName || name}`} checked={selected} disabled={disabled} onChange={e => setMembers(current => e.target.checked ? [...current, name] : current.filter(n => n !== name))} style={{ accentColor: C.accent, width: 16, height: 16, flexShrink: 0, margin: 0 }} />
               </label>
             })}
             {!loading && !visibleNames.length && <div style={{ gridColumn: '1 / -1', padding: 16, textAlign: 'center', color: C.fg3 }}>No Bots match your search.</div>}

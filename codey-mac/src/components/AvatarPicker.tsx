@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { BotAvatar } from './BotAvatar'
-import { avatarShapes, avatarColors, type BotAvatarConfig } from './botAvatarModel'
+import { avatarShapes, avatarColors, resolveBotAvatar, type BotAvatarConfig } from './botAvatarModel'
 import { C } from '../theme'
 import './avatarPicker.css'
 
@@ -12,6 +12,7 @@ export function AvatarPicker({ value, onChange, name = 'Member', size = 56 }: {
   size?: number
 }) {
   const [open, setOpen] = useState(false)
+  const selectedColor = resolveBotAvatar(name, value).color
   const trigger = useRef<HTMLButtonElement>(null)
   const dialog = useRef<HTMLDialogElement>(null)
 
@@ -51,9 +52,9 @@ export function AvatarPicker({ value, onChange, name = 'Member', size = 56 }: {
         <div role="group" aria-label="Color" style={{ marginTop: 20 }}>
           <div style={{ marginBottom: 12, color: C.fg3, fontSize: 12 }}>Color</div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 32px)', gap: 14 }}>
-            {avatarColors.map(color => <button type="button" key={color} aria-label={`Color ${color}`} aria-pressed={value.color === color}
+            {avatarColors.map(color => <button type="button" key={color} aria-label={`Color ${color}`} aria-pressed={selectedColor === color}
               onClick={() => onChange({ ...value, color })}
-              style={{ width: 32, height: 32, background: color, border: `3px solid ${value.color === color ? C.fg : 'transparent'}`, borderRadius: '50%', cursor: 'pointer' }} />)}
+              style={{ width: 32, height: 32, background: color, border: `3px solid ${selectedColor === color ? C.fg : 'transparent'}`, borderRadius: '50%', cursor: 'pointer' }} />)}
           </div>
         </div>
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 24 }}>

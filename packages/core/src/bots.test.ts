@@ -190,3 +190,25 @@ describe('role-only bot configuration', () => {
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
 });
+
+
+describe('bot display names', () => {
+  it('persists a display name without changing identity, directory, or lookup', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bot-display-name-'));
+    try {
+      seedBots(root, ['alice']);
+      const manager = new BotManager(root);
+      await manager.loadBots();
+      const bot = manager.getBot('alice')!;
+      expect(bot.config.displayName).toBeUndefined();
+      for (const displayName of ['Alice Smith', '\u5c0f\u52a9\u624b']) {
+        await manager.saveBot('alice', bot.personality, { ...bot.config, displayName: ` ${displayName} ` });
+        const reloaded = new BotManager(root);
+        await reloaded.loadBots();
+        expect(reloaded.getBot('ALICE')).toMatchObject({ id: bot.id, name: 'alice', config: { displayName } });
+        expect(reloaded.getAllBots()).toHaveLength(1);
+        expect(fs.existsSync(path.join(root, 'alice', 'config.json'))).toBe(true);
+      }
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+});

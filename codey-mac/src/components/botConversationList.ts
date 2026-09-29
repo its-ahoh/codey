@@ -32,8 +32,11 @@ export function botConversationList(bots: BotDto[], chats: Chat[], pins: string[
   }))
   for (const bot of bots) {
     if (!directNames.has(bot.name.toLowerCase())) {
-      rows.push({ key: `bot:${bot.name}`, title: bot.name, bot, activity: 0 })
+      rows.push({ key: `bot:${bot.name}`, title: bot.config.displayName || bot.name, bot, activity: 0 })
     }
+  }
+  for (const row of rows) {
+    if (row.bot && row.chat?.title === row.bot.name) row.title = row.bot.config.displayName || row.bot.name
   }
   const term = query.trim().replace(/\s+/g, ' ').toLowerCase()
   return rows.filter(row => {
@@ -49,7 +52,7 @@ export function botConversationList(bots: BotDto[], chats: Chat[], pins: string[
       snippet = `${start ? '…' : ''}${content.slice(start, end)}${end < content.length ? '…' : ''}`
     }
     if (count) row.messageMatch = { snippet, count }
-    return count > 0 || `${row.title} ${row.bot?.personality.role ?? ''} ${row.chat?.botChat?.members.join(' ') ?? ''}`.toLowerCase().includes(term)
+    return count > 0 || `${row.title} ${row.bot?.name ?? ''} ${row.bot?.config.displayName ?? ''} ${row.bot?.personality.role ?? ''} ${row.chat?.botChat?.members.join(' ') ?? ''}`.toLowerCase().includes(term)
   })
     .sort((a, b) => Number(pinned.has(b.key)) - Number(pinned.has(a.key)) || b.activity - a.activity || a.title.localeCompare(b.title) || a.key.localeCompare(b.key))
 }

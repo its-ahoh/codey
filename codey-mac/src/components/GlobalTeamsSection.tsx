@@ -222,7 +222,7 @@ export default function GlobalTeamsSection() {
                       {showOrder && (
                         <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, borderRadius: 9, background: C.accent, color: C.onAccent, fontSize: 10, fontWeight: 700 }}>{i + 1}</span>
                       )}
-                      <span style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.15 }}><span>{m}</span>{bots.find(w => w.name === m)?.personality.role && <span style={{ color: C.fg3, fontSize: 9, maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{bots.find(w => w.name === m)?.personality.role}</span>}</span>
+                      <span style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.15 }}><span>{bots.find(w => w.name === m)?.config.displayName || m}</span>{bots.find(w => w.name === m)?.personality.role && <span style={{ color: C.fg3, fontSize: 9, maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{bots.find(w => w.name === m)?.personality.role}</span>}</span>
                       <button onClick={() => removeMember(name, i)} title="Remove" style={{ background: 'transparent', color: C.fg3, border: 'none', cursor: 'pointer', padding: 0, fontSize: 14, lineHeight: 1 }}>×</button>
                     </span>
                   </span>
@@ -237,7 +237,7 @@ export default function GlobalTeamsSection() {
                 }}
                 style={{ background: C.accentDim, color: C.accent, border: `1px dashed ${C.accent}`, borderRadius: 16, padding: '6px 10px', fontSize: 12, cursor: 'pointer' }}>
                 <option value="">+ add bot</option>
-                {available(name).map(w => <option key={w.name} value={w.name}>{w.name}</option>)}
+                {available(name).map(w => <option key={w.name} value={w.name}>{w.config.displayName || w.name}</option>)}
                 <option value="__create__">+ Create new bot…</option>
               </select>
             </div>

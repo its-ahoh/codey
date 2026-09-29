@@ -40,7 +40,7 @@ function unwrap<T>(result: { ok: true; data: T } | { ok: false; error: string })
 
 // Type aliases for the shapes returned by core
 export interface BotPersonality { role: string; soul: string; instructions: string }
-export interface BotConfig { avatar?: import('../components/botAvatarModel').BotAvatarConfig; tools: string[]; dispatchHint?: string }
+export interface BotConfig { displayName?: string; avatar?: import('../components/botAvatarModel').BotAvatarConfig; tools: string[]; dispatchHint?: string }
 export interface BotDto {
   name: string
   personality: BotPersonality

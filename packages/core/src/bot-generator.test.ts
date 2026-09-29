@@ -16,6 +16,11 @@ function setup(outputs: unknown[]) {
   return { deps, run, root };
 }
 describe('Bot definition generation', () => {
+  it('persists a generated display name separately from its identifier', async () => {
+    const { deps } = setup([{ ...valid, displayName: ' Alice \u52a9\u624b ' }]);
+    expect((await generateBot(deps, 'Create Alice')).ok).toBe(true);
+    expect(deps.botManager.getBot('helper')?.config.displayName).toBe('Alice \u52a9\u624b');
+  });
   it('accepts the supplied account-growth description unchanged even when generated instructions are a list', async () => {
     const prompt = 'I want it to keep posting different things about AI news, AI-related information, and software development, as that is part of my interest. I want the tone to be professional for personal marketing.&#x20;\n\nI also need it to help me grow my account, get more fans, get more subscribers, and give me ideas on how I should work on my account.';
     const { deps, run } = setup([{ ...valid, instructions: ['Research AI news', 'Suggest professional posts', 'Recommend account growth ideas'] }]);
