@@ -6,7 +6,8 @@ describe('bot avatar identity and state', () => {
   it('keeps existing members stable and rejects colors outside the palette', () => {
     expect(resolveBotAvatar('Alice')).toEqual(resolveBotAvatar('alice'))
     expect(avatarColors).toContain(resolveBotAvatar('a', { color: 'red' }).color)
-    expect(resolveBotAvatar('a', { shape: 'triangle', color: '#8CCDB5' })).toEqual({ shape: 'triangle', color: '#8CCDB5' })
+    expect(resolveBotAvatar('a', { shape: 'triangle', color: '#8CCDB5' })).toEqual({ shape: 'triangle', color: '#50D5A2' })
+    expect(resolveBotAvatar('a', { color: '#65AEF5' }).color).toBe('#65AEF5')
   })
   it('distinguishes waiting, input requests, inactive, and interrupted runs', () => {
     expect(botAvatarState(m('pending'), true)).toBe('waiting')

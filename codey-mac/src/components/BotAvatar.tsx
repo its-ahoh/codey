@@ -46,6 +46,12 @@ export function BotAvatar({ name, config, state = 'idle', size = 36 }: {
 
             </g>)}
           </g>}
+        <g fill="none" stroke="#303C42" strokeWidth="4" strokeLinecap="round">
+          {state === 'done' && <path d="M39 65 Q50 77 61 65" />}
+          {state === 'failed' && <path d="M42 72 Q50 64 58 72" />}
+          {state === 'reply' && <ellipse cx="50" cy="72" rx="4" ry="5" fill="#303C42" stroke="none" />}
+          {state === 'working' && <path d="M44 70 L56 70" />}
+        </g>
         {state === 'waiting' && <path className="bot-avatar-sleep-bubble"
           d="M51 59 C54 60 55 64 57 66 C61 69 69 66 69 61 C69 55 62 53 58 56 C55 58 53 59 51 59Z"
           fill="#FFFDF5" fillOpacity=".65" stroke="#FFFDF5" strokeWidth="1.5" />}

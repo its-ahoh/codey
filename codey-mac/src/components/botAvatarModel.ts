@@ -1,6 +1,6 @@
 import type { ChatMessage } from '../types'
 
-import { avatarShapes, avatarColors } from '../../../packages/core/src/member-avatars'
+import { avatarShapes, avatarColors, legacyAvatarColors } from '../../../packages/core/src/member-avatars'
 export { avatarShapes, avatarColors } from '../../../packages/core/src/member-avatars'
 export type { MemberAvatar as BotAvatarConfig } from '../../../packages/core/src/member-avatars'
 import type { MemberAvatar as BotAvatarConfig } from '../../../packages/core/src/member-avatars'
@@ -11,9 +11,11 @@ export const avatarStateLabels: Record<AvatarState, string> = {
 }
 export function resolveBotAvatar(name: string, config?: Partial<BotAvatarConfig>): BotAvatarConfig {
   const hash = Array.from(name.toLowerCase()).reduce((n, c) => (n * 31 + c.charCodeAt(0)) >>> 0, 0)
+  const color = config?.color?.toUpperCase()
+  const paletteColor = color && Object.prototype.hasOwnProperty.call(legacyAvatarColors, color) ? legacyAvatarColors[color] : color
   return {
     shape: avatarShapes.includes(config?.shape as any) ? config!.shape! : avatarShapes[hash % avatarShapes.length],
-    color: avatarColors.includes(config?.color as any) ? config!.color! : avatarColors[hash % avatarColors.length],
+    color: avatarColors.includes(paletteColor as any) ? paletteColor! : avatarColors[hash % avatarColors.length],
   }
 }
 export function botAvatarState(message: ChatMessage, active: boolean): AvatarState {

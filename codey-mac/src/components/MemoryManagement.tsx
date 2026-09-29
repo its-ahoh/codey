@@ -26,7 +26,7 @@ function ArchivedCard({ entry, busy, restore, history, purge }: { entry: CodeyMe
 export function ArchivedMemories({ entries, busy, restore, history, purge }: {
   entries: CodeyMemoryItem[]; busy: boolean; restore: (entry: CodeyMemoryItem) => void; history: (entry: CodeyMemoryItem) => void; purge?: (entry: CodeyMemoryItem) => void
 }) {
-  return <section className="memory-list" aria-label="Archived memories">
+  return <section className="memory-list" aria-label="Archived memories" tabIndex={0}>
     {!entries.length && <div className="memory-empty">No archived memories.</div>}
     {entries.map(entry => <ArchivedCard key={entry.id} entry={entry} busy={busy} restore={() => restore(entry)} history={() => history(entry)} purge={purge ? () => purge(entry) : undefined} />)}
   </section>

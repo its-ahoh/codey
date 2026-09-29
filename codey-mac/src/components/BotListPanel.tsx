@@ -125,7 +125,7 @@ export function BotListPanel(props: Props) {
           <button style={{ ...textButton, color: pinned ? C.accent : C.fg3 }} aria-label={`${pinned ? 'Unpin' : 'Pin'} ${title}`} title={pinned ? 'Unpin chat' : 'Pin chat'} aria-pressed={pinned} onClick={() => void togglePin(key, chat ? undefined : bot?.name)}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill={pinned ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.7"><path d="M8 3h8l-1 7 4 4v2H5v-2l4-4z" /><path d="M12 16v6" /></svg>
           </button>
-          {bot && <button style={textButton} aria-label={`Edit ${bot.name}`} title="Bot profile" onClick={() => props.onOpenSettings(`bot:${bot.name}`)}><UIIcon name="settings" size={13} /></button>}
+          {bot && <button style={textButton} aria-label={`Edit ${bot.config.displayName || bot.name}`} title="Bot profile" onClick={() => props.onOpenSettings(`bot:${bot.name}`)}><UIIcon name="settings" size={13} /></button>}
         </div>
       })}
     </div>

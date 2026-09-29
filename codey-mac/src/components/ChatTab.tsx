@@ -410,7 +410,7 @@ const TeamMessage: React.FC<{
         return (
           <div key={baseKey} id={stepDomId(messageId, s.step)} style={cardStyle}>
             <div style={styles.teamStepHeader}>
-              <BotAvatar name={s.bot} config={bots.find(w => w.name === s.bot)?.config.avatar} state={/^❌/.test(s.output.trim()) ? 'failed' : isLastDuringStream ? 'working' : isComplete ? 'done' : 'stopped'} /><span style={styles.teamStepLabel}>{s.bot}</span>
+              <BotAvatar name={s.bot} config={bots.find(w => w.name === s.bot)?.config.avatar} state={/^❌/.test(s.output.trim()) ? 'failed' : isLastDuringStream ? 'working' : isComplete ? 'done' : 'stopped'} /><span style={styles.teamStepLabel}>{bots.find(w => w.name === s.bot)?.config.displayName || s.bot}</span>
               {isLastDuringStream && <span style={styles.teamStepRunning}>● running</span>}
             </div>
             <div style={styles.teamStepBody}>
@@ -1849,7 +1849,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
         <div style={{ ...styles.headerIdentity, ...(containerWidth > 0 && containerWidth < 760 ? { flex: 1, overflow: 'hidden' } : {}) }}>
           <span style={styles.workspaceTag}>{chat.botChat?.kind === 'direct'
             ? <BotAvatar name={chat.botChat.members[0]} config={bots.find(bot => bot.name === chat.botChat!.members[0])?.config.avatar} state={flight?.queuedPosition ? 'waiting' : isSending ? 'working' : 'idle'} size={30} />
-            : <UIIcon name={chat.botChat ? 'users' : 'workspace'} size={13} />}{chat.botChat ? chat.title : chat.workspaceName}</span>
+            : <UIIcon name={chat.botChat ? 'users' : 'workspace'} size={13} />}{chat.botChat ? (chat.botChat.kind === 'direct' && chat.title === chat.botChat.members[0] ? bots.find(bot => bot.name === chat.botChat!.members[0])?.config.displayName || chat.title : chat.title) : chat.workspaceName}</span>
           {chat.botChat?.kind === 'direct' && isSending && <span role="status" style={{ fontSize: 11, color: C.fg3 }}>{flight?.queuedPosition ? 'Queued' : 'Working…'}</span>}
           {chat.botChat && <BotMembers key={chat.id} chat={chat} running={isSending} />}
         </div>
@@ -1951,7 +1951,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                     <option value="none">{chat.botChat?.kind === 'group' ? 'Group members' : 'No bot'}</option>
                     {bots.length > 0 && (
                       <optgroup label="Bots">
-                        {bots.map(w => <option key={w.name} value={`bot:${w.name}`}>{w.name}</option>)}
+                        {bots.map(w => <option key={w.name} value={`bot:${w.name}`}>{w.config.displayName || w.name}</option>)}
                       </optgroup>
                     )}
                     {teamNames.length > 0 && (
@@ -2246,7 +2246,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                         leftAvatar={isBotMessage ? (
                           <BotAvatar name={msg.bot!} config={member?.config.avatar} state={memberState} />
                         ) : undefined}
-                        leftLabel={isBotMessage ? <strong>{msg.bot}</strong> : undefined}
+                        leftLabel={isBotMessage ? <strong>{member?.config.displayName || msg.bot}</strong> : undefined}
                         messageHovered={hoveredMsgId === msg.id}
                       />
                       {!!thinking && expanded && (
