@@ -16,6 +16,22 @@ function setup(outputs: unknown[]) {
   return { deps, run, root };
 }
 describe('Bot definition generation', () => {
+  it.each([
+    [{ name: 'code-reviewer' }, 'Code Reviewer'],
+    [{ displayName: 'code reviewer' }, 'Code Reviewer'],
+    [{ displayName: 'AI helper' }, 'AI Helper'],
+    [{ displayName: 'iOS helper', displayNameExplicit: true }, 'iOS helper'],
+    [{ displayName: '\u5c0f\u52a9\u624b' }, '\u5c0f\u52a9\u624b'],
+  ])('defaults to capitalized words while preserving explicit names: %j', async (patch, expected) => {
+    const { deps } = setup([{ ...valid, ...patch }]);
+    const result = await generateBot(deps, 'Create a bot');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.bot.displayName).toBe(expected);
+      expect(deps.botManager.getBot(result.bot.name)?.config.displayName).toBe(expected);
+      expect(result.bot.name).toBe('name' in patch ? patch.name : valid.name);
+    }
+  });
   it('persists a generated display name separately from its identifier', async () => {
     const { deps } = setup([{ ...valid, displayName: ' Alice \u52a9\u624b ' }]);
     expect((await generateBot(deps, 'Create Alice')).ok).toBe(true);
@@ -36,7 +52,7 @@ describe('Bot definition generation', () => {
     expect(run).toHaveBeenCalledTimes(1);
     expect(fs.readFileSync(path.join(root, 'helper', 'personality.md'), 'utf8')).toContain('- Read the request\n- Explain clearly');
     expect(deps.botManager.hasBot('helper')).toBe(true);
-    expect(JSON.parse(fs.readFileSync(path.join(root, 'helper', 'config.json'), 'utf8'))).toEqual({ tools: [] });
+    expect(JSON.parse(fs.readFileSync(path.join(root, 'helper', 'config.json'), 'utf8'))).toEqual({ tools: [], displayName: 'Helper' });
     expect(run.mock.calls[0][1].prompt).not.toContain('codingAgent');
   });
   it('retries invalid structured fields before writing anything', async () => {
