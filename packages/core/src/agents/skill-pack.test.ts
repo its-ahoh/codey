@@ -109,6 +109,18 @@ describe('installSkillPack', () => {
     expect(fs.readdirSync(path.dirname(skillPackManifestPath(undefined, home)))).toEqual([]);
   });
 
+  it('leaves no staging directory when other downloads finish after one fails', async () => {
+    const slow = serve(PACK, { fail: 'skills/alpha/SKILL.md' });
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      // Every file but the failing one arrives late, after the failure.
+      if (!url.includes('alpha/SKILL.md')) await new Promise(resolve => setTimeout(resolve, 30));
+      return slow(url);
+    }));
+    await expect(installSkillPack(home)).rejects.toThrow(/returned 500/);
+    await new Promise(resolve => setTimeout(resolve, 60));
+    expect(fs.readdirSync(path.dirname(skillPackManifestPath(undefined, home)))).toEqual([]);
+  });
+
   it('rejects a SKILL.md that does not name its own folder', async () => {
     vi.stubGlobal('fetch', serve({ ...PACK, 'skills/beta/SKILL.md': skillMd('gamma') }));
     await expect(installSkillPack(home)).rejects.toThrow(/is not the beta skill/);
@@ -146,6 +158,28 @@ describe('enable, uninstall and update', () => {
     await setSkillPackEnabled(true, home);
     expect(fs.existsSync(path.join(root(), 'beta', 'SKILL.md'))).toBe(true);
     expect(skillPackStatus(undefined, home).state).toBe('installed');
+  });
+
+  it('keeps a disabled pack disabled through an update, new skills included', async () => {
+    await installSkillPack(home);
+    await setSkillPackEnabled(false, home);
+    vi.stubGlobal('fetch', serve({ ...PACK, 'skills/gamma/SKILL.md': skillMd('gamma') }, { packSha: NEXT_SHA }));
+    await installSkillPack(home);
+    for (const name of ['alpha', 'beta', 'gamma']) {
+      expect(fs.existsSync(path.join(root(), name, 'SKILL.md'))).toBe(false);
+      expect(fs.readFileSync(path.join(root(), name, 'SKILL.md.disabled'), 'utf8')).toContain(`name: ${name}`);
+    }
+    expect(skillPackStatus(undefined, home)).toMatchObject({ state: 'disabled', hash: NEXT_SHA });
+  });
+
+  it('keeps one skill turned off in the Skills tab off through an update', async () => {
+    await installSkillPack(home);
+    fs.renameSync(path.join(root(), 'beta', 'SKILL.md'), path.join(root(), 'beta', 'SKILL.md.disabled'));
+    vi.stubGlobal('fetch', serve(PACK, { packSha: NEXT_SHA }));
+    await installSkillPack(home);
+    expect(fs.existsSync(path.join(root(), 'alpha', 'SKILL.md'))).toBe(true);
+    expect(fs.existsSync(path.join(root(), 'beta', 'SKILL.md'))).toBe(false);
+    expect(fs.existsSync(path.join(root(), 'beta', 'SKILL.md.disabled'))).toBe(true);
   });
 
   it('uninstalls only what it installed', async () => {

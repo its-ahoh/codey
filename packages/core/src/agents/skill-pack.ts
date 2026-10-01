@@ -164,8 +164,14 @@ function stamp(markdown: string, name: string, hash: string | undefined, pack: s
   return `${markdown.slice(0, frontmatter[0].length)}\n${line}\n\n${markdown.slice(frontmatter[0].length).replace(/^\n+/, '')}`;
 }
 
+/** Waits for every item in a batch, even after one fails, so nothing is still
+ *  writing when the caller cleans up; then rethrows the first failure. */
 async function inBatches<T>(items: T[], size: number, run: (item: T) => Promise<void>): Promise<void> {
-  for (let i = 0; i < items.length; i += size) await Promise.all(items.slice(i, i + size).map(run));
+  for (let i = 0; i < items.length; i += size) {
+    const settled = await Promise.allSettled(items.slice(i, i + size).map(run));
+    const failed = settled.find((s): s is PromiseRejectedResult => s.status === 'rejected');
+    if (failed) throw failed.reason;
+  }
 }
 
 /**
@@ -193,6 +199,14 @@ export async function installSkillPack(
     return { installed: false, conflict: 'user-copy', dir: path.join(root, taken[0]), names: taken };
   }
 
+  // An update keeps what the user turned off: a skill disabled on its own, or,
+  // when the whole pack is off, every skill including ones new to the pack.
+  const previous = readSkillPackManifest(id, home);
+  const packOff = previous !== undefined && skillPackStatus(id, home).state === 'disabled';
+  const disabled = new Set(names.filter(name => previous?.skills.includes(name)
+    ? fs.existsSync(path.join(root, name, DISABLED_SKILL_FILE)) && !fs.existsSync(path.join(root, name, SKILL_FILE))
+    : packOff));
+
   const manifestFile = skillPackManifestPath(id, home);
   const staging = path.join(path.dirname(manifestFile), `.${id}-staging-${process.pid}-${Date.now()}`);
   await fs.promises.mkdir(staging, { recursive: true });
@@ -205,7 +219,7 @@ export async function installSkillPack(
         if (!isPublishedSkill(text, name)) throw new Error(`${repoDir}/${name}/${SKILL_FILE} is not the ${name} skill`);
         bytes = Buffer.from(stamp(text, name, folderHash.get(name), id, today), 'utf8');
       }
-      const target = path.join(staging, name, file);
+      const target = path.join(staging, name, file === SKILL_FILE && disabled.has(name) ? DISABLED_SKILL_FILE : file);
       await fs.promises.mkdir(path.dirname(target), { recursive: true });
       await fs.promises.writeFile(target, bytes);
     });
@@ -217,7 +231,7 @@ export async function installSkillPack(
       await fs.promises.rename(path.join(staging, name), dest);
     }
     // Skills the previous install had but the pack no longer publishes.
-    for (const name of readSkillPackManifest(id, home)?.skills ?? []) {
+    for (const name of previous?.skills ?? []) {
       if (skills.has(name)) continue;
       const dir = path.join(root, name);
       if (!isUserOwned(dir)) await fs.promises.rm(dir, { recursive: true, force: true });
