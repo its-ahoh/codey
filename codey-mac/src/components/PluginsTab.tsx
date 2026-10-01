@@ -8,7 +8,7 @@ import { BrowserProfiles } from './BrowserProfiles'
 import { ChromeCompanionSettings } from './ChromeCompanionSettings'
 import type { PluginInfo, PluginInstallResult, PluginUpdateCheck } from '../codey-api'
 
-type Pending = { action: 'install' | 'uninstall'; dir: string }
+type Pending = { action: 'install' | 'uninstall'; dir: string; names?: string[] }
 const SETTINGS_PLUGINS = new Set<string>(['browser', 'chrome-companion'])
 
 export function toggleSettingsId(current: string | null, id: string): string | null {
@@ -56,7 +56,7 @@ export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '
       const listed = unwrap(await window.codey.plugins.list())
       setPlugins(listed)
       for (const plugin of listed) {
-        if (plugin.id === 'browser' && plugin.state !== 'absent') void checkForUpdate(plugin)
+        if ((plugin.id === 'browser' || plugin.id === 'pstack') && plugin.state !== 'absent') void checkForUpdate(plugin)
       }
     } catch (caught: any) {
       setError(caught?.message ?? String(caught))
@@ -80,7 +80,7 @@ export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '
       if (action === 'install') {
         const result = unwrap(await window.codey.plugins.install(plugin.id, force))
         if (!result.installed) {
-          setPending(prev => ({ ...prev, [plugin.id]: { action, dir: result.dir } }))
+          setPending(prev => ({ ...prev, [plugin.id]: { action, dir: result.dir, names: result.names } }))
           setSelectedId(plugin.id)
           return
         }
@@ -88,7 +88,7 @@ export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '
       } else {
         const result = unwrap(await window.codey.plugins.uninstall(plugin.id, force))
         if (!result.removed && result.conflict) {
-          setPending(prev => ({ ...prev, [plugin.id]: { action, dir: plugin.dir } }))
+          setPending(prev => ({ ...prev, [plugin.id]: { action, dir: plugin.dir, names: result.names } }))
           setSelectedId(plugin.id)
           return
         }
@@ -255,15 +255,17 @@ const PluginDetails: React.FC<DetailProps> = ({
         </div>
       </DetailSection>
 
-      <DetailSection title="Settings" icon="settings">
-        {hasSettings ? (
-          plugin.id === 'browser' ? <BrowserProfiles /> : <ChromeCompanionSettings />
-        ) : (
-          <div style={styles.settingsEmpty}>
-            Install and enable this plugin to configure browser profiles.
-          </div>
-        )}
-      </DetailSection>
+      {SETTINGS_PLUGINS.has(plugin.id) && (
+        <DetailSection title="Settings" icon="settings">
+          {hasSettings ? (
+            plugin.id === 'browser' ? <BrowserProfiles /> : <ChromeCompanionSettings />
+          ) : (
+            <div style={styles.settingsEmpty}>
+              Install and enable this plugin to configure browser profiles.
+            </div>
+          )}
+        </DetailSection>
+      )}
 
       <DetailSection title="Installation">
         <div style={styles.metaRow}>
@@ -286,8 +288,20 @@ const PluginDetails: React.FC<DetailProps> = ({
         )}
         {ask && (
           <div style={styles.warningBox}>
-            A skill named “{plugin.id}” already exists at <span style={styles.path}>{ask.dir}</span>,
-            and Codey did not write it. {ask.action === 'install' ? 'Replacing' : 'Deleting'} it cannot be undone.
+            {ask.names && ask.names.length > 0 ? (
+              <>
+                {ask.names.length === 1 ? 'A skill' : `${ask.names.length} skills`} in{' '}
+                <span style={styles.path}>{plugin.dir}</span> already use{ask.names.length === 1 ? 's' : ''} a name this
+                plugin needs, and Codey did not write {ask.names.length === 1 ? 'it' : 'them'}:{' '}
+                <span style={styles.path}>{ask.names.join(', ')}</span>.{' '}
+                {ask.action === 'install' ? 'Replacing' : 'Deleting'} {ask.names.length === 1 ? 'it' : 'them'} cannot be undone.
+              </>
+            ) : (
+              <>
+                A skill named “{plugin.id}” already exists at <span style={styles.path}>{ask.dir}</span>,
+                and Codey did not write it. {ask.action === 'install' ? 'Replacing' : 'Deleting'} it cannot be undone.
+              </>
+            )}
             <div style={styles.confirmActions}>
               <button type="button" onClick={onCancelPending} disabled={working} style={pillButton('ghost')}>Keep mine</button>
               <button type="button" onClick={onConfirmPending} disabled={working} style={pillButton('danger')}>

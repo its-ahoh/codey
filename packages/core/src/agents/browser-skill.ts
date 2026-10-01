@@ -18,9 +18,11 @@ export const CODEY_SKILLS_REPO_REF = 'main';
 /** `owner/name`, the form both GitHub URLs and the install stamp use. */
 export const CODEY_SKILLS_REPO = CODEY_SKILLS_REPO_URL.replace('https://github.com/', '');
 
-/** Path of one published skill's directory inside the repository. */
+/** Path of one published plugin skill's directory inside the repository.
+ *  Plugins (skills documenting a Codey capability) live under `plugins/`;
+ *  `skills/` holds general skill packs such as pstack. */
 export function codeySkillDir(name: string): string {
-  return `skills/${name}`;
+  return `plugins/${name}`;
 }
 
 /** Path of one published skill's markdown inside the repository. */
@@ -213,7 +215,7 @@ function isPublishedSkill(text: string, name: string): boolean {
 
 /**
  * The skill folder's tree hash on `main` — the skill's version. Read from the
- * recursive tree, where the `sha` of the `skills/browser` entry changes exactly
+ * recursive tree, where the `sha` of the `plugins/browser` entry changes exactly
  * when the skill's own files change, never for edits elsewhere in the
  * repository. Best-effort, like the commit call it replaced: a stamp without a
  * hash still names the skill and the date, and Update re-pulls whatever is

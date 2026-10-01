@@ -40,7 +40,7 @@ const serve = (body: string, status = 200, sha: string | null = SHA) =>
   vi.fn(async (url: string) => (
     url.startsWith('https://api.github.com/')
       ? new Response(
-          sha === null ? 'nope' : JSON.stringify({ tree: [{ path: 'skills/browser', type: 'tree', sha }] }),
+          sha === null ? 'nope' : JSON.stringify({ tree: [{ path: 'plugins/browser', type: 'tree', sha }] }),
           { status: sha === null ? 500 : 200 },
         )
       : new Response(body, { status })
@@ -220,7 +220,7 @@ describe('pulling the skill from the repository', () => {
 
   it('downloads from the published repository path', () => {
     expect(codeySkillDownloadUrl('browser')).toBe(
-      'https://raw.githubusercontent.com/its-ahoh/codey-skills/main/skills/browser/SKILL.md',
+      'https://raw.githubusercontent.com/its-ahoh/codey-skills/main/plugins/browser/SKILL.md',
     );
   });
 

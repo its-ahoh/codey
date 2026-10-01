@@ -46,7 +46,7 @@ import * as pty from 'node-pty'
 protocol.registerSchemesAsPrivileged([
   { scheme: 'codey-asset', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
 ])
-import { browserSkillStatus, checkBrowserSkillUpdate, chromeCompanionSkillStatus, checkChromeCompanionSkillUpdate, CODEY_GLOBAL_SKILLS_SUBDIR, CODEY_SKILL_DISCOVERY_SUBDIRS, CODEY_SKILLS_SUBDIR, installBrowserSkill, installChromeCompanionSkill, setChromeCompanionSkillEnabled, syncCodeyGlobalSkills, syncCodeyProjectSkills, uninstallBrowserSkill, uninstallChromeCompanionSkill, renameBotInTeams, BotManager, WorkspaceManager } from '@codey/core'
+import { browserSkillStatus, checkBrowserSkillUpdate, checkSkillPackUpdate, chromeCompanionSkillStatus, checkChromeCompanionSkillUpdate, installSkillPack, readSkillPackManifest, setSkillPackEnabled, skillPackStatus, uninstallSkillPack, CODEY_GLOBAL_SKILLS_SUBDIR, CODEY_SKILL_DISCOVERY_SUBDIRS, CODEY_SKILLS_SUBDIR, installBrowserSkill, installChromeCompanionSkill, setChromeCompanionSkillEnabled, syncCodeyGlobalSkills, syncCodeyProjectSkills, uninstallBrowserSkill, uninstallChromeCompanionSkill, renameBotInTeams, BotManager, WorkspaceManager } from '@codey/core'
 import { listPlaybooks, playbookDetail, playbookHistory, archivePlaybook, deletePlaybook, restorePlaybook, rollbackPlaybook, promotePlaybook } from './playbooks'
 import { Codey } from '@codey/gateway/dist/gateway'
 import { ConfigManager } from '@codey/gateway/dist/config'
@@ -4383,8 +4383,11 @@ app.whenReady().then(async () => {
   )
 
   // ── Plugins IPC ───────────────────────────────────────────────────
+  const pluginStatus = (id: string) =>
+    id === 'browser' ? browserSkillStatus() : id === 'pstack' ? skillPackStatus() : chromeCompanionSkillStatus()
+
   ipcMain.handle('plugins:list', async () =>
-    wrap(async () => listPlugins(id => id === 'browser' ? browserSkillStatus() : chromeCompanionSkillStatus()))
+    wrap(async () => listPlugins(pluginStatus))
   )
 
   // Installing writes the skill into the user's own ~/.codey/skills and links
@@ -4399,7 +4402,9 @@ app.whenReady().then(async () => {
       if (!isKnownPlugin(id)) throw new Error(`Unknown plugin: ${id}`)
       const result = id === 'browser'
         ? await installBrowserSkill(undefined, { force: force === true })
-        : await installChromeCompanionSkill(undefined, { force: force === true })
+        : id === 'pstack'
+          ? await installSkillPack(undefined, { force: force === true })
+          : await installChromeCompanionSkill(undefined, { force: force === true })
       if (result.installed) await syncCodeyGlobalSkills()
       return result
     })
@@ -4410,7 +4415,9 @@ app.whenReady().then(async () => {
       if (!isKnownPlugin(id)) throw new Error(`Unknown plugin: ${id}`)
       const result = id === 'browser'
         ? await uninstallBrowserSkill(undefined, { force: force === true })
-        : await uninstallChromeCompanionSkill(undefined, { force: force === true })
+        : id === 'pstack'
+          ? await uninstallSkillPack(undefined, { force: force === true })
+          : await uninstallChromeCompanionSkill(undefined, { force: force === true })
       if (result.removed) await syncCodeyGlobalSkills()
       return result
     })
@@ -4426,6 +4433,8 @@ app.whenReady().then(async () => {
       if (typeof enabled !== 'boolean') throw new Error('Invalid enabled flag')
       if (id === 'chrome-companion') {
         await setChromeCompanionSkillEnabled(enabled)
+      } else if (id === 'pstack') {
+        await setSkillPackEnabled(enabled)
       } else {
         const plugin = browserSkillStatus()
         if (plugin.state === 'absent') throw new Error(`Plugin ${id} is not installed`)
@@ -4434,8 +4443,7 @@ app.whenReady().then(async () => {
         setSkillEnabled(fsMod, pathMod, plugin.dir, enabled)
       }
       await syncCodeyGlobalSkills()
-      return listPlugins(pluginId => pluginId === 'browser' ? browserSkillStatus() : chromeCompanionSkillStatus())
-        .find(plugin => plugin.id === id)!
+      return listPlugins(pluginStatus).find(plugin => plugin.id === id)!
     })
   )
 
@@ -4446,7 +4454,9 @@ app.whenReady().then(async () => {
     wrap(async () => {
       if (!isKnownPlugin(id)) throw new Error(`Unknown plugin: ${id}`)
       try {
-        return id === 'browser' ? await checkBrowserSkillUpdate() : await checkChromeCompanionSkillUpdate()
+        return id === 'browser'
+          ? await checkBrowserSkillUpdate()
+          : id === 'pstack' ? await checkSkillPackUpdate() : await checkChromeCompanionSkillUpdate()
       } catch {
         return { needsUpdate: null }
       }
@@ -4755,6 +4765,10 @@ app.whenReady().then(async () => {
     const browser = browserSkillStatus(home)
     if (browser.origin === 'codey') {
       listed = markSkillManagedBy(fsMod, pathMod, listed, browser.dir, 'codey')
+    }
+    const packRoot = skillPackStatus(undefined, home).dir
+    for (const name of readSkillPackManifest(undefined, home)?.skills ?? []) {
+      listed = markSkillManagedBy(fsMod, pathMod, listed, pathMod.join(packRoot, name), 'codey')
     }
     return { skills: listed, projectDir }
   }

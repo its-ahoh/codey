@@ -12,10 +12,11 @@ const status = (over: Partial<BrowserSkillStatus> = {}): BrowserSkillStatus => (
 })
 
 describe('plugin registry', () => {
-  it('registers Browser and Chrome Companion as independent plugins', () => {
-    expect(PLUGINS.map(p => p.id)).toEqual(['browser', 'chrome-companion'])
+  it('registers Browser, Chrome Companion and pstack as independent plugins', () => {
+    expect(PLUGINS.map(p => p.id)).toEqual(['browser', 'chrome-companion', 'pstack'])
     expect(PLUGINS[0].name).toBe('Codey Browser')
     expect(PLUGINS[1].name).toBe('Chrome')
+    expect(PLUGINS[2].name).toBe('pstack')
     expect(PLUGINS[0].description.length).toBeGreaterThan(10)
     // The two are easy to confuse, so each card leads with a one-line tagline.
     expect(PLUGINS.every(p => p.tagline.length > 10)).toBe(true)
@@ -38,12 +39,13 @@ describe('plugin registry', () => {
   it('asks about each registered plugin by id', () => {
     const asked: string[] = []
     listPlugins(id => { asked.push(id); return status() })
-    expect(asked).toEqual(['browser', 'chrome-companion'])
+    expect(asked).toEqual(['browser', 'chrome-companion', 'pstack'])
   })
 
   it('isKnownPlugin accepts registry ids and rejects others', () => {
     expect(isKnownPlugin('browser')).toBe(true)
     expect(isKnownPlugin('chrome-companion')).toBe(true)
+    expect(isKnownPlugin('pstack')).toBe(true)
     expect(isKnownPlugin('nope')).toBe(false)
     expect(isKnownPlugin('')).toBe(false)
   })
