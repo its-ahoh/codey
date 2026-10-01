@@ -74,12 +74,14 @@ export interface PluginInfo {
  *  and `reason` says why. `installed: false` means Codey refused to replace a
  *  skill it did not write; retry with force once the user confirms. */
 export type PluginInstallResult =
-  | { installed: true; file: string; source: 'repository' | 'bundled'; reason?: string }
-  | { installed: false; conflict: 'user-copy'; dir: string }
+  | { installed: true; file: string; source: 'repository' | 'bundled'; reason?: string; skills?: string[] }
+  | { installed: false; conflict: 'user-copy'; dir: string; /** Every taken name, for a skill pack. */ names?: string[] }
 
 export interface PluginUninstallResult {
   removed: boolean
   conflict?: 'user-copy'
+  /** Every name the user has replaced, for a skill pack. */
+  names?: string[]
 }
 
 /** Whether the published skill moved after the installed copy was written.

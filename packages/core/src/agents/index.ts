@@ -17,6 +17,7 @@ export { applyModelEnv, unwiredAllProtocols } from './env';
 export * from './codey-skills';
 export * from './browser-skill';
 export * from './chrome-companion-skill';
+export * from './skill-pack';
 
 /**
  * Hand the shared local browser bridge credentials to a task-performing agent
