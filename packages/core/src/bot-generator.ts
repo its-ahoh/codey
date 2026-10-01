@@ -18,6 +18,7 @@ export interface GenerateDeps {
 interface GeneratedBot {
   name: string;
   displayName?: string;
+  displayNameExplicit?: boolean;
   role: string;
   soul: string;
   instructions: string;
@@ -28,7 +29,8 @@ const SCHEMA_INSTRUCTION = `You are generating a Codey bot definition. Given a u
 
 {
   "name": "lowercase-kebab-case",
-  "displayName": "user-facing name, preserving requested capitalization, spaces, and language",
+  "displayName": "User Facing Name",
+  "displayNameExplicit": false,
   "role": "one or two sentences describing what this bot does",
   "soul": "two to four sentences describing the bot's personality and working style",
   "instructions": "numbered or bulleted steps the bot follows when given a task",
@@ -38,7 +40,8 @@ const SCHEMA_INSTRUCTION = `You are generating a Codey bot definition. Given a u
 Rules:
 - role, soul, and instructions must be non-empty strings. Write instruction steps inside one string, separated by newline characters; do not return an array or object.
 - name must match /^[a-z][a-z0-9-]*$/ and NOT be one of: architect, executor (unless the user explicitly asks to replace one — then confirm by echoing it in name).
-- displayName is the human-readable name, separate from the internal name identifier. Preserve any name requested by the user.
+- displayName is the human-readable name, separate from the internal name identifier. By default capitalize the first letter of each word (e.g. Code Reviewer), preserving acronyms such as AI.
+- Set displayNameExplicit to true only when the user explicitly specifies the name. In that case preserve their exact capitalization, spaces, and language; otherwise use false.
 - Output ONLY the JSON object. No markdown fences, no prose before or after.
 - If the user's description is ambiguous, make reasonable defaults.`;
 
@@ -62,6 +65,8 @@ function validate(value: unknown): string | null {
   const g = value as Record<string, unknown>;
   if (typeof g.name !== 'string' || !/^[a-z][a-z0-9-]*$/.test(g.name)) return 'name must be a lowercase-kebab-case identifier';
   if (g.displayName !== undefined && (typeof g.displayName !== 'string' || !g.displayName.trim())) return 'displayName must be a non-empty string';
+  if (g.displayNameExplicit !== undefined && typeof g.displayNameExplicit !== 'boolean') return 'displayNameExplicit must be a boolean';
+  if (g.displayNameExplicit === true && !g.displayName) return 'An explicit name requires displayName';
   for (const field of ['role', 'soul', 'instructions']) {
     if (typeof g[field] !== 'string' || !g[field].trim()) return `${field} must be a non-empty string`;
   }
@@ -112,8 +117,10 @@ export async function generateBot(
     const err = validate(value);
     lastError = err ?? '';
     if (!err) {
-      const { name, displayName, role, soul, instructions, tools } = value as GeneratedBot;
-      const parsed: GeneratedBot = { name, ...(displayName ? { displayName: displayName.trim() } : {}), role, soul, instructions, tools };
+      const { name, displayName, displayNameExplicit, role, soul, instructions, tools } = value as GeneratedBot;
+      const label = displayName?.trim() || name.replace(/-/g, ' ');
+      const defaultLabel = label.replace(/(^|[\s-])(\p{L})/gu, (_match, separator: string, letter: string) => separator + letter.toUpperCase());
+      const parsed: GeneratedBot = { name, displayName: displayNameExplicit ? label : defaultLabel, role, soul, instructions, tools };
       // Consult the loaded map rather than just `fs.existsSync` on the
       // directory: an orphaned empty `<name>/` (left behind by an interrupted
       // create or a manual edit) wouldn't load as a bot but would still
