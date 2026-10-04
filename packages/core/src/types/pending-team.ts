@@ -11,7 +11,7 @@ export interface PendingPart {
 }
 
 /** State persisted on a Chat while a team run is paused waiting for user input. */
-export type PendingTeamState =
+export type PendingTeamState = { taskId?: string } & (
   | {
       teamName: string;
       task: string;
@@ -66,4 +66,4 @@ export type PendingTeamState =
       askedAt: number;
       blackboard?: BlackboardSnapshot;
       botAnchors?: Record<string, BotAnchor>;
-    };
+    });

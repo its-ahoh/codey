@@ -6,6 +6,7 @@ import { BotManager, TeamBlackboard, ContextManager, type Chat, type AgentReques
 import { ChatManager } from './chats';
 import { Codey } from './gateway';
 import { RunSemaphore } from './chat-runner';
+import { BotMessageEmitter } from './bot-message-emitter';
 
 const roots: string[] = [];
 afterEach(() => { roots.splice(0).forEach(root => fs.rmSync(root, { recursive: true, force: true })); });
@@ -300,4 +301,118 @@ it('does not reattach a chat session when memory changes during its turn', async
   expect(chat.sessionAnchors).toBeUndefined();
   await send('Continue', a);
   expect(calls[1].resumeSessionId).toBeUndefined();
+});
+
+
+describe('mention execution contexts', () => {
+  async function harness() {
+    const h = setup();
+    for (const name of ['alice', 'ben']) await h.bots.saveBot(name,
+      { role: name, soul: 'Helpful', instructions: 'Do the task.' }, { tools: [] });
+    const dispatch = vi.fn(async (name, team, _prompt, _dir, sink, id, _chat, _signal, opts) => {
+      const emitter = new BotMessageEmitter(sink, h.manager, id,
+        { teamTurnId: `turn-${id}-${opts.taskId ?? 'general'}`, teamName: name, mode: 'sequential', taskId: opts.taskId });
+      emitter.teamStart(team.members.map((bot: string, index: number) => ({ bot, step: index + 1 })));
+      emitter.beginBot({ bot: team.members[0], step: 1 });
+      emitter.onStream('Reviewed');
+      emitter.endBot('done');
+      return { response: 'Reviewed', teamTurnId: `turn-${id}-${opts.taskId ?? 'general'}` };
+    });
+    Object.assign(h.gateway, { runTeamForChat: dispatch });
+    return { ...h, dispatch };
+  }
+
+  it('automatically hands off cross-Bot work without exposing other tasks', async () => {
+    const { gateway, manager, dispatch } = await harness();
+    const direct = await gateway.openBotChat('alice');
+    manager.createTask(direct.id, 'Website');
+    manager.createTask(direct.id, 'Private');
+    const [website, other] = direct.tasks!;
+    manager.updateAgentModel(direct.id, 'pi', 'chosen-model');
+    manager.updateEffort(direct.id, 'high');
+    manager.appendMessage(direct.id, { id: 'secret', role: 'user', content: 'PRIVATE SECRET', taskId: other.id, timestamp: 1 });
+    manager.appendMessage(direct.id, { id: 'context', role: 'user', content: 'Use blue', taskId: website.id, timestamp: 2 });
+    const attachment = { id: 'file', name: 'design.txt', path: '/tmp/design.txt', mimeType: 'text/plain', size: 10 };
+    const events: any[] = [];
+    const result = await gateway.sendToChat(direct.id, '@ben Review it', e => events.push(e), [attachment], undefined, { taskId: website.id });
+    expect(result.chatId).not.toBe(direct.id);
+    const group = manager.get(result.chatId)!;
+    expect(group.botChat).toMatchObject({ kind: 'group', members: ['alice', 'ben'], sourceChatId: direct.id });
+    expect(group).toMatchObject({ agent: 'pi', model: 'chosen-model', effort: 'high' });
+    expect(group.botChat?.handoffContext).toContain('Use blue');
+    expect(dispatch.mock.calls[0][2]).toContain('Use blue');
+    expect(group.messages[0].content).toBe('@ben Review it');
+    expect(group.botChat?.handoffContext).toContain(direct.botChat!.homeDir);
+    expect(JSON.stringify(group)).not.toContain('PRIVATE SECRET');
+    expect(group.messages.find(m => m.content === '@ben Review it')?.attachments).toEqual([attachment]);
+    expect(direct.messages).toHaveLength(2);
+    expect(direct.tasks).toHaveLength(2);
+    expect(dispatch.mock.calls[0][1].members).toEqual(['ben']);
+    expect(events[0]).toMatchObject({ type: 'chat_redirect', chatId: direct.id, target: { id: group.id } });
+    expect(events.at(-1)).toMatchObject({ type: 'done', chatId: group.id });
+    expect((await gateway.openBotChat('alice')).id).toBe(direct.id);
+  });
+
+  it('dispatches inside the workspace with task-local history and messages', async () => {
+    const { gateway, manager, chat, root, a, b, dispatch, send } = await harness();
+    manager.appendMessage(chat.id, { id: 'a', role: 'user', content: 'WEBSITE CONTEXT', taskId: a, timestamp: 1 });
+    manager.appendMessage(chat.id, { id: 'b', role: 'user', content: 'PRIVATE ICON', taskId: b, timestamp: 2 });
+    const result = await send('@alice @ben Review the website', a);
+    expect(result.chatId).toBe(chat.id);
+    expect(manager.list()).toHaveLength(1);
+    expect(dispatch.mock.calls[0][2]).toContain('WEBSITE CONTEXT');
+    expect(dispatch.mock.calls[0][2]).not.toContain('PRIVATE ICON');
+    expect(dispatch.mock.calls[0][3]).toBe(root);
+    expect(dispatch.mock.calls[0][6].messages.every((m: any) => m.taskId === a)).toBe(true);
+    expect(chat.messages.filter(m => m.teamTurnId).every(m => m.taskId === a)).toBe(true);
+    expect((gateway as any).teamConversationBase(chat, a)).not.toBe((gateway as any).teamConversationBase(chat, b));
+  });
+
+  it('preserves the task when a workspace team pauses and resumes', async () => {
+    const { gateway, chat, a, b, dispatch, send } = await harness();
+    dispatch.mockImplementationOnce(async (name, team, prompt, _dir, _sink, id, _chat, _signal, _opts) => {
+      (gateway as any).persistPendingTeam(id, { mode: 'sequential', teamName: name, members: team.members,
+        task: prompt, teamTurnId: 'paused-turn', memberIndex: 0, carry: '', askingBot: 'ben', question: 'Color?',
+        options: ['Blue', 'Red'], askedAt: 1 });
+      return { response: 'Color?', teamTurnId: 'paused-turn' };
+    });
+    await send('@ben Review', a);
+    expect(chat.pendingTeam?.taskId).toBe(a);
+    expect(new ChatManager((gateway as any).workingDir).get(chat.id)?.pendingTeam?.taskId).toBe(a);
+    const resume = vi.fn(async (_id, _base, _pending, answer, emitter) => {
+      emitter.beginBot({ bot: 'ben', step: 2 });
+      emitter.endBot('done');
+      return answer;
+    });
+    Object.assign(gateway, { resumeTeamFromAnswer: resume });
+    await expect(send('Answer for another task', b)).rejects.toThrow('original task');
+    await send('1');
+    expect(resume.mock.calls[0][1]).toBe((gateway as any).teamConversationBase(chat, a));
+    expect(resume.mock.calls[0][3]).toBe('Blue');
+    expect(chat.pendingTeam).toBeUndefined();
+    expect(chat.messages.filter(m => m.id !== 'unrelated').every(m => m.taskId === a)).toBe(true);
+  });
+
+  it('keeps a self mention in the direct Bot context', async () => {
+    const { gateway, manager } = await harness();
+    const direct = await gateway.openBotChat('alice');
+    manager.createTask(direct.id, 'Website');
+    const result = await gateway.sendToChat(direct.id, '@alice Continue', () => {});
+    expect(result.chatId).toBe(direct.id);
+    expect(manager.list().filter(c => c.botChat?.kind === 'group')).toEqual([]);
+  });
+});
+
+
+it('runs the actual workspace team path with separate bot sessions per task', async () => {
+  const { gateway, bots, send, chat, a, b } = setup();
+  await bots.saveBot('ben', { role: 'Reviewer', soul: 'Helpful', instructions: 'Review.' }, { tools: [] });
+  const step = vi.fn(async () => ({ response: { success: true, output: 'Reviewed' } }));
+  Object.assign(gateway, { runBotStep: step });
+  await send('@ben Review website', a);
+  await send('@ben Review icon', b);
+  const requests = step.mock.calls as unknown as Array<[{ conversationId: string }]>;
+  expect(requests).toHaveLength(2);
+  expect(requests[0][0].conversationId).not.toBe(requests[1][0].conversationId);
+  expect(chat.messages.filter(m => m.bot === 'ben').map(m => m.taskId)).toEqual([a, b]);
 });

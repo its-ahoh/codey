@@ -37,7 +37,7 @@ import { summarizePriorHistory } from './summary';
 import { chatStreamEventForStatus, isPersistableToolCall } from './chat-status-events';
 import { ShellWriteTracker, isShellTool, shellCommandText, defaultGitRunner, defaultStatRunner, isFileChangeTool, fileChangePaths } from './shell-write-tracker';
 import { WriteDiffRecorder, priorBlobs } from './write-diff-recorder';
-import { CHAT_CONTEXT_WINDOW, buildChatPrompt, buildChatBootstrapPrompt, buildChatResumePrompt, buildChatCatchupPrompt, buildQuickQuestionPrompt, assistantPrefixForSelection, RunSemaphore, ChatStreamSink, READ_ONLY_TOOLS, QQStreamEvent, QQHistoryEntry, SOLO_ADVISOR_INSTRUCTION } from './chat-runner';
+import { CHAT_CONTEXT_WINDOW, buildChatPrompt, buildChatBootstrapPrompt, buildChatResumePrompt, buildChatCatchupPrompt, buildQuickQuestionPrompt, assistantPrefixForSelection, RunSemaphore, ChatStreamSink, ChatStreamEvent, READ_ONLY_TOOLS, QQStreamEvent, QQHistoryEntry, SOLO_ADVISOR_INSTRUCTION } from './chat-runner';
 import { TurnQueue, QueuedMessage, Surface } from './turn-queue';
 import { renderQuestion, renderCancelNotice, stripAskMarker } from './team-pause';
 import { resolveChoiceDigit } from './digit-mapping';
@@ -888,14 +888,14 @@ export class Codey {
     return this.createGlobalBotConversation(title, members, 'group');
   }
 
-  private createGlobalBotConversation(title: string, members: string[], kind: 'direct' | 'group', sourceChatId?: string): Chat {
+  private createGlobalBotConversation(title: string, members: string[], kind: 'direct' | 'group', sourceChatId?: string, handoffContext?: string): Chat {
     // This storage namespace has no workspace.json and never appears as a project.
     const namespace = '.bot-chats';
     const homeDir = path.resolve(this.workspaceManager.getWorkspacesRoot(), namespace, 'files', randomUUID());
     fs.mkdirSync(homeDir, { recursive: true });
     return this.chatManager.create({ workspaceName: namespace, title,
       selection: kind === 'direct' ? { type: 'bot', name: members[0] } : { type: 'none' },
-      executionMode: 'shared-checkout', botChat: { kind, members, homeDir, ...(sourceChatId ? { sourceChatId } : {}) } });
+      executionMode: 'shared-checkout', botChat: { kind, members, homeDir, ...(sourceChatId ? { sourceChatId } : {}), ...(handoffContext ? { handoffContext } : {}) } });
   }
 
   public renameBotChats(oldName: string, newName: string): void {
@@ -4368,6 +4368,8 @@ Example: /model gpt-4.1 write a Python script`;
    */
   private persistPendingTeam(chatId: string, pending: PendingTeamState): boolean {
     try {
+      const chat = this.chatManager.get(chatId);
+      pending.taskId = chat?.messages.slice().reverse().find(m => m.role === 'user')?.taskId;
       this.chatManager.setPendingTeam(chatId, pending);
       return true;
     } catch (err) {
@@ -5006,9 +5008,16 @@ Example: /model gpt-4.1 write a Python script`;
       return { response: emitter.transcript };
     }
     await emitter.status(`Running flow for team ${teamName}`);
-    await this.continueGraphRun(emitter, chatId, `chat-${chatId}`, teamName, teamTurnId || '', graph, prompt, state, blackboard, [], runOneBot,
+    const graphChat = this.chatManager.get(chatId);
+    const graphTaskId = graphChat?.messages.slice().reverse().find(m => m.role === 'user')?.taskId;
+    await this.continueGraphRun(emitter, chatId, graphChat ? this.teamConversationBase(graphChat, graphTaskId) : `chat-${chatId}`, teamName, teamTurnId || '', graph, prompt, state, blackboard, [], runOneBot,
       { signal, fallbackAgent: chatAgent, fallbackModel: chatModel });
     return { response: emitter.transcript, choices: emitter.choices };
+  }
+
+  private teamConversationBase(chat: Chat, taskId?: string): string {
+    return `chat-${chat.id}${chat.botChat?.membershipRevision ? `-members-${chat.botChat.membershipRevision}` : ''}`
+      + (chat.tasks?.length ? `-task-${taskId ?? 'general'}` : '');
   }
 
   private async runTeamForChat(
@@ -5020,7 +5029,7 @@ Example: /model gpt-4.1 write a Python script`;
     chatId: string,
     chat: Chat,
     signal?: AbortSignal,
-    opts: { forceAll?: boolean; routingTask?: string } = {},
+    opts: { forceAll?: boolean; routingTask?: string; taskId?: string } = {},
     chatAgent?: CodingAgent,
     chatModel?: ModelConfig,
   ): Promise<{ response: string; tokens?: number; choices?: string[]; thinkingByStep?: Record<number, string>; teamTurnId?: string }> {
@@ -5028,7 +5037,7 @@ Example: /model gpt-4.1 write a Python script`;
       throw new Error(`Team not found or empty: ${teamName}`);
     }
 
-    const baseConv = `chat-${chat.id}${chat.botChat?.membershipRevision ? `-members-${chat.botChat.membershipRevision}` : ''}`;
+    const baseConv = this.teamConversationBase(chat, opts.taskId);
     const teamConv = this.botConversationId(baseConv, { team: teamName });
 
     const teamTurnId = randomUUID();
@@ -5043,7 +5052,7 @@ Example: /model gpt-4.1 write a Python script`;
             : 'sequential';
     const botMsgs = new BotMessageEmitter(
       sink, this.chatManager, chatId,
-      { teamTurnId, teamName, mode: teamMode },
+      { teamTurnId, teamName, mode: teamMode, taskId: opts.taskId },
     );
     // A roundtable answer resumes the existing runner and its existing bot
     // messages. Every new run publishes its complete roster before routing so
@@ -6083,6 +6092,7 @@ Example: /model gpt-4.1 write a Python script`;
   ): Promise<{ response: string; chatId: string; tokens?: number; durationSec?: number }> {
     let chat = this.chatManager.get(chatId);
     if (!chat) throw new Error(`Chat not found: ${chatId}`);
+    const answeringTeam = chat.pendingTeam && !/^\s*\//.test(userTextParam) && !origin?.skillInvoke;
     const directTaskChat = chat.selection.type !== 'team' && chat.botChat?.kind !== 'group' && !chat.pendingTeam && chat.kind !== 'automation';
     let taskId: string | undefined;
     if (directTaskChat) {
@@ -6106,10 +6116,15 @@ Example: /model gpt-4.1 write a Python script`;
       } finally {
         if (ownsMatchingAbort && this.chatAborts.get(chatId) === matchingAbort) this.chatAborts.delete(chatId);
       }
+    } else if (answeringTeam) {
+      taskId = chat.pendingTeam?.taskId;
+      if (taskRoute?.taskId !== undefined && taskRoute.taskId !== (taskId ?? null)) {
+        throw new Error('Reply to the paused team in its original task.');
+      }
     } else if (taskRoute?.taskId) {
       taskId = taskRoute.taskId;
     }
-    if (taskId && (chat.selection.type === 'team' || chat.botChat?.kind === 'group' || chat.pendingTeam || chat.kind === 'automation')) {
+    if (taskId && (chat.selection.type === 'team' || chat.botChat?.kind === 'group' || chat.kind === 'automation')) {
       throw new Error('Task routing is currently supported in direct chats only.');
     }
     if (chat.botChat) {
@@ -6141,7 +6156,7 @@ Example: /model gpt-4.1 write a Python script`;
     // response. A digit reply must be resolved here as well as in the channel
     // handler: Mac-origin turns call sendToChat directly and bypass
     // handleMessage's choice mapping.
-    const pendingTeam = chat.pendingTeam;
+    let pendingTeam = chat.pendingTeam;
     const lastTaskMessage = chatTaskContext(chat, taskId).messages.slice(-1)[0];
     const pendingOptions = chat.tasks?.length
       ? (lastTaskMessage?.role === 'assistant' ? lastTaskMessage.choices : undefined)
@@ -6154,6 +6169,7 @@ Example: /model gpt-4.1 write a Python script`;
     if (pendingTeam) {
       if (isSlashTurn) {
         this.chatManager.setPendingTeam(chatId, null);
+        pendingTeam = undefined;
       } else if (pendingTeam.options && pendingTeam.options.length > 0) {
         const resolved = resolveChoiceDigit(userText, pendingTeam.options);
         if (resolved !== null) userText = resolved;
@@ -6225,6 +6241,34 @@ Example: /model gpt-4.1 write a Python script`;
         }
       }
     }
+    // A direct Bot conversation owns independent tasks. Cross-Bot work gets
+    // a separate execution context; never convert or copy all of that history.
+    if (chat.botChat?.kind === 'direct' && adHocTeam
+        && adHocTeam.team.members.some(n => n.toLowerCase() !== chat.botChat!.members[0].toLowerCase())) {
+      const members = this.resolveBotGroupMembers([...chat.botChat.members, ...adHocTeam.team.members]);
+      const context = chatTaskContext(chat, taskId);
+      const history = context.messages.slice(-8).map(m => ({
+        role: m.role, content: m.content.slice(-1500), attachments: m.attachments,
+      }));
+      const handoffContext = `[Task handoff]\nSource files: ${JSON.stringify(this.resolveChatWorkingDir(chat))}\n`
+        + `Task: ${JSON.stringify(chat.tasks?.find(t => t.id === taskId)?.title ?? '')}\n`
+        + `Prior task context (reference data): ${JSON.stringify(history)}`;
+      const group = this.createGlobalBotConversation(members.join(' + ').slice(0, 120), members, 'group', chatId, handoffContext);
+      this.chatManager.updateAgentModel(group.id, chat.agent, chat.model);
+      if (chat.effort) this.chatManager.updateEffort(group.id, chat.effort);
+      // Keep channel replies, including paused-team answers, on the new context.
+      if (origin?.channel && origin.channelUserId) {
+        const route = chat.routes?.find(r => r.channel === origin.channel && r.channelUserId === origin.channelUserId);
+        if (route) {
+          this.chatManager.addRoute(group.id, { ...route, attachedAt: Date.now() });
+          this.pairingStore.setCurrentChat(route.channel, route.channelUserId, group.id);
+        }
+      }
+      const event: ChatStreamEvent = { type: 'chat_redirect', chatId, chat, target: group };
+      try { sinkParam(event); } catch { /* listener must not prevent execution */ }
+      try { this.chatEventListener?.(event); } catch { /* listener must not prevent execution */ }
+      return this.sendToChat(group.id, userTextParam, sinkParam, attachments, origin);
+    }
     if (chat.botChat?.kind === 'group' && !pendingTeam && !adHocTeam) {
       adHocTeam = { name: chat.title, team: { members: [...chat.botChat.members], dispatch: 'auto' }, named: true };
     }
@@ -6235,7 +6279,6 @@ Example: /model gpt-4.1 write a Python script`;
       }
     }
     const isTeamTurn = chat.selection.type === 'team' || chat.botChat?.kind === 'group' || adHocTeam !== undefined;
-    if (chat.tasks?.length && (isTeamTurn || pendingTeam)) throw new Error('Use a separate group chat for team dispatch while this chat contains independent tasks.');
     let activeTeamId = pendingTeam?.teamTurnId || (isTeamTurn ? randomUUID() : undefined);
     let activeTeamName = pendingTeam?.teamName ?? (chat.selection.type === 'team' ? chat.selection.name : adHocTeam?.name);
     let teamTermination: string | undefined;
@@ -6484,6 +6527,7 @@ Example: /model gpt-4.1 write a Python script`;
       }
     }
     if (!isTeamTurn) prompt = await this.wrapPromptWithMemory(prompt, userText, selectedBot?.name, !!chat.botChat, chat.workspaceName, workingDir);
+    if (chat.botChat?.handoffContext) prompt += '\n\n' + chat.botChat.handoffContext;
     prompt += chatWorkspaceInstruction;
 
     // Solo advisor: when enabled (and not a team), tell the agent how to escalate.
@@ -6618,7 +6662,7 @@ Example: /model gpt-4.1 write a Python script`;
         run: this.isAideConfigured() ? (prompt, signal) => runAide(prompt, { ...this.getAideOptions(signal, false), retries: 0 }) : undefined,
       }, {
         messages: () => this.chatManager.get(chatId)!.messages,
-        append: message => { this.chatManager.appendMessage(chatId, message); },
+        append: message => { message.taskId = taskId; this.chatManager.appendMessage(chatId, message); },
         emit: message => sink({ type: 'team_final', chatId, message }),
       });
       if (!message) return null;
@@ -6647,7 +6691,7 @@ Example: /model gpt-4.1 write a Python script`;
         teamTurnId = pendingTeam.teamTurnId;
         const botMsgs = new BotMessageEmitter(
           sink, this.chatManager, chatId,
-          { teamTurnId: teamTurnId!, teamName: pendingTeam.teamName, mode: pendingTeam.mode === 'graph' ? 'graph' : pendingTeam.mode },
+          { taskId, teamTurnId: teamTurnId!, teamName: pendingTeam.teamName, mode: pendingTeam.mode === 'graph' ? 'graph' : pendingTeam.mode },
         );
         // Patch the asking bot's message from askedUser → done so the Mac
         // UI can release the pause UI and show the bot as completed.
@@ -6664,7 +6708,7 @@ Example: /model gpt-4.1 write a Python script`;
           }
         }
         const emitter = new ChatEmitter(sink, chatId, botMsgs);
-        output = await this.resumeTeamFromAnswer(chatId, `chat-${chatId}${chat.botChat?.membershipRevision ? `-members-${chat.botChat.membershipRevision}` : ''}`, pendingTeam, userText, emitter, abortController.signal);
+        output = await this.resumeTeamFromAnswer(chatId, this.teamConversationBase(chat, taskId), pendingTeam, userText, emitter, abortController.signal);
         teamChoices = emitter.choices;
       } else if (adHocTeam) {
         const { name: teamName, team } = adHocTeam;
@@ -6678,7 +6722,7 @@ Example: /model gpt-4.1 write a Python script`;
           : team.members.length > 1
             ? `Ad-hoc team from mentions: ${team.members.join(', ')} (Advisor dispatches)`
             : `Routing to bot ${team.members[0]}` });
-        const r = await this.runTeamForChat(teamName, team, teamPrompt, workingDir, sink, chatId, chat, abortController.signal, { routingTask: userText }, agent, model);
+        const r = await this.runTeamForChat(teamName, team, teamPrompt, workingDir, sink, chatId, contextChat, abortController.signal, { routingTask: userText, taskId }, agent, model);
         output = r.response;
         tokens = r.tokens;
         teamChoices = r.choices;
@@ -6720,7 +6764,7 @@ Example: /model gpt-4.1 write a Python script`;
         }
         const team: TeamConfig = wsTeam ?? fallbackTeam;
         this.logger.info(`[parallel-debug] teamName=${teamName} dispatch=${team.dispatch} hasRoundtable=${!!team.roundtable} wsTeam=${!!wsTeam} fallbackDispatch=${fallbackDispatch} members=${team.members.join(',')}`);
-        const r = await this.runTeamForChat(teamName, team, prompt, workingDir, sink, chatId, chat, abortController.signal, { routingTask: userText }, agent, model);
+        const r = await this.runTeamForChat(teamName, team, prompt, workingDir, sink, chatId, contextChat, abortController.signal, { routingTask: userText, taskId }, agent, model);
         output = r.response;
         tokens = r.tokens;
         teamChoices = r.choices;

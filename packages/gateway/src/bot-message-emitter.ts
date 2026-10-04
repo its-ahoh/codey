@@ -35,7 +35,7 @@ export class BotMessageEmitter {
     private sink: Sink,
     private store: BotMessageStore,
     private chatId: string,
-    private meta: { teamTurnId: string; teamName: string; mode: ChatMessage['teamMode'] },
+    private meta: { teamTurnId: string; teamName: string; mode: ChatMessage['teamMode']; taskId?: string },
     private newId: () => string = randomUUID,
   ) {}
 
@@ -47,7 +47,7 @@ export class BotMessageEmitter {
       this.byBot.set(w.bot, buf);
       return { messageId: buf.messageId, step: w.step, bot: w.bot, agent: w.agent, model: w.model };
     });
-    this.sink({ type: 'team_start', chatId: this.chatId, teamTurnId: this.meta.teamTurnId, teamName: this.meta.teamName, mode: this.meta.mode!, bots: list });
+    this.sink({ type: 'team_start', taskId: this.meta.taskId, chatId: this.chatId, teamTurnId: this.meta.teamTurnId, teamName: this.meta.teamName, mode: this.meta.mode!, bots: list });
   }
 
   /** Start a bot (serial). Flushes any still-active bot as done first. */
@@ -68,7 +68,7 @@ export class BotMessageEmitter {
       });
     }
     this.active = buf;
-    this.sink({ type: 'bot_start', chatId: this.chatId, teamTurnId: this.meta.teamTurnId, messageId: buf.messageId, step: args.step, bot: args.bot, reason: args.reason, agent: args.agent, model: args.model });
+    this.sink({ type: 'bot_start', taskId: this.meta.taskId, chatId: this.chatId, teamTurnId: this.meta.teamTurnId, messageId: buf.messageId, step: args.step, bot: args.bot, reason: args.reason, agent: args.agent, model: args.model });
     return buf.messageId;
   }
 
@@ -148,7 +148,7 @@ export class BotMessageEmitter {
     const messageId = this.newId();
     const buf: Buf = { messageId, step, bot, content: '', toolCalls: [], thinking: '' };
     const stub: ChatMessage = {
-      id: messageId, role: 'assistant', content: '', timestamp: Date.now(),
+      id: messageId, taskId: this.meta.taskId, role: 'assistant', content: '', timestamp: Date.now(),
       toolCalls: [], isComplete: false,
       teamTurnId: this.meta.teamTurnId, teamName: this.meta.teamName, teamMode: this.meta.mode,
       step, bot, botStatus: status,

@@ -42,6 +42,7 @@ export const SOLO_ADVISOR_INSTRUCTION =
   'are genuinely blocked.';
 
 export type ChatStreamEvent =
+  | { type: 'chat_redirect'; chatId: string; chat: Chat; target: Chat }
   | { type: 'team_final'; chatId: string; message: ChatMessage }
   | { type: 'team_termination'; chatId: string; reason: string }
   | { type: 'queued'; chatId: string; position: number }
@@ -53,8 +54,8 @@ export type ChatStreamEvent =
   | { type: 'checklist'; chatId: string; message: string; items: ChecklistItem[] }
   | { type: 'stream'; chatId: string; token: string; messageId?: string; step?: number }
   | { type: 'thinking'; chatId: string; token: string; step?: number; messageId?: string }
-  | { type: 'team_start'; chatId: string; teamTurnId: string; teamName: string; mode: 'sequential' | 'graph' | 'auto' | 'roundtable'; bots?: Array<{ messageId: string; step: number; bot: string; agent?: CodingAgent; model?: string }> }
-  | { type: 'bot_start'; chatId: string; teamTurnId: string; messageId: string; step: number; bot: string; agent?: CodingAgent; model?: string; reason?: string }
+  | { type: 'team_start'; taskId?: string; chatId: string; teamTurnId: string; teamName: string; mode: 'sequential' | 'graph' | 'auto' | 'roundtable'; bots?: Array<{ messageId: string; step: number; bot: string; agent?: CodingAgent; model?: string }> }
+  | { type: 'bot_start'; taskId?: string; chatId: string; teamTurnId: string; messageId: string; step: number; bot: string; agent?: CodingAgent; model?: string; reason?: string }
   | { type: 'bot_end'; chatId: string; messageId: string; step: number; status: 'done' | 'failed' | 'askedUser'; tokens?: number; durationSec?: number; failureReason?: string; nextUserAction?: { text: string; options?: string[] } }
   | { type: 'blackboard_update'; chatId: string; teamTurnId: string; messageId: string; blackboard: BlackboardSnapshot }
   | { type: 'team_end'; chatId: string; teamTurnId: string; summary: TeamRunSummary; taskBrief?: TaskBrief }
