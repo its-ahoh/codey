@@ -380,3 +380,30 @@ describe('settled turn reconciliation', () => {
     expect(reducer(state, { type: 'reconcileSettled', chat: makeChat(), assistantMessageId: 'old-turn' })).toBe(state)
   })
 })
+
+
+describe('automatic Bot execution handoff', () => {
+  it('switches to the group, removes optimistic source messages and preserves source tasks', () => {
+    const source = makeChat({ tasks: [{ id: 'task', title: 'Website', createdAt: 1, updatedAt: 1 }] })
+    const target = makeChat({ id: 'group', messages: [], botChat: { kind: 'group', members: ['alice', 'ben'], homeDir: '/tmp/group' } })
+    let state = reducer({ ...emptyState(), selectedChatId: source.id }, { type: 'upsert', chat: source })
+    state = reducer(state, { type: 'startSend', chatId: source.id,
+      userMessage: { id: 'optimistic', role: 'user', content: '@ben Review', timestamp: 2 }, assistantMessageId: 'pending' })
+    state = reducer(state, { type: 'chatRedirect', chat: source, target })
+    expect(state.selectedChatId).toBe('group')
+    expect(state.inFlight[source.id]).toBeUndefined()
+    expect(state.chats[source.id]).toEqual(source)
+    expect(state.chats.group).toEqual(target)
+    expect(state.order.filter(id => id === 'group')).toHaveLength(1)
+    state = reducer({ ...state, selectedChatId: 'unrelated' }, { type: 'chatRedirect', chat: source, target })
+    expect(state.selectedChatId).toBe('unrelated')
+  })
+
+  it('keeps live Bot messages on the dispatched workspace task', () => {
+    let state = reducer(emptyState(), { type: 'upsert', chat: makeChat() })
+    state = reducer(state, { type: 'teamStart', chatId: 'c1', taskId: 'website', teamTurnId: 'turn', teamName: 'review', mode: 'sequential',
+      bots: [{ messageId: 'bot1', step: 1, bot: 'ben' }] })
+    state = reducer(state, { type: 'botStart', chatId: 'c1', taskId: 'website', teamTurnId: 'turn', messageId: 'bot2', step: 2, bot: 'ben' })
+    expect(state.chats.c1.messages.filter(m => m.teamTurnId === 'turn').map(m => m.taskId)).toEqual(['website', 'website'])
+  })
+})

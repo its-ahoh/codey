@@ -91,8 +91,9 @@ type Action =
   | { type: 'dequeueMessage'; chatId: string }
   | { type: 'removeQueuedMessage'; chatId: string; id: string }
   | { type: 'resumeQueue'; chatId: string }
-  | { type: 'teamStart'; chatId: string; teamTurnId: string; teamName: string; mode: 'sequential' | 'graph' | 'auto' | 'roundtable'; bots?: Array<{ messageId: string; step: number; bot: string; agent?: ChatMessage['agent']; model?: string }> }
-  | { type: 'botStart'; chatId: string; teamTurnId: string; messageId: string; step: number; bot: string; agent?: ChatMessage['agent']; model?: string; reason?: string }
+  | { type: 'chatRedirect'; chat: Chat; target: Chat }
+  | { type: 'teamStart'; taskId?: string; chatId: string; teamTurnId: string; teamName: string; mode: 'sequential' | 'graph' | 'auto' | 'roundtable'; bots?: Array<{ messageId: string; step: number; bot: string; agent?: ChatMessage['agent']; model?: string }> }
+  | { type: 'botStart'; taskId?: string; chatId: string; teamTurnId: string; messageId: string; step: number; bot: string; agent?: ChatMessage['agent']; model?: string; reason?: string }
   | { type: 'botEnd'; chatId: string; messageId: string; step: number; status: 'running' | 'done' | 'failed' | 'askedUser'; failureReason?: string; nextUserAction?: ChatMessage['botNextUserAction'] }
   | { type: 'blackboardUpdate'; chatId: string; teamTurnId: string; messageId: string; blackboard: BlackboardSnapshot }
   | { type: 'teamEnd'; chatId: string; teamTurnId: string; summary: TeamRunSummary; taskBrief?: TaskBrief }
@@ -196,6 +197,17 @@ export function reducer(state: State, action: Action): State {
     }
     case 'setWorkspaces':
       return { ...state, workspaces: action.workspaces }
+    case 'chatRedirect': {
+      const inFlight = { ...state.inFlight }
+      delete inFlight[action.chat.id]
+      const order = state.order.includes(action.target.id) ? state.order : [action.target.id, ...state.order]
+      return {
+        ...state, inFlight, order,
+        chats: { ...state.chats, [action.chat.id]: action.chat, [action.target.id]: action.target },
+        selectedChatId: state.selectedChatId === action.chat.id ? action.target.id : state.selectedChatId,
+        pausedQueues: pauseQueue(state.pausedQueues, state.queuedMessages, action.chat.id),
+      }
+    }
     case 'upsert': {
       // When an assistant message is in flight, the server's view does not
       // include the streaming content (or even the placeholder). A blind
@@ -459,6 +471,7 @@ export function reducer(state: State, action: Action): State {
       if (!chat) return state
       const initialStatus = action.mode === 'roundtable' ? 'running' : 'pending'
       const stubs = (action.bots ?? []).map(w => mkBotStub(action.teamTurnId, action.teamName, action.mode, w.messageId, w.step, w.bot, undefined, w.agent, w.model, initialStatus))
+      stubs.forEach(stub => { stub.taskId = action.taskId })
       const existing = new Set(chat.messages.map(m => m.id))
       // A normal send starts with a generic assistant placeholder. Once the
       // gateway identifies the turn as a team run, the bot messages replace
@@ -486,6 +499,7 @@ export function reducer(state: State, action: Action): State {
       const teamName = chat.messages.find(m => m.teamTurnId === action.teamTurnId)?.teamName ?? (chat.selection.type === 'team' ? chat.selection.name ?? '' : '')
       const mode = chat.messages.find(m => m.teamTurnId === action.teamTurnId)?.teamMode ?? 'auto'
       const stub = mkBotStub(action.teamTurnId, teamName, mode, action.messageId, action.step, action.bot, action.reason, action.agent, action.model)
+      stub.taskId = action.taskId
       const placeholderId = state.inFlight[action.chatId]?.assistantMessageId
       const messages = [...chat.messages.filter(m => m.id !== placeholderId), stub]
       return { ...state, chats: { ...state.chats, [chat.id]: { ...chat, messages, updatedAt: Date.now() } } }
@@ -788,6 +802,12 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   useEffect(() => {
     const off = apiService.chats.onEvent((ev: ChatStreamEvent) => {
+      if (ev.type === 'chat_redirect') {
+        delete pendingAssistantId.current[ev.chatId]
+        adopting.current.delete(ev.chatId)
+        dispatch({ type: 'chatRedirect', chat: ev.chat, target: ev.target })
+        return
+      }
       // Adopt turns started outside the renderer (quick-capture, paired
       // channels). Such chats have no local inFlight entry, so every live event
       // below would be dropped until 'done'. On the first live event, fetch the
@@ -866,10 +886,10 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           dispatch({ type: 'thinkingToken', chatId: ev.chatId, token: ev.token, step: ev.step, messageId: ev.messageId })
           break
         case 'team_start':
-          dispatch({ type: 'teamStart', chatId: ev.chatId, teamTurnId: ev.teamTurnId, teamName: ev.teamName, mode: ev.mode, bots: ev.bots })
+          dispatch({ type: 'teamStart', taskId: ev.taskId, chatId: ev.chatId, teamTurnId: ev.teamTurnId, teamName: ev.teamName, mode: ev.mode, bots: ev.bots })
           break
         case 'bot_start':
-          dispatch({ type: 'botStart', chatId: ev.chatId, teamTurnId: ev.teamTurnId, messageId: ev.messageId, step: ev.step, bot: ev.bot, agent: ev.agent, model: ev.model, reason: ev.reason })
+          dispatch({ type: 'botStart', taskId: ev.taskId, chatId: ev.chatId, teamTurnId: ev.teamTurnId, messageId: ev.messageId, step: ev.step, bot: ev.bot, agent: ev.agent, model: ev.model, reason: ev.reason })
           break
         case 'bot_end':
           dispatch({ type: 'botEnd', chatId: ev.chatId, messageId: ev.messageId, step: ev.step, status: ev.status, failureReason: ev.failureReason, nextUserAction: ev.nextUserAction })
@@ -1027,8 +1047,10 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     try {
       await apiService.chats.send(chatId, text, attachments, taskRoute)
     } catch (err) {
-      dispatch({ type: 'errorSend', chatId, assistantMessageId, error: `Error: ${(err as Error).message}` })
-      delete pendingAssistantId.current[chatId]
+      if (pendingAssistantId.current[chatId] === assistantMessageId) {
+        dispatch({ type: 'errorSend', chatId, assistantMessageId, error: `Error: ${(err as Error).message}` })
+        delete pendingAssistantId.current[chatId]
+      }
     }
   }, [])
 
