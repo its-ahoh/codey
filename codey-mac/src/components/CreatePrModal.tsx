@@ -28,7 +28,7 @@ export const CreatePrModal: React.FC<Props> = ({ defaultTitle, onCancel, onCreat
   }
 
   return (
-    <div style={styles.backdrop} onClick={onCancel}>
+    <div style={styles.backdrop} onClick={onCancel} aria-modal="true">
       <div style={styles.card} onClick={e => e.stopPropagation()}>
         <div style={styles.head}>Create Pull Request</div>
         {url ? (

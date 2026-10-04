@@ -16,7 +16,7 @@ export const AgentUpdateFailureModal: React.FC<{
   onClose: () => void
 }> = ({ agent, command, output, onClose }) => (
   <div style={styles.backdrop} onClick={onClose}>
-    <div style={styles.card} onClick={e => e.stopPropagation()} role="dialog" aria-label={`${agent} update failed`}>
+    <div style={styles.card} onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={`${agent} update failed`}>
       <div style={styles.head}>Couldn&rsquo;t update {agent}</div>
       <div style={styles.sub}>
         Codey ran <code style={styles.code}>{command}</code> in your login shell. It reported:

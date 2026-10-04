@@ -258,7 +258,7 @@ export default function GlobalTeamsSection() {
         )
       })}
       {creatingFor && (
-        <div onClick={() => !createBusy && setCreatingFor(null)}
+        <div onClick={() => !createBusy && setCreatingFor(null)} aria-modal="true"
           style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
           <div onClick={e => e.stopPropagation()}
             style={{ width: 520, maxWidth: '90vw', maxHeight: '85vh', overflowY: 'auto', padding: 20, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8 }}>

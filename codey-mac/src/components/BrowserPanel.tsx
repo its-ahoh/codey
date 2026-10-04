@@ -19,6 +19,7 @@ import { BrowserProfiles } from './BrowserProfiles'
 import { appendDraftText } from './chatDrafts'
 import { buildBrowserContextPrompt } from './browserContextPrompt'
 import { browserProfileAvatar } from './browserProfileAvatars'
+import { useAppModalOpen } from '../hooks/useAppModalOpen'
 
 interface Props {
   chatId?: string
@@ -102,7 +103,8 @@ export const BrowserPanel: React.FC<Props> = ({
   const [profilePickerOpen, setProfilePickerOpen] = useState(false)
   const [panelWidth, setPanelWidth] = useState(900)
 
-  const browserCovered = browserMenuOpen || activeSettingsSection !== null
+  const appModalOpen = useAppModalOpen(rootRef)
+  const browserCovered = browserMenuOpen || activeSettingsSection !== null || appModalOpen
   browserCoveredRef.current = browserCovered
   const browserPageVisible = !browserCovered && !!state.url
 

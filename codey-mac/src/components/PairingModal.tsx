@@ -33,7 +33,7 @@ export function PairingModal({ channel, onClose }: PairingModalProps) {
   }, [channel])
 
   return (
-    <div style={styles.backdrop} onClick={onClose}>
+    <div style={styles.backdrop} onClick={onClose} aria-modal="true">
       <div style={styles.modal} onClick={e => e.stopPropagation()}>
         <h3 style={styles.title}>Pair with {channel}</h3>
         {error && <p style={styles.error}>{error}</p>}
