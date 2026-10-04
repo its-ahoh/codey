@@ -52,7 +52,7 @@ export const AttachmentPreview: React.FC<{
 
   return (
     <div style={styles.backdrop} onClick={onClose}>
-      <div style={styles.card} onClick={e => e.stopPropagation()} role="dialog" aria-label={attachment.name}>
+      <div style={styles.card} onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={attachment.name}>
         <div style={styles.head}>
           <div style={styles.headText}>
             <span style={styles.name}>{attachment.name}</span>

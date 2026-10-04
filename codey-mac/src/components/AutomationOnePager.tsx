@@ -515,7 +515,7 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
 
       {chip?.expandable && checkOpen && (
         <div style={checkBackdrop} onClick={() => setCheckOpen(false)}>
-          <div style={checkPanel} role="dialog" aria-label="Dry run details" onClick={e => e.stopPropagation()}>
+          <div style={checkPanel} role="dialog" aria-modal="true" aria-label="Dry run details" onClick={e => e.stopPropagation()}>
             <div style={checkPanelHead}>
               <div style={{ color: C.fg, fontSize: 13, fontWeight: 750 }}>{chip.title}</div>
               <button style={iconButton} onClick={() => setCheckOpen(false)} aria-label="Close dry run details">
