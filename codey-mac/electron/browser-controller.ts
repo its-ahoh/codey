@@ -724,39 +724,68 @@ export class BrowserController {
   async fill(ref: string, value: string): Promise<BrowserActionResult> {
     this.assertRef(ref)
     const contents = this.requirePage()
-    // Select through the DOM, then type through Chromium's native key pipeline.
-    // Assigning textContent/value only changes the rendered DOM and leaves
-    // stateful editors (Draft.js, ProseMirror, X's composer, etc.) unaware of
-    // the new text; real keystrokes drive their editing model and also emit the
-    // keydown/keyup cadence that anti-bot heuristics look for.
+    // Keep selection and replacement in one renderer task. Native editing
+    // updates rich editors through input events without a foreground window,
+    // while per-character key events can lose the selection during a blur.
     await contents.executeJavaScript(`(() => {
       const el = document.querySelector('[data-codey-ref="${ref}"]')
       if (!el) throw new Error('Element ${ref} is no longer available; take a new snapshot')
-      if (el.disabled || el.getAttribute('aria-disabled') === 'true') throw new Error('Element ${ref} is disabled')
-      el.focus()
-      if (el.isContentEditable) {
+      if (el.disabled || el.readOnly || el.getAttribute('aria-disabled') === 'true' || el.getAttribute('aria-readonly') === 'true') {
+        throw new Error('Element ${ref} is disabled or read-only')
+      }
+      const field = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement
+      if (!field && !el.isContentEditable) throw new Error('Element ${ref} is not a text field')
+      const value = ${JSON.stringify(value)}
+      el.focus({ preventScroll: true })
+      if (document.activeElement !== el) throw new Error('Could not focus element ${ref}; take a new snapshot')
+      if (field) {
+        el.select()
+        if (el.selectionStart !== 0 || el.selectionEnd !== el.value.length) {
+          throw new Error('Could not select all text in ${ref}; field was not changed')
+        }
+      } else {
         const selection = window.getSelection()
         const range = document.createRange()
         range.selectNodeContents(el)
         selection?.removeAllRanges()
         selection?.addRange(range)
-      } else if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
-        el.select()
-      } else {
-        throw new Error('Element ${ref} is not a text field')
+        const selected = selection?.rangeCount === 1 ? selection.getRangeAt(0) : null
+        if (!selected || selected.startContainer !== el || selected.startOffset !== 0 ||
+            selected.endContainer !== el || selected.endOffset !== el.childNodes.length) {
+          throw new Error('Could not select all text in ${ref}; field was not changed')
+        }
       }
-      return true
+      // Chromium's editing command preserves the editor model and undo stack.
+      // Do not fall back to appending keystrokes if the editor rejects it.
+      if (!document.execCommand(value ? 'insertText' : 'delete', false, value)) {
+        throw new Error('Editor rejected replacement in ${ref}; inspect the field before retrying')
+      }
     })()`, true)
-    if (value) {
-      // Typing over the existing selection replaces it, just like a person
-      // does after the field is selected above.
-      await this.humanType(contents, value)
-    } else {
-      // Nothing to type, so clear the active selection through the same native
-      // path to preserve the expected "fill with empty text" behavior.
-      contents.sendInputEvent({ type: 'keyDown', keyCode: 'Backspace' })
-      contents.sendInputEvent({ type: 'keyUp', keyCode: 'Backspace' })
-    }
+    const matches = await contents.executeJavaScript(`(() => {
+      const el = document.querySelector('[data-codey-ref="${ref}"]')
+      if (!el) return false
+      const field = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement
+      // Read editor text rather than innerText: CSS can collapse spaces, and
+      // Chromium counts the BR caret placeholder on an empty line twice.
+      const readText = node => {
+        if (node.nodeType === Node.TEXT_NODE) return node.textContent || ''
+        if (node.nodeName === 'BR') return '\\n'
+        const children = Array.from(node.childNodes)
+        if (children.length === 1 && children[0].nodeName === 'BR') return ''
+        const block = child => child.nodeType === Node.ELEMENT_NODE &&
+          ['block', 'list-item', 'flex', 'grid', 'table-row'].includes(getComputedStyle(child).display)
+        let text = ''
+        children.forEach((child, index) => {
+          const previous = children[index - 1]
+          if (previous && previous.nodeName !== 'BR' && (block(previous) || block(child))) text += '\\n'
+          text += readText(child)
+        })
+        return text
+      }
+      const actual = field ? el.value : readText(el)
+      return actual === ${JSON.stringify(value)}
+    })()`, true)
+    if (!matches) throw new Error(`Text replacement could not be verified in ${ref}; take a new snapshot before retrying`)
     return this.actionResult(`Filled ${ref}`)
   }
 
@@ -1624,27 +1653,6 @@ export class BrowserController {
       points.push({ x: Math.round(x + jitterX), y: Math.round(y + jitterY) })
     }
     return points
-  }
-
-  /**
-   * Type a string one character at a time as full keydown/char/keyup
-   * keystrokes with a jittered inter-key delay. `Array.from` keeps multi-code-
-   * unit characters (emoji, combined glyphs) intact, and newlines are sent as
-   * Return so multi-line fields receive the break a real keyboard would insert.
-   */
-  private async humanType(contents: WebContents, value: string): Promise<void> {
-    for (const char of Array.from(value)) {
-      if (char === '\n' || char === '\r') {
-        contents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' })
-        contents.sendInputEvent({ type: 'char', keyCode: '\r' })
-        contents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' })
-      } else {
-        contents.sendInputEvent({ type: 'keyDown', keyCode: char })
-        contents.sendInputEvent({ type: 'char', keyCode: char })
-        contents.sendInputEvent({ type: 'keyUp', keyCode: char })
-      }
-      await this.sleep(this.humanDelay(40, 90))
-    }
   }
 
   private humanDelay(base: number, spread: number): number {

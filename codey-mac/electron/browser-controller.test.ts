@@ -196,24 +196,32 @@ describe('BrowserController agent controls', () => {
     expect(script).not.toContain('sessionStorage')
   })
 
-  it('types into the focused field character by character with native keystrokes', async () => {
+  it('replaces text in one renderer task and verifies it without window-level input', async () => {
     const { controller, contents } = setup(true)
     await controller.fill('e4', `Jack's "post"`)
+    expect(contents.executeJavaScript).toHaveBeenCalledTimes(2)
     const script = contents.executeJavaScript.mock.calls[0][0]
     expect(script).toContain('range.selectNodeContents(el)')
     expect(script).toContain('el.select()')
-    // The text is never embedded in the executed page script.
-    expect(script).not.toContain(`Jack's`)
+    expect(script).toContain("document.execCommand(value ? 'insertText' : 'delete'")
+    expect(contents.sendInputEvent).not.toHaveBeenCalled()
     expect(contents.insertText).not.toHaveBeenCalled()
-    // Each character arrives as a full keydown/char/keyup keystroke.
-    expect(contents.sendInputEvent.mock.calls.slice(0, 3).map(call => call[0].type)).toEqual([
-      'keyDown', 'char', 'keyUp',
-    ])
-    const typed = contents.sendInputEvent.mock.calls
-      .filter(call => call[0].type === 'char')
-      .map(call => call[0].keyCode)
-      .join('')
-    expect(typed).toBe(`Jack's "post"`)
+  })
+
+  it('reports a mismatch without retrying or appending more text', async () => {
+    const { controller, contents } = setup(false)
+    await expect(controller.fill('e4', 'replacement')).rejects.toThrow('could not be verified in e4')
+    expect(contents.executeJavaScript).toHaveBeenCalledTimes(2)
+    expect(contents.sendInputEvent).not.toHaveBeenCalled()
+    expect(contents.insertText).not.toHaveBeenCalled()
+  })
+
+  it('stops when selection or replacement fails', async () => {
+    const { controller, contents } = setup()
+    contents.executeJavaScript.mockRejectedValueOnce(new Error('Could not select all text'))
+    await expect(controller.fill('e4', 'replacement')).rejects.toThrow('Could not select all text')
+    expect(contents.executeJavaScript).toHaveBeenCalledTimes(1)
+    expect(contents.sendInputEvent).not.toHaveBeenCalled()
   })
 
   it('sends a character event for the space key', async () => {
@@ -230,10 +238,9 @@ describe('BrowserController agent controls', () => {
     const { controller, contents } = setup(true)
     await controller.fill('e4', '')
     expect(contents.insertText).not.toHaveBeenCalled()
-    expect(contents.sendInputEvent.mock.calls.map(call => call[0])).toEqual([
-      { type: 'keyDown', keyCode: 'Backspace' },
-      { type: 'keyUp', keyCode: 'Backspace' },
-    ])
+    expect(contents.sendInputEvent).not.toHaveBeenCalled()
+    expect(contents.executeJavaScript).toHaveBeenCalledTimes(2)
+    expect(contents.executeJavaScript.mock.calls[0][0]).toContain('const value = ""')
   })
 
   it('supports coordinate clicks and drag gestures for maps and canvases', async () => {

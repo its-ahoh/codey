@@ -46,14 +46,17 @@ describe('BrowserControlPermissionGate', () => {
   })
 
   it('lets a write grant through repeat writes but still stops a full-access command', async () => {
-    const gate = new BrowserControlPermissionGate(tempFile('tier'), vi.fn())
+    const onChange = vi.fn()
+    const gate = new BrowserControlPermissionGate(tempFile('tier'), onChange)
     const first = gate.request({ command: 'click', url: 'https://example.com', surface: 'browser', level: 'write' })
     gate.approve('write')
     await expect(first).resolves.toBe(true)
 
-    // A second write needs no prompt at all.
+    // A second write must not emit a UI notification that raises the window.
+    onChange.mockClear()
     await expect(gate.request({ command: 'fill', url: 'https://example.com', surface: 'browser', level: 'write' })).resolves.toBe(true)
     expect(gate.getState().pending).toBeNull()
+    expect(onChange).not.toHaveBeenCalled()
 
     // Deleting is past what they granted, so it asks again.
     const destructive = gate.request({ command: 'delete-profile', url: 'https://example.com', surface: 'browser', level: 'full' })

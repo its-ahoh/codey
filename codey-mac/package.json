@@ -27,7 +27,8 @@
     "dist:mac": "node build/dist-mac.js",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "check:browser-fill": "electron scripts/check-browser-fill.cjs"
   },
   "dependencies": {
     "@codey/core": "*",
