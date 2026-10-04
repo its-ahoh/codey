@@ -2910,16 +2910,18 @@ app.whenReady().then(async () => {
   // exposed to remote page content or the renderer.
   browserControlPermission = new BrowserControlPermissionGate(
     join(app.getPath('userData'), 'browser-control-permission.json'),
-    state => sendToRenderer('browser:controlPermission', state),
+    state => {
+      sendToRenderer('browser:controlPermission', state)
+      if (state.pending) {
+        mainWindow?.show()
+        sendToRenderer('browser:agentOpen', { url: state.pending.url })
+      }
+    },
   )
   browserAgentBridge = new BrowserAgentBridge(browserController, url => {
-    mainWindow?.show()
+    // Update the browser panel without activating the app or changing Spaces.
     sendToRenderer('browser:agentOpen', { url })
-  }, request => {
-    mainWindow?.show()
-    sendToRenderer('browser:agentOpen', { url: request.url })
-    return browserControlPermission!.request(request)
-  }, handleBrowserLoginWait, 2000, chromeCompanion ?? undefined)
+  }, request => browserControlPermission!.request(request), handleBrowserLoginWait, 2000, chromeCompanion ?? undefined)
   try {
     const bridge = await browserAgentBridge.start()
     process.env.CODEY_BROWSER_SOCKET = bridge.socketPath
