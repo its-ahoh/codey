@@ -14,13 +14,18 @@ permissions:
 
 jobs:
   build-test:
-    name: build & test (${{ matrix.os }})
+    # Keep check names stable: the main ruleset requires build & test (ubuntu).
+    name: build & test (${{ matrix.check-name }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            check-name: ubuntu
+          - os: macos-latest
+            check-name: macos-latest
     steps:
       - uses: actions/checkout@v4
 
