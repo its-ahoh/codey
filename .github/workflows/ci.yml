@@ -9,10 +9,18 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   build-test:
-    name: build & test (ubuntu)
-    runs-on: ubuntu-latest
+    name: build & test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
 
@@ -24,6 +32,7 @@ jobs:
       # Headers for better-sqlite3 in case its prebuilt binary doesn't match
       # the runner's Node ABI and it has to compile from source.
       - name: Install native build deps
+        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
 
       - run: npm ci
@@ -56,3 +65,12 @@ jobs:
 
       - name: Test codey-mac
         run: npm test -w codey-mac
+
+      # Compile renderer, main process, and preload without signing or publishing.
+      - name: Bundle Electron app
+        working-directory: codey-mac
+        run: npx --no-install vite build
+
+      - name: Build macOS voice helper
+        if: runner.os == 'macOS'
+        run: npm run build:helper -w codey-mac
