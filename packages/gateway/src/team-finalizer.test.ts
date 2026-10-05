@@ -57,6 +57,15 @@ describe('Aide terminal message', () => {
   it('times out a stalled Aide and returns an execution record', async () => {
     const message = await composeTeamFinal({ ...input(), run: () => new Promise(() => {}), timeoutMs: 5 });
     expect(message!.teamFinal!.source).toBe('fallback');
+    expect(message!.content).toContain('Aide summary timed out.');
+  });
+  it.each([
+    [undefined, 'Aide is not configured.'],
+    [async (): Promise<string> => '', 'Aide returned no summary text.'],
+    [async (): Promise<string> => { throw new Error('Unavailable'); }, 'Aide summary request failed.'],
+  ] as const)('explains why summary generation fell back', async (run, reason) => {
+    const message = await composeTeamFinal({ ...input(), run });
+    expect(message!.content).toContain(reason);
   });
   it('persists before emitting, reloads identity, and retries without duplicate records or model calls', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'team-final-'));

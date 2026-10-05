@@ -1,3 +1,4 @@
+import { botOutputStream } from './bot-output';
 import { teamInteractionResponse } from './team-interaction';
 import { inheritWorktreeMemory } from './worktree-memory';
 import { CoMemoClient } from '@codey/core';
@@ -406,6 +407,7 @@ export class Codey {
     onPermissionDenials?: (denials: NonNullable<AgentResponse['permissionDenials']>) => void;
     skipPermissions?: boolean;
   }): Promise<{ response: AgentResponse; usedResume: boolean }> {
+    const outputStream = botOutputStream(opts.onStream);
     const finishResponse = (response: AgentResponse): AgentResponse => {
       const denials = response.permissionDenials?.filter(d => d.toolName !== 'AskUserQuestion');
       if (denials?.length) {
@@ -414,7 +416,9 @@ export class Codey {
           else if (opts.browserChatId) this.chatEventListener?.({ type: 'permission_denials', chatId: opts.browserChatId, denials });
         } catch { /* a disconnected UI must not prevent persisting the pause */ }
       }
-      return teamInteractionResponse(response);
+      const result = teamInteractionResponse(response);
+      outputStream.complete(result.output);
+      return result;
     };
     const memoryEpoch = this.memoryEpoch ?? 0;
     const workingDir = opts.workingDir ?? this.workingDir;
@@ -434,7 +438,7 @@ export class Codey {
       context: { workingDir: opts.workingDir ?? this.workingDir },
       browserTools: true,
       browserChatId: opts.browserChatId,
-      onStream: opts.onStream,
+      onStream: outputStream.onStream,
       onThinking: opts.onThinking,
       onStatus: opts.onStatus,
       signal: opts.signal,
@@ -5216,6 +5220,7 @@ Example: /model gpt-4.1 write a Python script`;
         topic: prompt,
         settings: team.roundtable,
         botRunner: async (req, botName) => {
+          const outputStream = botOutputStream(text => botMsgs.onStream(text, botName));
           const botAgent = chatAgent ?? this.getDefaultAgent() as CodingAgent;
           const response = await this.runWithFallback(botAgent, {
           prompt: await this.wrapPromptWithMemory(req.prompt, prompt, botName, !!chat.botChat, chat.workspaceName, this.resolveChatWorkingDir(chat)),
@@ -5227,7 +5232,7 @@ Example: /model gpt-4.1 write a Python script`;
           context: { workingDir },
           browserTools: true,
           browserChatId: chatId,
-            onStream: (text: string) => botMsgs.onStream(text, botName),
+            onStream: outputStream.onStream,
           onThinking: (text: string) => botMsgs.onThinking(text, botStep.get(botName) ?? 0, botName),
           onStatus: (update: any) => {
             // Route per-bot tool events through botMsgs for parallel mode,
@@ -5245,6 +5250,7 @@ Example: /model gpt-4.1 write a Python script`;
           resumeSessionId: req.resumeSessionId,
           signal: req.signal,
         });
+          outputStream.complete(response.output);
           return response;
         },
         advisorRunner: async req => {
