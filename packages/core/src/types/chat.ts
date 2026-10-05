@@ -80,6 +80,12 @@ export interface ConversationTask {
   compaction?: ChatCompaction;
 }
 
+/** Stable IDs shared by an optimistic client turn and its persisted transcript. */
+export interface ChatTurnMessageIds {
+  userMessageId: string;
+  assistantMessageId: string;
+}
+
 /** undefined selects automatically; null explicitly selects general conversation. */
 export interface ChatTaskRoute {
   /** Answer one live parallel interaction without queueing another team turn. */

@@ -525,7 +525,7 @@ declare global {
         inviteBots: (chatId: string, title: string, members: string[], context: string) => Promise<IpcResult<Chat>>
         createBotGroup: (title: string, members: string[]) => Promise<IpcResult<Chat>>
         createTask: (chatId: string, title: string) => Promise<IpcResult<Chat>>
-        send: (payload: { chatId: string; text: string; taskRoute?: import('@codey/core').ChatTaskRoute; attachments?: Array<{ id: string; name: string; path: string; mimeType: string; size: number }> }) => Promise<IpcResult<{ response: string; chatId: string; tokens?: number; durationSec?: number }>>
+        send: (payload: { chatId: string; text: string; messageIds?: import('@codey/core').ChatTurnMessageIds; taskRoute?: import('@codey/core').ChatTaskRoute; attachments?: Array<{ id: string; name: string; path: string; mimeType: string; size: number }> }) => Promise<IpcResult<{ response: string; chatId: string; tokens?: number; durationSec?: number }>>
         stop: (chatId: string) => Promise<IpcResult<boolean>>
         onResume: (handler: () => void) => () => void
         onEvent: (handler: (ev: ChatStreamEvent) => void) => () => void

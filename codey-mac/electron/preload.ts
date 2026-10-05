@@ -218,7 +218,7 @@ contextBridge.exposeInMainWorld('codey', {
     inviteBots: (chatId: string, title: string, members: string[], context: string) => ipcRenderer.invoke('chats:invite-bots', chatId, title, members, context),
     createBotGroup: (title: string, members: string[]) => ipcRenderer.invoke('chats:create-bot-group', title, members),
     createTask: (chatId: string, title: string) => ipcRenderer.invoke('chats:create-task', chatId, title),
-    send: (payload: { chatId: string; text: string; attachments?: any[]; taskRoute?: import('@codey/core').ChatTaskRoute }) =>
+    send: (payload: { chatId: string; text: string; messageIds?: import('@codey/core').ChatTurnMessageIds; attachments?: any[]; taskRoute?: import('@codey/core').ChatTaskRoute }) =>
       ipcRenderer.invoke('chats:send', payload),
     stop: (chatId: string) => ipcRenderer.invoke('chats:stop', chatId),
     onResume: (handler: () => void) => {

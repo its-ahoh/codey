@@ -210,20 +210,16 @@ export function reducer(state: State, action: Action): State {
       }
     }
     case 'upsert': {
-      // When an assistant message is in flight, the server's view does not
-      // include the streaming content (or even the placeholder). A blind
-      // overwrite would erase the in-progress message until 'done' fires —
-      // making the bubble appear to vanish whenever any field on the chat
-      // is touched mid-stream (e.g. toggling the context panel).
-      // Preserve the in-flight assistant message in that case.
+      // A refresh may arrive while a queued prompt is starting, before the
+      // gateway has persisted it. Shared IDs let us retain local-only rows
+      // without replaying earlier prompts or completed replies.
       const fl = state.inFlight[action.chat.id]
       const existing = state.chats[action.chat.id]
       let next = action.chat
       if (fl && existing) {
-        const inFlightMsg = existing.messages.find(m => m.id === fl.assistantMessageId)
-        if (inFlightMsg && !next.messages.some(m => m.id === fl.assistantMessageId)) {
-          next = { ...next, messages: [...next.messages, inFlightMsg] }
-        }
+        const serverIds = new Set(next.messages.map(m => m.id))
+        const localOnly = existing.messages.filter(m => !serverIds.has(m.id))
+        if (localOnly.length) next = { ...next, messages: [...next.messages, ...localOnly] }
       }
       const chats = { ...state.chats, [action.chat.id]: next }
       const order = state.order.includes(action.chat.id) ? state.order : [action.chat.id, ...state.order]
@@ -1056,7 +1052,7 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     pendingAssistantId.current[chatId] = assistantMessageId
     dispatch({ type: 'startSend', chatId, userMessage, assistantMessageId, agent: identity?.agent, model: identity?.model })
     try {
-      await apiService.chats.send(chatId, text, attachments, taskRoute)
+      await apiService.chats.send(chatId, text, attachments, taskRoute, { userMessageId: userMessage.id, assistantMessageId })
     } catch (err) {
       if (pendingAssistantId.current[chatId] === assistantMessageId) {
         dispatch({ type: 'errorSend', chatId, assistantMessageId, error: `Error: ${(err as Error).message}` })
