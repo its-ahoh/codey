@@ -9,9 +9,10 @@ import { BotAvatar } from './BotAvatar'
 
 export function BotMembers({ chat }: { chat: Chat }) {
   const [open, setOpen] = useState(false)
+  const memberCount = (chat.botChat?.pendingMembers ?? chat.botChat?.members ?? []).length
   return <>
     <button type="button" onClick={() => setOpen(true)} style={{ background: 'transparent', border: `1px solid ${C.border}`, borderRadius: 7, color: C.fg2, padding: '5px 9px', cursor: 'pointer', fontSize: 11 }}>
-      {chat.botChat?.kind === 'group' ? `${(chat.botChat.pendingMembers ?? chat.botChat.members).length} Bots · Members` : '+ Invite Bot'}
+      {chat.botChat?.kind === 'group' ? `${memberCount} ${memberCount === 1 ? 'member' : 'members'}` : '+ Invite Bot'}
     </button>
     {open && <MembersDialog chat={chat} onClose={() => setOpen(false)} />}
   </>
