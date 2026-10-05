@@ -7,20 +7,20 @@ import { useChats } from '../hooks/useChats'
 import { C } from '../theme'
 import { BotAvatar } from './BotAvatar'
 
-export function BotMembers({ chat, running }: { chat: Chat; running: boolean }) {
+export function BotMembers({ chat }: { chat: Chat }) {
   const [open, setOpen] = useState(false)
   return <>
     <button type="button" onClick={() => setOpen(true)} style={{ background: 'transparent', border: `1px solid ${C.border}`, borderRadius: 7, color: C.fg2, padding: '5px 9px', cursor: 'pointer', fontSize: 11 }}>
-      {chat.botChat?.kind === 'group' ? `${chat.botChat.members.length} Bots · Members` : '+ Invite Bot'}
+      {chat.botChat?.kind === 'group' ? `${(chat.botChat.pendingMembers ?? chat.botChat.members).length} Bots · Members` : '+ Invite Bot'}
     </button>
-    {open && <MembersDialog chat={chat} locked={running || !!chat.pendingTeam} onClose={() => setOpen(false)} />}
+    {open && <MembersDialog chat={chat} onClose={() => setOpen(false)} />}
   </>
 }
 
-function MembersDialog({ chat, locked, onClose }: { chat: Chat; locked: boolean; onClose: () => void }) {
+function MembersDialog({ chat, onClose }: { chat: Chat; onClose: () => void }) {
   const { openChatById } = useChats()
   const direct = chat.botChat!.kind === 'direct'
-  const [members, setMembers] = useState([...chat.botChat!.members])
+  const [members, setMembers] = useState([...(chat.botChat!.pendingMembers ?? chat.botChat!.members)])
   const [bots, setBots] = useState<BotDto[]>([])
   const [title, setTitle] = useState(`${chat.title} group`)
   const [context, setContext] = useState('')
@@ -50,13 +50,13 @@ function MembersDialog({ chat, locked, onClose }: { chat: Chat; locked: boolean;
   const field: React.CSSProperties = { width: '100%', minWidth: 0, boxSizing: 'border-box', border: `1px solid ${C.border}`, borderRadius: 8, background: C.bg, color: C.fg, padding: 9, font: 'inherit' }
   const button: React.CSSProperties = { border: `1px solid ${C.border}`, borderRadius: 8, background: C.bg, color: C.fg, padding: '8px 12px', cursor: 'pointer' }
   const botsByName = new Map(bots.map(bot => [bot.name.toLowerCase(), bot]))
-  const names = [...new Set([...bots.map(bot => bot.name), ...chat.botChat!.members])]
+  const names = [...new Set([...bots.map(bot => bot.name), ...(chat.botChat!.pendingMembers ?? chat.botChat!.members)])]
   const query = search.trim().toLowerCase()
   const visibleNames = names.filter(name => `${name} ${botsByName.get(name.toLowerCase())?.config.displayName ?? ''} ${botsByName.get(name.toLowerCase())?.personality.role ?? ''}`.toLowerCase().includes(query))
   const labelStyle: React.CSSProperties = { display: 'grid', gap: 7, fontSize: 12, fontWeight: 600 }
   const errorLine = error.trim().split(/\r?\n/)[0] ?? ''
   const errorSummary = errorLine.length > 140 ? `${errorLine.slice(0, 137)}…` : errorLine
-  const canSave = !busy && !loading && members.length >= 2 && (direct ? !!title.trim() : !locked)
+  const canSave = !busy && !loading && members.length >= 2 && (!direct || !!title.trim())
   return createPortal(<div onClick={e => { if (e.target === e.currentTarget && !busy) onClose() }} style={{ position: 'fixed', inset: 0, zIndex: 10000, background: '#0008', display: 'grid', placeItems: 'center' }}>
     <div ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-label={direct ? 'Invite Bots' : 'Group members'} onKeyDown={e => {
       if (e.key === 'Escape' && !busy) onClose()
@@ -73,7 +73,7 @@ function MembersDialog({ chat, locked, onClose }: { chat: Chat; locked: boolean;
           <TeamAvatar name={direct ? title : chat.title} members={members} bots={bots} size={34} />
           <strong style={{ fontSize: 17 }}>{direct ? 'Create a group' : 'Group members'}</strong>
         </div>
-        <div style={{ color: C.fg2, lineHeight: 1.5, fontSize: 12 }}>{direct ? 'Only the context you add is shared. Your private chat stays private.' : 'New members can read the group’s history.'}</div>
+        <div style={{ color: C.fg2, lineHeight: 1.5, fontSize: 12 }}>{direct ? 'Only the context you add is shared. Your private chat stays private.' : 'Changes apply to the next task. New members can read the group’s history.'}</div>
       </div>
       {error && <div role="alert" style={{ color: C.red, fontSize: 12, padding: '10px 22px', flexShrink: 0, overflowWrap: 'anywhere' }}>
         {error.trim() === errorSummary ? errorSummary : <details>
@@ -100,7 +100,7 @@ function MembersDialog({ chat, locked, onClose }: { chat: Chat; locked: boolean;
               const bot = botsByName.get(name.toLowerCase())
               const selected = members.includes(name)
               const original = direct && chat.botChat!.members.includes(name)
-              const disabled = busy || (!direct && locked) || original || (!bot && !selected)
+              const disabled = busy || original || (!bot && !selected)
               return <label key={name} title={`${name}${original ? ' · Included' : !bot ? ' · Profile unavailable' : ''}`} style={{ display: 'flex', minWidth: 0, gap: 7, alignItems: 'center', padding: '7px 10px', border: `1px solid ${selected ? C.accent : C.border}`, borderRadius: 11, background: selected ? C.accentDim : C.surface2, cursor: disabled ? 'default' : 'pointer', opacity: !bot ? 0.65 : 1 }}>
                 <BotAvatar name={name} config={bot?.config.avatar} size={30} />
                 <span style={{ flex: 1, minWidth: 0 }}>
@@ -114,8 +114,6 @@ function MembersDialog({ chat, locked, onClose }: { chat: Chat; locked: boolean;
           </div>
         </section>
         {direct && <label style={labelStyle}>Context to share (optional)<textarea rows={2} maxLength={16000} value={context} disabled={busy} onChange={e => setContext(e.target.value)} placeholder="What should this group know?" style={{ ...field, resize: 'vertical', fontWeight: 400 }} /></label>}
-        {!direct && locked && <div style={{ color: C.fg2, fontSize: 12 }}>Finish the current or paused group task before changing members.</div>}
-        {chat.botChat?.sourceChatId && <button type="button" disabled={busy} onClick={() => { void openChatById(chat.botChat!.sourceChatId!).then(onClose).catch(err => setError(err.message)) }} style={button}>Open original private chat</button>}
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'flex-end', padding: '14px 22px', borderTop: `1px solid ${C.border}`, background: C.surface2, flexShrink: 0 }}>
         <button type="button" disabled={busy} onClick={onClose} style={button}>Cancel</button>

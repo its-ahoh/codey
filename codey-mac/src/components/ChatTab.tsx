@@ -1856,7 +1856,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
             ? <BotAvatar name={chat.botChat.members[0]} config={bots.find(bot => bot.name === chat.botChat!.members[0])?.config.avatar} state={flight?.queuedPosition ? 'waiting' : isSending ? 'working' : 'idle'} size={30} />
             : chat.botChat?.kind === 'group' ? <TeamAvatar name={chat.title} members={chat.botChat.members} bots={bots} size={30} state={flight?.queuedPosition ? 'waiting' : isSending ? 'working' : 'idle'} /> : <UIIcon name="workspace" size={13} />}{chat.botChat ? (chat.botChat.kind === 'direct' && chat.title === chat.botChat.members[0] ? bots.find(bot => bot.name === chat.botChat!.members[0])?.config.displayName || chat.title : chat.title) : chat.workspaceName}</span>
           {chat.botChat?.kind === 'direct' && isSending && <span role="status" style={{ fontSize: 11, color: C.fg3 }}>{flight?.queuedPosition ? 'Queued' : 'Working…'}</span>}
-          {chat.botChat && <BotMembers key={chat.id} chat={chat} running={isSending} />}
+          {chat.botChat && <BotMembers key={chat.id} chat={chat} />}
         </div>
         <ChatHeaderActions compact={containerWidth > 0 && containerWidth < 760} onDismiss={() => { setEditorMenuOpen(false); setLinkMenuOpen(false); setRunSettingsOpen(false) }}>
         {!chat.botChat && <div data-action-label="Checkout"><BranchPicker

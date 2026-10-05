@@ -313,12 +313,31 @@ export class ChatManager {
     return chat;
   }
 
-  updateBotGroup(chatId: string, members: string[]): Chat {
+  updateBotGroup(chatId: string, members: string[], active = false): Chat {
     const chat = this.requireChat(chatId);
     if (chat.botChat?.kind !== 'group') throw new Error('This conversation is not a Bot group.');
-    if (chat.pendingTeam) throw new Error('Finish the paused group task before changing members.');
+    if (active || chat.pendingTeam) {
+      // Persist the next roster without invalidating the running task's sessions.
+      const unchanged = chat.botChat.members.length === members.length
+        && chat.botChat.members.every((name, i) => name === members[i]);
+      if (unchanged) delete chat.botChat.pendingMembers;
+      else chat.botChat.pendingMembers = [...members];
+      chat.updatedAt = Date.now();
+      this.persist(chat);
+      return chat;
+    }
+    return this.replaceBotGroupMembers(chatId, members);
+  }
+
+  private replaceBotGroupMembers(chatId: string, members: string[]): Chat {
+    const chat = this.requireChat(chatId);
+    if (chat.botChat?.kind !== 'group') throw new Error('This conversation is not a Bot group.');
+    delete chat.botChat.pendingMembers;
     const previous = chat.botChat.members;
-    if (previous.length === members.length && previous.every((name, i) => name === members[i])) return chat;
+    if (previous.length === members.length && previous.every((name, i) => name === members[i])) {
+      this.persist(chat);
+      return chat;
+    }
     chat.botChat.members = members;
     chat.botChat.membershipRevision = (chat.botChat.membershipRevision ?? 0) + 1;
     delete chat.sessionAnchor;
@@ -330,10 +349,18 @@ export class ChatManager {
     return chat;
   }
 
+  applyPendingBotGroupMembers(chatId: string): Chat {
+    const chat = this.requireChat(chatId);
+    const members = chat.botChat?.pendingMembers;
+    if (!members) return chat;
+    return this.replaceBotGroupMembers(chatId, members);
+  }
+
   renameBot(oldName: string, newName: string): void {
     this.ensureLoaded();
     for (const chat of this.cache.values()) {
-      if (!chat.botChat?.members.some(n => n.toLowerCase() === oldName.toLowerCase())) continue;
+      if (!chat.botChat || ![...chat.botChat.members, ...(chat.botChat.pendingMembers ?? [])].some(n => n.toLowerCase() === oldName.toLowerCase())) continue;
+      chat.botChat.pendingMembers = chat.botChat.pendingMembers?.map(n => n.toLowerCase() === oldName.toLowerCase() ? newName : n);
       chat.botChat.members = chat.botChat.members.map(n => n.toLowerCase() === oldName.toLowerCase() ? newName : n);
       if (chat.botChat.kind === 'direct') {
         chat.selection = { type: 'bot', name: newName };

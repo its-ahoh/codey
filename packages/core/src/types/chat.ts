@@ -207,7 +207,7 @@ export interface DiscussionMeta {
 
 export interface Chat {
   /** Global Bot conversations are independent of project workspace navigation. */
-  botChat?: { kind: 'direct' | 'group'; members: string[]; homeDir: string; sourceChatId?: string; handoffContext?: string; membershipRevision?: number };
+  botChat?: { kind: 'direct' | 'group'; members: string[]; homeDir: string; sourceChatId?: string; handoffContext?: string; membershipRevision?: number; pendingMembers?: string[] };
   tasks?: ConversationTask[];
   id: string;
   title: string;
