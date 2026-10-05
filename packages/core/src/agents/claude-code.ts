@@ -588,7 +588,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
         }
 
         if (userQuestion) {
-          const resp = this.createResponse(cls.output || userQuestion.question, true, tokens, finalDuration, statusUpdates, states);
+          const resp = this.createResponse(cls.output || userQuestion.question, true, tokens, finalDuration, statusUpdates, states, permissionDenials);
           resp.userQuestion = userQuestion;
           safeResolve(resp);
         } else if (cls.success) {
@@ -600,7 +600,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
           this.sessionId = undefined;
           const message = cls.error ?? (code !== 0 ? `Claude Code exited with code ${code}` : 'Claude Code returned empty response');
           this.debug(`[claude-code] Error: ${message}`);
-          safeResolve(this.createResponse(message, false, undefined, finalDuration, statusUpdates, states));
+          safeResolve(this.createResponse(message, false, undefined, finalDuration, statusUpdates, states, permissionDenials));
         }
       });
 

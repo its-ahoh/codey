@@ -91,6 +91,7 @@ type Action =
   | { type: 'dequeueMessage'; chatId: string }
   | { type: 'removeQueuedMessage'; chatId: string; id: string }
   | { type: 'resumeQueue'; chatId: string }
+  | { type: 'botInteraction'; chatId: string; message: ChatMessage }
   | { type: 'chatRedirect'; chat: Chat; target: Chat }
   | { type: 'teamStart'; taskId?: string; chatId: string; teamTurnId: string; teamName: string; mode: 'sequential' | 'graph' | 'auto' | 'roundtable'; bots?: Array<{ messageId: string; step: number; bot: string; agent?: ChatMessage['agent']; model?: string }> }
   | { type: 'botStart'; taskId?: string; chatId: string; teamTurnId: string; messageId: string; step: number; bot: string; agent?: ChatMessage['agent']; model?: string; reason?: string }
@@ -104,7 +105,7 @@ function reorder(order: string[], chatId: string): string[] {
 
 const EXTERNAL_TURN_EVENTS = new Set([
   'tool_start', 'tool_end', 'info', 'stream', 'thinking',
-  'team_start', 'bot_start', 'bot_end', 'blackboard_update', 'team_end',
+  'bot_interaction', 'team_start', 'bot_start', 'bot_end', 'blackboard_update', 'team_end',
 ])
 
 /**
@@ -342,6 +343,13 @@ export function reducer(state: State, action: Action): State {
       const queuedMessages = { ...state.queuedMessages }
       delete queuedMessages[action.chatId]
       return { ...state, chats, order, selectedChatId, inFlight, queuedMessages, pausedQueues: unpauseQueue(state.pausedQueues, action.chatId) }
+    }
+    case 'botInteraction': {
+      const chat = state.chats[action.chatId]
+      if (!chat) return state
+      const exists = chat.messages.some(m => m.id === action.message.id)
+      const messages = exists ? chat.messages.map(m => m.id === action.message.id ? action.message : m) : [...chat.messages, action.message]
+      return { ...state, chats: { ...state.chats, [action.chatId]: { ...chat, messages } } }
     }
     case 'select': {
       const unreadChats = { ...state.unreadChats }
@@ -887,6 +895,9 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           break
         case 'team_start':
           dispatch({ type: 'teamStart', taskId: ev.taskId, chatId: ev.chatId, teamTurnId: ev.teamTurnId, teamName: ev.teamName, mode: ev.mode, bots: ev.bots })
+          break
+        case 'bot_interaction':
+          dispatch({ type: 'botInteraction', chatId: ev.chatId, message: ev.message })
           break
         case 'bot_start':
           dispatch({ type: 'botStart', taskId: ev.taskId, chatId: ev.chatId, teamTurnId: ev.teamTurnId, messageId: ev.messageId, step: ev.step, bot: ev.bot, agent: ev.agent, model: ev.model, reason: ev.reason })

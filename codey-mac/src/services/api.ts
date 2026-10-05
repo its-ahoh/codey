@@ -6,6 +6,7 @@ import type { TeamConfigRaw } from '../../../packages/core/src/workspace'
 
 // Inline ChatStreamEvent to avoid cross-package import
 export type ChatStreamEvent =
+  | { type: 'bot_interaction'; chatId: string; message: ChatMessage }
   | { type: 'chat_redirect'; chatId: string; chat: Chat; target: Chat }
   | { type: 'team_final'; chatId: string; message: ChatMessage }
   | { type: 'team_termination'; chatId: string; reason: string }
@@ -18,7 +19,7 @@ export type ChatStreamEvent =
   | { type: 'thinking'; chatId: string; token: string; step?: number; messageId?: string }
   | { type: 'team_start'; taskId?: string; chatId: string; teamTurnId: string; teamName: string; mode: 'sequential' | 'graph' | 'auto' | 'roundtable'; bots?: Array<{ messageId: string; step: number; bot: string; agent?: 'claude-code' | 'opencode' | 'codex' | 'pi'; model?: string }> }
   | { type: 'bot_start'; taskId?: string; chatId: string; teamTurnId: string; messageId: string; step: number; bot: string; agent?: 'claude-code' | 'opencode' | 'codex' | 'pi'; model?: string; reason?: string }
-  | { type: 'bot_end'; chatId: string; messageId: string; step: number; status: 'done' | 'failed' | 'askedUser'; tokens?: number; durationSec?: number; failureReason?: string; nextUserAction?: { text: string; options?: string[] } }
+  | { type: 'bot_end'; chatId: string; messageId: string; step: number; status: 'running' | 'done' | 'failed' | 'askedUser'; tokens?: number; durationSec?: number; failureReason?: string; nextUserAction?: { text: string; options?: string[] } }
   | { type: 'blackboard_update'; chatId: string; teamTurnId: string; messageId: string; blackboard: BlackboardSnapshot }
   | { type: 'team_end'; chatId: string; teamTurnId: string; summary: TeamRunSummary; taskBrief?: TaskBrief }
   | { type: 'workspace_ready'; chatId: string }

@@ -6,6 +6,7 @@ import { BotManager, TeamBlackboard, ContextManager, type Chat, type AgentReques
 import { ChatManager } from './chats';
 import { Codey } from './gateway';
 import { RunSemaphore } from './chat-runner';
+import { ChatEmitter } from './team-emitter';
 import { BotMessageEmitter } from './bot-message-emitter';
 
 const roots: string[] = [];
@@ -215,6 +216,33 @@ describe('global Bot conversations', () => {
     await expect(gateway.createBotGroup('Wrong', ['alice', 'missing'])).rejects.toThrow('not found');
     expect(() => manager.createTask(group.id, 'Wrong')).toThrow('direct chats');
   });
+  it.each(['question', 'permission'] as const)('pauses group execution for a native %s without running the next member', async kind => {
+    const { gateway, run, calls, manager } = await bots();
+    Object.assign(gateway, { contextManager: new ContextManager() });
+    const group = await gateway.createBotGroup('Product', ['alice', 'ben']);
+    const events: any[] = [];
+    run.mockImplementationOnce(async (_agent, request) => {
+      calls.push(request);
+      return { success: true, output: 'Blocked', sessionId: 'alice-session',
+        ...(kind === 'permission' ? { permissionDenials: [{ toolName: 'Read' }] }
+          : { userQuestion: { question: 'Which database?', options: [{ label: 'SQLite' }, { label: 'Postgres' }] } }),
+      };
+    });
+    const result = await (gateway as any).runTeamForChat('Product', { members: ['alice', 'ben'], dispatch: 'sequential' },
+      'Review', group.botChat!.homeDir, (event: any) => events.push(event), group.id, group, undefined, undefined, undefined, { forceAll: true });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].skipPermissions).toBe(false);
+    expect(manager.get(group.id)?.pendingTeam?.askingBot).toBe('alice');
+    if (kind === 'permission') expect(events).toContainEqual({ type: 'permission_denials', chatId: group.id, denials: [{ toolName: 'Read' }] });
+    else expect(result.choices).toEqual(['SQLite', 'Postgres']);
+    const pending = manager.get(group.id)!.pendingTeam!;
+    manager.setPendingTeam(group.id, null);
+    await (gateway as any).resumeTeamFromAnswer(group.id, `chat-${group.id}`, pending, 'Continue',
+      new ChatEmitter(event => events.push(event), group.id));
+    expect(calls).toHaveLength(3);
+    expect(calls[1].resumeSessionId).toBe('alice-session');
+    expect(manager.get(group.id)?.pendingTeam).toBeUndefined();
+  });
   it('uses Advisor configuration for group coordination', async () => {
     const { gateway, root } = await bots();
     const group = await gateway.createBotGroup('Product', ['alice', 'ben']);
@@ -415,4 +443,26 @@ it('runs the actual workspace team path with separate bot sessions per task', as
   expect(requests).toHaveLength(2);
   expect(requests[0][0].conversationId).not.toBe(requests[1][0].conversationId);
   expect(chat.messages.filter(m => m.bot === 'ben').map(m => m.taskId)).toEqual([a, b]);
+});
+
+it('routes a live interaction reply before the active chat turn queue', async () => {
+  const answerInteraction = vi.fn();
+  const gateway = Object.assign(Object.create(Codey.prototype), {
+    activeParallelRuns: new Map([['chat-a', { answerInteraction }]]),
+    sendToChatWithMemoryTrace: vi.fn(() => { throw new Error('Must not queue another turn'); }),
+  }) as Codey;
+  await gateway.sendToChat('chat-a', 'SQLite', () => {}, undefined, undefined, { interactionId: 'request-a' });
+  expect(answerInteraction).toHaveBeenCalledWith('request-a', 'SQLite');
+  await expect(gateway.sendToChat('chat-b', 'SQLite', () => {}, undefined, undefined, { interactionId: 'request-a' })).rejects.toThrow('no longer running');
+});
+
+it('expires a persisted interaction whose parallel run no longer exists', async () => {
+  const { gateway, manager, chat } = setup();
+  manager.appendMessage(chat.id, { id: 'stale', role: 'assistant', content: 'Old question', timestamp: 0,
+    botInteraction: { id: 'stale', bot: 'a', scope: 'bot', question: 'Old question', status: 'pending' } });
+  const events: any[] = [];
+  await expect(gateway.sendToChat(chat.id, 'Yes', event => events.push(event), undefined, undefined,
+    { interactionId: 'stale' })).rejects.toThrow('no longer running');
+  expect(manager.get(chat.id)?.messages.find(m => m.id === 'stale')?.botInteraction?.status).toBe('cancelled');
+  expect(events[0].type).toBe('bot_interaction');
 });

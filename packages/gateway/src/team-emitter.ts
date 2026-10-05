@@ -1,9 +1,10 @@
-import { BlackboardSnapshot, ChannelType, CodingAgent } from '@codey/core';
+import { AgentResponse, BlackboardSnapshot, ChannelType, CodingAgent } from '@codey/core';
 import type { EndBotMeta, BotMessageEmitter } from './bot-message-emitter';
 
 /** Surface-agnostic sink for team continuation output. */
 export interface TeamEmitter {
   /** A discrete status / result / ASK_USER message to the user. */
+  permissionDenials?(denials: NonNullable<AgentResponse['permissionDenials']>): void;
   notify(text: string, choices?: string[]): Promise<void>;
   /** An ephemeral progress line ("step 2: architect is working"). Never a
    * message: chat shows it as a transient info event, channels have no
@@ -38,6 +39,9 @@ export class ChatEmitter implements TeamEmitter {
   private parts: string[] = [];
   private _choices: string[] | undefined;
   constructor(private sink: SinkLike, private chatId: string, private botMsgs?: BotMessageEmitter) {}
+  permissionDenials(denials: NonNullable<AgentResponse['permissionDenials']>): void {
+    this.sink({ type: 'permission_denials', chatId: this.chatId, denials });
+  }
   async notify(text: string, choices?: string[]): Promise<void> {
     this._choices = choices;
     this.parts.push(text);

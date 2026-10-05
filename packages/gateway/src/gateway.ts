@@ -1,3 +1,4 @@
+import { teamInteractionResponse } from './team-interaction';
 import { inheritWorktreeMemory } from './worktree-memory';
 import { CoMemoClient } from '@codey/core';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -402,8 +403,19 @@ export class Codey {
     workingDir?: string;
     browserChatId?: string;
     interactive?: boolean;
+    onPermissionDenials?: (denials: NonNullable<AgentResponse['permissionDenials']>) => void;
     skipPermissions?: boolean;
   }): Promise<{ response: AgentResponse; usedResume: boolean }> {
+    const finishResponse = (response: AgentResponse): AgentResponse => {
+      const denials = response.permissionDenials?.filter(d => d.toolName !== 'AskUserQuestion');
+      if (denials?.length) {
+        try {
+          if (opts.onPermissionDenials) opts.onPermissionDenials(denials);
+          else if (opts.browserChatId) this.chatEventListener?.({ type: 'permission_denials', chatId: opts.browserChatId, denials });
+        } catch { /* a disconnected UI must not prevent persisting the pause */ }
+      }
+      return teamInteractionResponse(response);
+    };
     const memoryEpoch = this.memoryEpoch ?? 0;
     const workingDir = opts.workingDir ?? this.workingDir;
     const ctxWindow = await this.contextManager.getOrCreate(opts.conversationId);
@@ -448,12 +460,12 @@ export class Codey {
           ...existing,
           blackboardSeenCount: opts.blackboard.totalCount(),
         });
-        return { response: resp, usedResume: true };
+        return { response: finishResponse(resp), usedResume: true };
       }
       // Only a definitively missing session makes the anchor stale. A timeout
       // or any other failure must not fall through to a second execution.
       if (!isMissingSessionFailure(resp)) {
-        return { response: resp, usedResume: true };
+        return { response: finishResponse(resp), usedResume: true };
       }
       this.logger.warn(`[bot:${opts.botName}] resume of ${existing.sessionId} failed; bootstrapping fresh`);
       await this.contextManager.clearBotAnchor(ctxWindow.id, opts.botName);
@@ -487,7 +499,7 @@ export class Codey {
         await this.contextManager.setBotAnchor(ctxWindow.id, opts.botName, anchor);
       }
     }
-    return { response: resp, usedResume: false };
+    return { response: finishResponse(resp), usedResume: false };
   }
 
   /**
@@ -4433,6 +4445,7 @@ Example: /model gpt-4.1 write a Python script`;
         botName,
         task: pending.task,
         browserChatId: resumedChat ? chatId : undefined,
+        onPermissionDenials: emitter.permissionDenials ? denials => emitter.permissionDenials!(denials) : undefined,
         blackboard,
         codingAgent,
         modelConfig,
@@ -5086,6 +5099,8 @@ Example: /model gpt-4.1 write a Python script`;
       const { response } = await this.runBotStep({
         conversationId: teamConv,
         browserChatId: chatId,
+        skipPermissions: this.getSkipPermissions(),
+        onPermissionDenials: denials => sink({ type: 'permission_denials', chatId, denials }),
         botName,
         task: prompt,
         blackboard,
@@ -5226,6 +5241,8 @@ Example: /model gpt-4.1 write a Python script`;
               }
             } catch { /* non-JSON status */ }
           },
+          skipPermissions: this.getSkipPermissions(),
+          resumeSessionId: req.resumeSessionId,
           signal: req.signal,
         });
           return response;
@@ -5244,6 +5261,10 @@ Example: /model gpt-4.1 write a Python script`;
           });
           return advisorResult;
         },
+        onBotDependency: (bot, target) => {
+          botMsgs.setWaiting(bot, !!target);
+          if (target) sink({ type: 'info', chatId, message: `${bot} is waiting for ${target}. Independent Bots continue.` });
+        },
         buildBotPrompt: (botName: string) => {
           const wm = this.workspaceManager.getBotManager();
           return wm.buildParallelBotPrompt(botName, {
@@ -5254,12 +5275,27 @@ Example: /model gpt-4.1 write a Python script`;
             peerOpinions: team.members
               .filter(m => m !== botName)
               .map(m => ({ name: m, path: opinionPath(workspacesRoot, chat.workspaceName, chat.id, m) })),
-          });
+          }) + "\nIf you need user input, finish with [ASK_USER]: question or [ASK_USER:choice]: question | option | option. Only your Bot will wait. If your next step depends on an unfinished peer, finish with [ASK: peer-name]: what you need; do not proceed until that peer provides a result. Ask the Advisor for decisions that must pause the entire team.";
         },
         onUserQuestion: q => {
-          this.parallelResumes.set(chat.id, q.resume);
-          const rendered = renderQuestion('Advisor', q.question, q.choices);
-          sink({ type: 'stream', chatId, token: rendered.text });
+          if (q.bot) botMsgs.setWaiting(q.bot, true);
+          const message: ChatMessage = {
+            id: q.id, role: 'assistant', content: q.question, timestamp: Date.now(), isComplete: true,
+            teamTurnId, teamName, teamMode: 'roundtable', bot: q.bot ?? 'Advisor', botStatus: 'askedUser',
+            botInteraction: { id: q.id, bot: q.bot ?? 'Advisor', scope: q.bot ? 'bot' : 'team',
+              question: q.question, choices: q.choices, permissionTools: q.permissionTools, status: 'pending' },
+          };
+          this.chatManager.appendMessage(chatId, message);
+          sink({ type: 'bot_interaction', chatId, message });
+        },
+        onInteractionResolved: (id, cancelled, answer) => {
+          const message = this.chatManager.get(chatId)?.messages.find(m => m.id === id);
+          if (!message?.botInteraction) return;
+          if (message.botInteraction.scope === 'bot' && !cancelled) botMsgs.setWaiting(message.botInteraction.bot, false);
+          const patch = { ...(answer ? { content: `${message.content}\n\nUser reply: ${answer}` } : {}), botInteraction: { ...message.botInteraction, answer, status: cancelled ? 'cancelled' as const : 'resolved' as const },
+            botStatus: cancelled ? 'failed' as const : 'done' as const };
+          this.chatManager.updateMessage(chatId, id, patch);
+          sink({ type: 'bot_interaction', chatId, message: { ...message, ...patch } });
         },
         onFinal: ev => {
           this.parallelResumes.delete(chat.id);
@@ -5603,7 +5639,7 @@ Example: /model gpt-4.1 write a Python script`;
       request = { ...request, effort: this.getDefaultEffort(agent) };
     }
     const response = await this.runAgentWithNetworkRetry(agent, request);
-    if (response.success) return response;
+    if (response.success || response.permissionDenials?.length || response.userQuestion) return response;
 
     // User-initiated abort — do NOT churn through every fallback agent,
     // spawning subprocesses the user just asked to cancel.
@@ -5659,7 +5695,7 @@ Example: /model gpt-4.1 write a Python script`;
         ...rebaseForFallbackAgent(request, agent, entry.agent, response),
         model: resolvedModel,
       });
-      if (fallbackResponse.success) {
+      if (fallbackResponse.success || fallbackResponse.permissionDenials?.length || fallbackResponse.userQuestion) {
         const fromLabel = originalModel ? `${agent}(${originalModel})` : agent;
         // Carry the fallback as structured metadata rather than prepending a
         // banner to the output text. The Aide reuses this same fallback-routed
@@ -6060,6 +6096,24 @@ Example: /model gpt-4.1 write a Python script`;
     },
     taskRoute?: ChatTaskRoute,
   ): Promise<{ response: string; chatId: string; tokens?: number; durationSec?: number }> {
+    const liveParallel = this.activeParallelRuns?.get(chatId);
+    if (!liveParallel) {
+      // A process restart cannot restore in-memory agent waits. Preserve the
+      // question as history, but never leave a stale control targeting a new run.
+      for (const message of this.chatManager?.get(chatId)?.messages ?? []) {
+        if (message.botInteraction?.status !== 'pending') continue;
+        const patch = { botInteraction: { ...message.botInteraction, status: 'cancelled' as const }, botStatus: 'failed' as const };
+        this.chatManager.updateMessage(chatId, message.id, patch);
+        const event: ChatStreamEvent = { type: 'bot_interaction', chatId, message: { ...message, ...patch } };
+        try { sinkParam(event); this.chatEventListener?.(event); } catch { /* disconnected renderer */ }
+      }
+    }
+    if (taskRoute?.interactionId) {
+      const runner = liveParallel;
+      if (!runner) throw new Error('This team is no longer running. Start a new turn to continue.');
+      runner.answerInteraction(taskRoute.interactionId, userTextParam);
+      return { response: '', chatId };
+    }
     this.pendingChatTurns.set(chatId, (this.pendingChatTurns.get(chatId) ?? 0) + 1);
     try {
       return await memoryUsageContext.run(new Map(), () => this.sendToChatWithMemoryTrace(chatId, userTextParam, sinkParam, attachments, origin, taskRoute));

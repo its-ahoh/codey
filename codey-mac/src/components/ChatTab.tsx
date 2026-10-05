@@ -1,3 +1,4 @@
+import { BotInteractionCard } from './BotInteractionCard'
 import { ChatHeaderActions } from './ChatHeaderActions'
 import { BotMembers } from './BotMembers'
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -18,7 +19,7 @@ import { ChatContextPanel } from './ChatContextPanel'
 import type { ContextPanelTab } from './ChatContextPanel'
 import { useQuickQuestion } from '../hooks/useQuickQuestion'
 import { parseTeamMessage } from './teamMessageFormat'
-import { groupMessages } from './teamGroup'
+import { groupMessages, isLatestChatMessage } from './teamGroup'
 import { BotAvatar } from './BotAvatar'
 import { botAvatarState } from './botAvatarModel'
 import { StatusSidecar } from './StatusSidecar'
@@ -909,6 +910,9 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
   }, [isGatewayRunning])
   const lastMsg = chat?.messages?.[chat.messages.length - 1]
   const renderItems = useMemo(() => groupMessages(chat?.messages ?? []), [chat?.messages])
+  const pendingBotRequests = chat.messages.filter(m => m.botInteraction?.status === 'pending')
+  const pendingRunIds = new Set(pendingBotRequests.map(m => m.teamTurnId))
+  const runningBotCount = chat.messages.filter(m => pendingRunIds.has(m.teamTurnId) && m.bot && !m.botInteraction && m.botStatus === 'running').length
   // Only Codey's side of the conversation is mapped: user prompts are short and
   // sit right above their reply, so they would just double the tick count.
   const navigationItems = useMemo<ChatNavigationItem[]>(() => renderItems.flatMap<ChatNavigationItem>(item => {
@@ -2140,7 +2144,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
             revision={findRevision}
             onNavigate={() => setFollowLatest(false)}
           />
-          {renderItems.map((item, idx) => {
+          {renderItems.map((item) => {
           const msg = item.message
           const isBotMessage = !!msg.bot && !msg.builtinMember && !msg.teamFinal
           const member = isBotMessage ? bots.find(w => w.name.toLowerCase() === msg.bot!.toLowerCase()) : undefined
@@ -2358,8 +2362,9 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                   </div>
                 )}
               </div>
+              {msg.botInteraction && <BotInteractionCard chatId={chat.id} message={msg} />}
               {msg.role === 'assistant'
-                && idx === chat.messages.length - 1
+                && isLatestChatMessage(msg, chat.messages)
                 && chat.messages[chat.messages.length - 1]?.role !== 'user'
                 && msg.userQuestion
                 && msg.userQuestion.options.length > 0
@@ -2423,7 +2428,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                 && !msg.userQuestion
                 && msg.choices
                 && msg.choices.length > 0
-                && idx === chat.messages.length - 1
+                && isLatestChatMessage(msg, chat.messages)
                 && chat.messages[chat.messages.length - 1]?.role !== 'user'
                 && (
                   <div style={styles.choiceRow}>
@@ -2441,7 +2446,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                 )
               }
               {msg.role === 'assistant'
-                && idx === chat.messages.length - 1
+                && isLatestChatMessage(msg, chat.messages)
                 && state.pendingPermissions[chatId]
                 && (
                   <PermissionCard
@@ -2635,6 +2640,14 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                 &times;
               </button>
             </span>
+          </div>
+        )}
+        {pendingBotRequests.length > 0 && (
+          <div style={{ maxHeight: 240, overflowY: 'auto' }} aria-label="Pending Bot requests">
+            <strong>{pendingBotRequests.length} waiting for your response · {pendingBotRequests.some(m => m.botInteraction?.scope === 'team') ? 'team paused' : `${runningBotCount} Bots running`}</strong>
+            {pendingBotRequests.map(message => (
+              <BotInteractionCard key={message.id} chatId={chat.id} message={message} />
+            ))}
           </div>
         )}
         <div style={composerFocused ? { ...styles.composer, ...styles.composerRaised } : styles.composer}>

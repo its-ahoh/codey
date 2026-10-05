@@ -137,6 +137,17 @@ export class BotMessageEmitter {
     if (bot) this.byBot.delete(bot);
   }
 
+  setWaiting(bot: string, waiting: boolean): void {
+    const buf = this.target(bot);
+    if (!buf) return;
+    const status = waiting ? 'askedUser' : 'running';
+    this.store.updateMessage(this.chatId, buf.messageId, {
+      content: buf.content, toolCalls: buf.toolCalls, thinking: buf.thinking,
+      botStatus: status, isComplete: false,
+    });
+    this.sink({ type: 'bot_end', chatId: this.chatId, messageId: buf.messageId, step: buf.step, status });
+  }
+
   /** The message id of the currently-active serial bot (for resume mapping). */
   get activeMessageId(): string | null { return this.active?.messageId ?? null; }
 
