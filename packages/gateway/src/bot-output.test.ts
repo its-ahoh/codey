@@ -5,6 +5,14 @@ import { composeTeamFinal } from './team-finalizer';
 import type { ChatMessage } from '@codey/core';
 
 describe('bot output delivery', () => {
+  it.each([undefined, null, '', '   '])('ignores an absent or blank final result: %s', output => {
+    const chunks: string[] = [];
+    const stream = botOutputStream(text => chunks.push(text));
+    stream.onStream('Existing progress.');
+    stream.complete(output);
+    expect(chunks).toEqual(['Existing progress.']);
+  });
+
   it.each(['auto', 'roundtable'] as const)('persists a non-streaming result and supplies it to the summary in %s mode', async mode => {
     const messages: ChatMessage[] = [];
     const events: any[] = [];

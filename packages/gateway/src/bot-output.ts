@@ -5,8 +5,8 @@ export function botOutputStream(emit?: (text: string) => void) {
   const onStream = (text: string) => { streamed += text; emit?.(text); };
   return {
     onStream,
-    complete(output: string): void {
-      if (!output.trim()) return;
+    complete(output?: string | null): void {
+      if (!output?.trim()) return;
       if (!streamed.trim()) onStream(output);
       else if (output.length > streamed.length && output.startsWith(streamed)) onStream(output.slice(streamed.length));
     },
