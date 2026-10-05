@@ -1,3 +1,4 @@
+import { TeamAvatar } from './TeamAvatar'
 import { BotCreationGuide } from './BotCreationGuide'
 import { BotMessageSearchCache, botConversationList, readBotPins } from './botConversationList'
 import { SidebarNavigation, SidebarFooter, SidebarAction, type SidebarCommonProps } from './SidebarNavigation'
@@ -115,7 +116,7 @@ export function BotListPanel(props: Props) {
         const pinned = pins.includes(key)
         return <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 2, background: active ? C.accentDim : 'transparent', borderRadius: 10, marginBottom: 3 }}>
           <button onClick={() => chat ? selectChat(chat.id) : bot && void open(bot.name)} disabled={!chat && opening !== null} aria-pressed={active} style={{ ...textButton, flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', textAlign: 'left', gap: 10, padding: '10px 7px' }}>
-            {chat?.botChat?.kind === 'group' ? <span style={{ width: 34, flexShrink: 0, display: 'grid', placeItems: 'center' }}><UIIcon name="users" size={26} /></span> : <BotAvatar name={title} config={bot?.config.avatar} size={34} state={avatarState} />}
+            {chat?.botChat?.kind === 'group' ? <TeamAvatar name={title} members={chat.botChat.members} bots={bots} size={34} state={avatarState} /> : <BotAvatar name={title} config={bot?.config.avatar} size={34} state={avatarState} />}
             <span style={{ minWidth: 0, flex: 1 }}>
               <strong style={{ display: 'block', color: C.fg, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}{chat && state.unreadChats[chat.id] ? ' ·' : ''}</strong>
               <span title={messageMatch?.snippet} style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11, color: C.fg3, marginTop: 4 }}>{messageMatch?.snippet ?? (opening === bot?.name ? 'Opening…' : queued ? 'Queued' : running ? 'Working' : awaiting ? 'Waiting for you' : last?.content || bot?.personality.role.split('\n')[0] || chat?.botChat?.members.join(', ') || 'Ready to chat')}</span>

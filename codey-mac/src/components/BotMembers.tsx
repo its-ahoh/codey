@@ -1,3 +1,4 @@
+import { TeamAvatar } from './TeamAvatar'
 import React, { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { Chat } from '../types'
@@ -5,7 +6,6 @@ import { apiService, type BotDto } from '../services/api'
 import { useChats } from '../hooks/useChats'
 import { C } from '../theme'
 import { BotAvatar } from './BotAvatar'
-import { UIIcon } from './UIIcons'
 
 export function BotMembers({ chat, running }: { chat: Chat; running: boolean }) {
   const [open, setOpen] = useState(false)
@@ -70,7 +70,7 @@ function MembersDialog({ chat, locked, onClose }: { chat: Chat; locked: boolean;
     }} style={{ width: 'min(640px, calc(100vw - 32px))', minWidth: 0, boxSizing: 'border-box', flexShrink: 0, maxHeight: 'min(780px, calc(100dvh - 32px))', overflow: 'hidden', background: C.bg, color: C.fg, border: `1px solid ${C.border}`, borderRadius: 18, boxShadow: '0 24px 80px #0004', display: 'flex', flexDirection: 'column', fontSize: 13 }}>
       <div style={{ padding: '20px 22px 16px', borderBottom: `1px solid ${C.border}`, flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-          <span style={{ display: 'grid', placeItems: 'center', width: 34, height: 34, borderRadius: 10, background: C.accentDim, color: C.accent }}><UIIcon name="users" size={18} /></span>
+          <TeamAvatar name={direct ? title : chat.title} members={members} bots={bots} size={34} />
           <strong style={{ fontSize: 17 }}>{direct ? 'Create a group' : 'Group members'}</strong>
         </div>
         <div style={{ color: C.fg2, lineHeight: 1.5, fontSize: 12 }}>{direct ? 'Only the context you add is shared. Your private chat stays private.' : 'New members can read the group’s history.'}</div>
