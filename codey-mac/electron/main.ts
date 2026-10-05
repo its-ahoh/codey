@@ -5439,18 +5439,16 @@ app.whenReady().then(async () => {
     })
   )
 
-  ipcMain.handle('chats:send', async (_e, payload: { chatId: string; text: string; attachments?: any[]; taskRoute?: import("@codey/core").ChatTaskRoute }) =>
+  ipcMain.handle('chats:send', async (_e, payload: { chatId: string; text: string; messageIds?: import('@codey/core').ChatTurnMessageIds; attachments?: any[]; taskRoute?: import("@codey/core").ChatTaskRoute }) =>
     wrap(async () => {
       if (!inProcessGateway) throw new Error('Gateway not initialized')
       // No-op sink: events flow to the renderer via the global chatEventListener
       // installed at boot (sendToRenderer 'chats:event'). Wiring a per-call sink
       // here would deliver every event twice — and the second 'done' delivery
       // would race past the just-cleared pendingAssistantId and trigger a chat
-      // refetch that overwrites the in-flight assistant message with the
-      // server's persisted version (with a different UUID), making selectedTurnId
-      // point at nothing and the right Context Panel go blank.
+      // refetch that can race with the next queued turn.
       const sink = () => { /* no-op */ }
-      return inProcessGateway.sendToChat(payload.chatId, payload.text, sink, payload.attachments, undefined, payload.taskRoute)
+      return inProcessGateway.sendToChat(payload.chatId, payload.text, sink, payload.attachments, undefined, payload.taskRoute, payload.messageIds)
     })
   )
 

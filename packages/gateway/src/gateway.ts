@@ -3,7 +3,7 @@ import { inheritWorktreeMemory } from './worktree-memory';
 import { CoMemoClient } from '@codey/core';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { matchAutomaticChatTask } from './automatic-chat-task';
-import { chatTaskContext, chatSessionScope, runAideJson, type ChatTaskRoute } from '@codey/core';
+import { chatTaskContext, chatSessionScope, runAideJson, type ChatTaskRoute, type ChatTurnMessageIds } from '@codey/core';
 import { publishTeamFinal, composeTeamFinal, planTeamFooter, isSoloMentionRun, parseTeamResultLines, teamStepRecords, TeamStepRecord } from './team-finalizer';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -6095,6 +6095,7 @@ Example: /model gpt-4.1 write a Python script`;
       skillInvoke?: SkillInvoke;
     },
     taskRoute?: ChatTaskRoute,
+    messageIds?: ChatTurnMessageIds,
   ): Promise<{ response: string; chatId: string; tokens?: number; durationSec?: number }> {
     const liveParallel = this.activeParallelRuns?.get(chatId);
     if (!liveParallel) {
@@ -6116,7 +6117,7 @@ Example: /model gpt-4.1 write a Python script`;
     }
     this.pendingChatTurns.set(chatId, (this.pendingChatTurns.get(chatId) ?? 0) + 1);
     try {
-      return await memoryUsageContext.run(new Map(), () => this.sendToChatWithMemoryTrace(chatId, userTextParam, sinkParam, attachments, origin, taskRoute));
+      return await memoryUsageContext.run(new Map(), () => this.sendToChatWithMemoryTrace(chatId, userTextParam, sinkParam, attachments, origin, taskRoute, messageIds));
     } finally {
       const remaining = (this.pendingChatTurns.get(chatId) ?? 1) - 1;
       if (remaining) this.pendingChatTurns.set(chatId, remaining);
@@ -6143,6 +6144,7 @@ Example: /model gpt-4.1 write a Python script`;
       skillInvoke?: SkillInvoke;
     },
     taskRoute?: ChatTaskRoute,
+    messageIds?: ChatTurnMessageIds,
   ): Promise<{ response: string; chatId: string; tokens?: number; durationSec?: number }> {
     let chat = this.chatManager.get(chatId);
     if (!chat) throw new Error(`Chat not found: ${chatId}`);
@@ -6370,10 +6372,10 @@ Example: /model gpt-4.1 write a Python script`;
     const finishSkillReply = (responseText: string): { response: string; chatId: string } => {
       const now = Date.now();
       this.chatManager.appendMessage(chatId, {
-        id: randomUUID(), taskId, role: 'user', content: userTextParam, timestamp: now, isComplete: true,
+        id: messageIds?.userMessageId ?? randomUUID(), taskId, role: 'user', content: userTextParam, timestamp: now, isComplete: true,
       });
       this.chatManager.appendMessage(chatId, {
-        id: randomUUID(), taskId, role: 'assistant', content: responseText, timestamp: now, isComplete: true,
+        id: messageIds?.assistantMessageId ?? randomUUID(), taskId, role: 'assistant', content: responseText, timestamp: now, isComplete: true,
       });
       sink({ type: 'done', chatId, response: responseText });
       return { response: responseText, chatId };
@@ -6616,7 +6618,7 @@ Example: /model gpt-4.1 write a Python script`;
     }
 
     const userMessage: ChatMessage = {
-      id: randomUUID(),
+      id: messageIds?.userMessageId ?? randomUUID(),
       role: 'user',
       taskId,
       replyToMessageId: taskRoute?.replyToMessageId,
@@ -6987,7 +6989,7 @@ Example: /model gpt-4.1 write a Python script`;
         : undefined;
       const assistantMessage: ChatMessage = {
         memoryUsed: [...(memoryUsageContext.getStore()?.values() ?? [])],
-        id: randomUUID(),
+        id: messageIds?.assistantMessageId ?? randomUUID(),
         role: 'assistant',
         taskId,
         content: output,
@@ -7188,7 +7190,7 @@ Example: /model gpt-4.1 write a Python script`;
       }
       const message = `Error: ${(err as Error).message}`;
       const assistantMessage: ChatMessage = {
-        id: randomUUID(),
+        id: messageIds?.assistantMessageId ?? randomUUID(),
         role: 'assistant',
         taskId,
         content: message,

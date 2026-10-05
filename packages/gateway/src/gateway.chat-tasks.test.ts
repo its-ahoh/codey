@@ -58,6 +58,28 @@ function setup() {
 }
 
 describe('task execution integration', () => {
+  it('persists renderer message IDs for consecutive turns, even with identical prompts', async () => {
+    const { gateway, chat, manager, a } = setup();
+    for (const turn of ['first', 'second']) {
+      const userMessageId = `user-${turn}`;
+      const assistantMessageId = `asst-${turn}`;
+      await gateway.sendToChat(chat.id, 'Continue', () => {}, undefined, undefined, { taskId: a }, { userMessageId, assistantMessageId });
+    }
+    expect(manager.get(chat.id)?.messages.map(m => [m.id, m.content])).toEqual([
+      ['user-first', 'Continue'], ['asst-first', 'Result 1'],
+      ['user-second', 'Continue'], ['asst-second', 'Result 2'],
+    ]);
+  });
+  it('keeps the renderer assistant ID when the agent throws', async () => {
+    const { gateway, chat, run, a } = setup();
+    run.mockRejectedValueOnce(new Error('Agent disconnected'));
+    await expect(gateway.sendToChat(chat.id, 'Continue', () => {}, undefined, undefined, { taskId: a }, {
+      userMessageId: 'user-failed', assistantMessageId: 'asst-failed',
+    })).rejects.toThrow('Agent disconnected');
+    expect(chat.messages.map(m => m.id)).toEqual(['user-failed', 'asst-failed']);
+    expect(chat.messages[1].content).toContain('Agent disconnected');
+  });
+
   it('runs A, then B, then resumes A without replaying B', async () => {
     const { send, calls, chat, a, b } = setup();
     await send('WEBSITE PRIVATE', a);

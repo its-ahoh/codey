@@ -163,8 +163,8 @@ export const apiService = {
     inviteBots: async (chatId: string, title: string, members: string[], context: string): Promise<Chat> => unwrap(await window.codey.chats.inviteBots(chatId, title, members, context)),
     createBotGroup: async (title: string, members: string[]): Promise<Chat> => unwrap(await window.codey.chats.createBotGroup(title, members)),
     createTask: async (chatId: string, title: string): Promise<Chat> => unwrap(await window.codey.chats.createTask(chatId, title)),
-    send: async (chatId: string, text: string, attachments?: { id: string; name: string; path: string; mimeType: string; size: number }[], taskRoute?: import('@codey/core').ChatTaskRoute): Promise<{ response: string; chatId: string; tokens?: number; durationSec?: number }> =>
-      unwrap(await window.codey.chats.send({ chatId, text, attachments, taskRoute })),
+    send: async (chatId: string, text: string, attachments?: { id: string; name: string; path: string; mimeType: string; size: number }[], taskRoute?: import('@codey/core').ChatTaskRoute, messageIds?: import('@codey/core').ChatTurnMessageIds): Promise<{ response: string; chatId: string; tokens?: number; durationSec?: number }> =>
+      unwrap(await window.codey.chats.send({ chatId, text, attachments, taskRoute, messageIds })),
     stop: async (chatId: string): Promise<boolean> =>
       unwrap(await window.codey.chats.stop(chatId)),
     onEvent: (handler: (ev: ChatStreamEvent) => void): (() => void) =>

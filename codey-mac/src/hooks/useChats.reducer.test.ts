@@ -421,3 +421,37 @@ it('keeps a pending Bot card while peers stream and does not reset the active tu
   expect(state.inFlight.c1).toBe(flight)
   expect(state.chats.c1.messages.find(m => m.id === 'b')?.content).toBe('progress')
 });
+
+
+describe('queued turns keep one transcript row per message across refreshes', () => {
+  for (const refresh of ['loaded', 'upsert'] as const) {
+    it(`${refresh} preserves the next queued prompt and never repeats the previous turn`, () => {
+      let state = reducer(emptyState(), { type: 'upsert', chat: makeChat({ messages: [] }) })
+      const first = { id: 'user-first', role: 'user' as const, content: 'Continue', timestamp: 1, isComplete: true }
+      state = reducer(state, { type: 'startSend', chatId: 'c1', userMessage: first, assistantMessageId: 'asst-first' })
+      state = reducer(state, { type: 'enqueueMessage', chatId: 'c1', message: { id: 'q2', text: 'Continue' } })
+      state = reducer(state, { type: 'streamToken', chatId: 'c1', token: 'Working' })
+      const update = (chat: Chat) => {
+        state = reducer(state, refresh === 'loaded' ? { type: 'loaded', chats: [chat] } : { type: 'upsert', chat })
+      }
+      update(makeChat({ messages: [first] }))
+      expect(state.chats.c1.messages.map(m => m.id)).toEqual(['user-first', 'asst-first'])
+      expect(state.chats.c1.messages[1].content).toBe('Working')
+      state = reducer(state, { type: 'completeSend', chatId: 'c1', assistantMessageId: 'asst-first', content: 'First summary' })
+      const completed = state.chats.c1
+      expect(readyDeliveries(state.queuedMessages, state.inFlight, new Set())).toHaveLength(1)
+      state = reducer(state, { type: 'dequeueMessage', chatId: 'c1' })
+      const second = { ...first, id: 'user-second', timestamp: 2 }
+      state = reducer(state, { type: 'startSend', chatId: 'c1', userMessage: second, assistantMessageId: 'asst-second' })
+      // A refresh started by the previous turn can arrive before the new user
+      // message is persisted. It must neither erase it nor replay the first.
+      update(completed)
+      expect(state.chats.c1.messages.map(m => m.id)).toEqual(['user-first', 'asst-first', 'user-second', 'asst-second'])
+      update({ ...completed, messages: [...completed.messages, second] })
+      state = reducer(state, { type: 'completeSend', chatId: 'c1', assistantMessageId: 'asst-second', content: 'Second summary' })
+      expect(state.chats.c1.messages.map(m => m.content)).toEqual(['Continue', 'First summary', 'Continue', 'Second summary'])
+      update(state.chats.c1)
+      expect(state.chats.c1.messages).toHaveLength(4)
+    })
+  }
+})
