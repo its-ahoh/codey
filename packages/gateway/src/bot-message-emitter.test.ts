@@ -152,3 +152,16 @@ describe('BotMessageEmitter — parallel', () => {
     expect(h.patched[0]).toMatchObject({ id: idA, patch: { content: 'from-a', botStatus: 'done' } });
   });
 });
+
+it('retains a paused parallel Bot buffer while peers stream and after resume', () => {
+  const h = harness('roundtable');
+  h.em.teamStart([{ step: 1, bot: 'a' }, { step: 2, bot: 'b' }]);
+  h.em.onStream('before ', 'a');
+  h.em.setWaiting('a', true);
+  h.em.onStream('peer progress', 'b');
+  h.em.setWaiting('a', false);
+  h.em.onStream('after', 'a');
+  h.em.endBot('done', undefined, 'a');
+  expect(h.patched.at(-1)).toMatchObject({ id: 'id-1', patch: { content: 'before after', botStatus: 'done' } });
+  expect(h.events).toContainEqual(expect.objectContaining({ type: 'stream', messageId: 'id-2', token: 'peer progress' }));
+});

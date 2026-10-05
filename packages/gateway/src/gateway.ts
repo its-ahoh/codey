@@ -5241,6 +5241,8 @@ Example: /model gpt-4.1 write a Python script`;
               }
             } catch { /* non-JSON status */ }
           },
+          skipPermissions: this.getSkipPermissions(),
+          resumeSessionId: req.resumeSessionId,
           signal: req.signal,
         });
           return response;
@@ -5259,6 +5261,10 @@ Example: /model gpt-4.1 write a Python script`;
           });
           return advisorResult;
         },
+        onBotDependency: (bot, target) => {
+          botMsgs.setWaiting(bot, !!target);
+          if (target) sink({ type: 'info', chatId, message: `${bot} is waiting for ${target}. Independent Bots continue.` });
+        },
         buildBotPrompt: (botName: string) => {
           const wm = this.workspaceManager.getBotManager();
           return wm.buildParallelBotPrompt(botName, {
@@ -5269,12 +5275,27 @@ Example: /model gpt-4.1 write a Python script`;
             peerOpinions: team.members
               .filter(m => m !== botName)
               .map(m => ({ name: m, path: opinionPath(workspacesRoot, chat.workspaceName, chat.id, m) })),
-          });
+          }) + "\nIf you need user input, finish with [ASK_USER]: question or [ASK_USER:choice]: question | option | option. Only your Bot will wait. If your next step depends on an unfinished peer, finish with [ASK: peer-name]: what you need; do not proceed until that peer provides a result. Ask the Advisor for decisions that must pause the entire team.";
         },
         onUserQuestion: q => {
-          this.parallelResumes.set(chat.id, q.resume);
-          const rendered = renderQuestion('Advisor', q.question, q.choices);
-          sink({ type: 'stream', chatId, token: rendered.text });
+          if (q.bot) botMsgs.setWaiting(q.bot, true);
+          const message: ChatMessage = {
+            id: q.id, role: 'assistant', content: q.question, timestamp: Date.now(), isComplete: true,
+            teamTurnId, teamName, teamMode: 'roundtable', bot: q.bot ?? 'Advisor', botStatus: 'askedUser',
+            botInteraction: { id: q.id, bot: q.bot ?? 'Advisor', scope: q.bot ? 'bot' : 'team',
+              question: q.question, choices: q.choices, permissionTools: q.permissionTools, status: 'pending' },
+          };
+          this.chatManager.appendMessage(chatId, message);
+          sink({ type: 'bot_interaction', chatId, message });
+        },
+        onInteractionResolved: (id, cancelled, answer) => {
+          const message = this.chatManager.get(chatId)?.messages.find(m => m.id === id);
+          if (!message?.botInteraction) return;
+          if (message.botInteraction.scope === 'bot' && !cancelled) botMsgs.setWaiting(message.botInteraction.bot, false);
+          const patch = { ...(answer ? { content: `${message.content}\n\nUser reply: ${answer}` } : {}), botInteraction: { ...message.botInteraction, answer, status: cancelled ? 'cancelled' as const : 'resolved' as const },
+            botStatus: cancelled ? 'failed' as const : 'done' as const };
+          this.chatManager.updateMessage(chatId, id, patch);
+          sink({ type: 'bot_interaction', chatId, message: { ...message, ...patch } });
         },
         onFinal: ev => {
           this.parallelResumes.delete(chat.id);
@@ -6075,6 +6096,24 @@ Example: /model gpt-4.1 write a Python script`;
     },
     taskRoute?: ChatTaskRoute,
   ): Promise<{ response: string; chatId: string; tokens?: number; durationSec?: number }> {
+    const liveParallel = this.activeParallelRuns?.get(chatId);
+    if (!liveParallel) {
+      // A process restart cannot restore in-memory agent waits. Preserve the
+      // question as history, but never leave a stale control targeting a new run.
+      for (const message of this.chatManager?.get(chatId)?.messages ?? []) {
+        if (message.botInteraction?.status !== 'pending') continue;
+        const patch = { botInteraction: { ...message.botInteraction, status: 'cancelled' as const }, botStatus: 'failed' as const };
+        this.chatManager.updateMessage(chatId, message.id, patch);
+        const event: ChatStreamEvent = { type: 'bot_interaction', chatId, message: { ...message, ...patch } };
+        try { sinkParam(event); this.chatEventListener?.(event); } catch { /* disconnected renderer */ }
+      }
+    }
+    if (taskRoute?.interactionId) {
+      const runner = liveParallel;
+      if (!runner) throw new Error('This team is no longer running. Start a new turn to continue.');
+      runner.answerInteraction(taskRoute.interactionId, userTextParam);
+      return { response: '', chatId };
+    }
     this.pendingChatTurns.set(chatId, (this.pendingChatTurns.get(chatId) ?? 0) + 1);
     try {
       return await memoryUsageContext.run(new Map(), () => this.sendToChatWithMemoryTrace(chatId, userTextParam, sinkParam, attachments, origin, taskRoute));

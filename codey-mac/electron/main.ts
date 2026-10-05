@@ -5478,20 +5478,11 @@ app.whenReady().then(async () => {
       // Resolve the project workingDir from the chat so we write to the
       // correct .claude/settings.local.json that Claude Code actually reads.
       let workingDir: string | undefined
-      if (chatId && inProcessGateway) {
-        try {
-          const chat = inProcessGateway.getChatManager().get(chatId)
-          if (!chat) throw new Error('Chat not found')
-          const wsConfigPath = pathMod.join(
-            workspaceManager.getWorkspacesRoot(),
-            chat.workspaceName,
-            'workspace.json',
-          )
-          if (fsMod.existsSync(wsConfigPath)) {
-            const wsConfig = JSON.parse(fsMod.readFileSync(wsConfigPath, 'utf-8'))
-            if (wsConfig.workingDir) workingDir = wsConfig.workingDir
-          }
-        } catch { /* fall through to default */ }
+      if (chatId) {
+        if (!inProcessGateway) throw new Error('Gateway not ready')
+        const chat = inProcessGateway.getChatManager().get(chatId)
+        if (!chat) throw new Error('Chat not found')
+        workingDir = inProcessGateway.resolveChatWorkingDir(chat)
       }
 
       const settingsDir = workingDir

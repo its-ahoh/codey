@@ -1,5 +1,6 @@
 import * as fs from 'fs';
-import * as path from 'path';
+import { randomUUID } from 'crypto';
+import { teamInteractionResponse } from './team-interaction';
 import {
   initDiscussionDir,
   discussionDir,
@@ -13,7 +14,8 @@ import {
   writeControl,
   buildParallelAdvisorPrompt,
   parseParallelAdvisorTurn,
-  type ParallelAdvisorTurn,
+  parseAskUser,
+  parseAsk,
   type RoundtableSettings,
   type DiscussionTerminatedReason,
 } from '@codey/core';
@@ -29,6 +31,9 @@ export interface ParallelFinalEvent {
 }
 
 export interface ParallelUserQuestion {
+  id: string;
+  bot?: string;
+  permissionTools?: string[];
   question: string;
   choices?: string[];
   /** Caller must invoke this once the user answers. */
@@ -47,6 +52,8 @@ export interface ParallelTeamRunnerOptions {
   advisorRunner: AgentRunner;
   buildBotPrompt: (bot: string) => string;
   onUserQuestion: (q: ParallelUserQuestion) => void;
+  onBotDependency?: (bot: string, target?: string) => void;
+  onInteractionResolved?: (id: string, cancelled: boolean, answer?: string) => void;
   onFinal: (e: ParallelFinalEvent) => void;
   /** Called when a bot's run finishes (success or failure). */
   onBotDone?: (bot: string, ok: boolean, error?: string) => void;
@@ -59,7 +66,11 @@ export class ParallelTeamRunner {
   private done = false;
   private donePromise: Promise<void>;
   private resolveDone!: () => void;
-  private pendingResume: ((answer: string) => void) | null = null;
+  private failedBots = new Map<string, string>();
+  private peerWaits = new Map<string, { target: string; resolve: (output: string | null) => void }>();
+  private interactionRevision = 0;
+  private resumingBots = new Set<string>();
+  private interactions = new Map<string, { bot?: string; question: string; resolve: (answer: string | null) => void }>();
   private lastMtimeMs = 0;
   private startedAt = 0;
   private idleSince = 0;
@@ -87,6 +98,13 @@ export class ParallelTeamRunner {
   async stop(reason: DiscussionTerminatedReason, finalMessage = ''): Promise<void> {
     if (this.done) return;
     this.done = true;
+    for (const [id, pending] of this.interactions) {
+      this.opts.onInteractionResolved?.(id, true);
+      pending.resolve(null);
+    }
+    this.interactions.clear();
+    for (const pending of this.peerWaits.values()) pending.resolve(null);
+    this.peerWaits.clear();
     console.log(`[parallel-runner] stop() called. reason=${reason} message=${finalMessage.substring(0, 100)}`);
     console.trace('[parallel-runner] stop() call stack');
     try {
@@ -98,6 +116,29 @@ export class ParallelTeamRunner {
       await this.emitFinal(reason, finalMessage);
       this.resolveDone();
     }
+  }
+
+  /** Replies are scoped to a single live request; stale/double replies are rejected. */
+  answerInteraction(id: string, answer: string): void {
+    const pending = this.interactions.get(id);
+    if (this.done || !pending) throw new Error('This question is no longer waiting for an answer.');
+    if (!answer.trim()) throw new Error('An answer is required.');
+    this.interactions.delete(id);
+    this.interactionRevision++;
+    if (pending.bot) this.resumingBots.add(pending.bot);
+    this.idleSince = Date.now();
+    this.opts.onInteractionResolved?.(id, false, answer);
+    pending.resolve(answer);
+  }
+
+  private ask(question: string, choices?: string[], bot?: string, permissionTools?: string[]): Promise<string | null> {
+    const id = randomUUID();
+    return new Promise(resolve => {
+      this.interactionRevision++;
+      this.interactions.set(id, { bot, question, resolve });
+      this.opts.onUserQuestion({ id, bot, question, choices, permissionTools,
+        resume: async answer => this.answerInteraction(id, answer) });
+    });
   }
 
   private spawnBots(): void {
@@ -114,24 +155,82 @@ export class ParallelTeamRunner {
     const chat = this.opts.chatId;
     const ctrlPath = controlPath(wsRoot, ws, chat);
     let round = 0;
+    let userAnswer: string | undefined;
+    let sessionId: string | undefined;
     let finalized = false;
 
     while (!this.done && !ac.signal.aborted) {
+      if ([...this.interactions.values()].some(p => !p.bot)) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+        continue;
+      }
       round++;
       console.log(`[parallel-runner] bot "${bot}" starting round ${round}`);
-      const prompt = this.opts.buildBotPrompt(bot);
+      const prompt = this.opts.buildBotPrompt(bot) + (userAnswer ? `\n\n[User response to your pending question]\n${userAnswer}` : '');
+      userAnswer = undefined;
       console.log(`[parallel-runner] bot "${bot}" prompt length: ${prompt.length}`);
-      const req: AgentRequest = { prompt, signal: ac.signal } as AgentRequest;
+      const req: AgentRequest = { prompt, signal: ac.signal, resumeSessionId: sessionId } as AgentRequest;
 
       try {
-        const res = await this.opts.botRunner(req, bot);
+        const raw = await this.opts.botRunner(req, bot);
+        if (this.done || ac.signal.aborted) break;
+        this.resumingBots.delete(bot);
+        sessionId = raw.sessionId ?? sessionId;
+        const res = teamInteractionResponse(raw);
+        const peerAsk = parseAsk(res.output);
+        if (peerAsk?.kind === 'team') {
+          const target = this.opts.members.find(name => name.toLowerCase() === peerAsk.target.toLowerCase());
+          if (!target || target === bot) throw new Error(`Invalid dependency: ${peerAsk.target}`);
+          if (this.failedBots.has(target)) {
+            userAnswer = `Dependency ${target} failed: ${this.failedBots.get(target)}`;
+            continue;
+          }
+          // A cycle cannot make progress; report it rather than silently waiting forever.
+          let cursor: string | undefined = target;
+          const seen = new Set([bot]);
+          while (cursor) {
+            if (seen.has(cursor)) throw new Error('Circular Bot dependency');
+            seen.add(cursor);
+            cursor = this.peerWaits.get(cursor)?.target;
+          }
+          const answer = await new Promise<string | null>(resolve => {
+            this.peerWaits.set(bot, { target, resolve });
+            this.opts.onBotDependency?.(bot, target);
+          });
+          if (answer === null || this.done) break;
+          userAnswer = `Dependency ${target} completed a turn: ${answer}`;
+          continue;
+        }
+        const ask = parseAskUser(res.output);
+        if (ask) {
+          const answer = await this.ask(ask.question, ask.options, bot,
+            raw.permissionDenials?.filter(d => d.toolName !== 'AskUserQuestion').map(d => d.toolName));
+          if (answer === null || this.done) break;
+          userAnswer = answer;
+          continue;
+        }
+        for (const [waitingBot, pending] of this.peerWaits) {
+          if (pending.target !== bot) continue;
+          this.peerWaits.delete(waitingBot);
+          this.resumingBots.add(waitingBot);
+          this.opts.onBotDependency?.(waitingBot);
+          pending.resolve(res.success ? res.output : `Bot failed: ${res.error ?? res.output}`);
+        }
         console.log(`[parallel-runner] bot "${bot}" round ${round} done. success=${res.success} output=${(res.output || '').substring(0, 100)}`);
         await appendTranscript(wsRoot, ws, chat, {
           actor: bot, kind: res.success ? 'bot_done' : 'bot_failed',
           note: res.error || `round ${round}`,
         });
-        if (!res.success) { this.opts.onBotDone?.(bot, false, res.error); finalized = true; break; }
+        if (!res.success) { this.failedBots.set(bot, res.error ?? res.output); this.opts.onBotDone?.(bot, false, res.error); finalized = true; break; }
       } catch (err) {
+        this.resumingBots.delete(bot);
+        this.failedBots.set(bot, (err as Error).message);
+        for (const [waitingBot, pending] of this.peerWaits) {
+          if (pending.target !== bot) continue;
+          this.peerWaits.delete(waitingBot);
+          this.opts.onBotDependency?.(waitingBot);
+          pending.resolve(`Bot failed: ${(err as Error).message}`);
+        }
         await appendTranscript(wsRoot, ws, chat, {
           actor: bot, kind: 'bot_error', note: (err as Error).message,
         });
@@ -180,6 +279,8 @@ export class ParallelTeamRunner {
       await new Promise<void>(res => setTimeout(res, this.opts.settings.advisorPollMs));
       if (this.done) break;
 
+      const waitingBots = new Set([...this.interactions.values()].map(p => p.bot).filter(Boolean));
+      if (waitingBots.size + this.peerWaits.size >= this.opts.members.length) continue;
       const topic = safeRead(topPath);
       const summary = safeRead(sumPath);
       const opinions = (await listOpinionFiles(wsRoot, ws, chat)).map(name => ({
@@ -190,11 +291,12 @@ export class ParallelTeamRunner {
       const ctrl = await readControl(ctrlPath);
       this.idleSince = Date.now();
 
+      const interactionRevision = this.interactionRevision;
       const prompt = buildParallelAdvisorPrompt({
         topic, summary, opinions, pendingAsks, idleMs: 0,
         revision: ctrl?.revision ?? 0,
         userAnswer: pendingUserAnswer,
-      });
+      }) + `\n\nBots waiting for user input: ${JSON.stringify([...this.interactions.values()].map(p => ({ bot: p.bot, question: p.question })))}. Keep independent work moving. Do not finalize while these requests are pending. Use ask_user only for a decision that must pause the entire team.`;
       pendingUserAnswer = undefined;
 
       console.log(`[parallel-runner] advisor poll: opinions=${opinions.map(o => o.name).join(',')}, revision=${ctrl?.revision ?? 0}`);
@@ -211,6 +313,7 @@ export class ParallelTeamRunner {
         await appendTranscript(wsRoot, ws, chat, { actor: 'advisor', kind: 'error', note: resp.error });
         continue;
       }
+      if (this.done) break;
       const turn = parseParallelAdvisorTurn(resp.output);
       console.log(`[parallel-runner] advisor parsed: action=${turn?.action} reason=${turn?.reason}`);
       if (!turn) {
@@ -236,15 +339,8 @@ export class ParallelTeamRunner {
           userQuestion: turn.user_question,
           userQuestionChoices: turn.user_question_choices,
         })).catch(() => undefined);
-        const answerPromise = new Promise<string>(res => { this.pendingResume = res; });
-        this.opts.onUserQuestion({
-          question: turn.user_question!,
-          choices: turn.user_question_choices,
-          resume: async (answer: string) => {
-            if (this.pendingResume) { this.pendingResume(answer); this.pendingResume = null; }
-          },
-        });
-        const answer = await answerPromise;
+        const answer = await this.ask(turn.user_question!, turn.user_question_choices);
+        if (answer === null || this.done) break;
         pendingUserAnswer = { question: turn.user_question!, answer };
         await writeControl(ctrlPath, prev => ({
           ...prev,
@@ -256,6 +352,7 @@ export class ParallelTeamRunner {
         continue;
       }
       if (turn.action === 'finalize' || turn.action === 'terminate') {
+        if (this.interactions.size || this.peerWaits.size || this.resumingBots.size || interactionRevision !== this.interactionRevision) continue;
         const reason: DiscussionTerminatedReason = turn.action === 'finalize' ? 'consensus' : (turn.reason === 'drift' ? 'drift' : 'consensus');
         await this.stop(reason, turn.final_message || '');
         break;
@@ -263,12 +360,18 @@ export class ParallelTeamRunner {
     }
   }
   private armSupervisors(): void {
-    const start = Date.now();
+    let activeMs = 0;
+    let lastCheck = Date.now();
     const checkMs = Math.min(5000, Math.max(500, this.opts.settings.idleTimeoutMs / 4));
     let firstWriteSeen = false;
     const interval = setInterval(async () => {
       if (this.done) { clearInterval(interval); return; }
-      if (Date.now() - start >= this.opts.settings.maxDurationMs) {
+      const now = Date.now();
+      const elapsed = now - lastCheck;
+      lastCheck = now;
+      if (this.interactions.size) { this.idleSince = now; return; }
+      activeMs += elapsed;
+      if (activeMs >= this.opts.settings.maxDurationMs) {
         clearInterval(interval);
         await this.stop('max_duration', 'discussion exceeded maximum duration');
         return;

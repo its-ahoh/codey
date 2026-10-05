@@ -82,6 +82,8 @@ export interface ConversationTask {
 
 /** undefined selects automatically; null explicitly selects general conversation. */
 export interface ChatTaskRoute {
+  /** Answer one live parallel interaction without queueing another team turn. */
+  interactionId?: string;
   taskId?: string | null;
   replyToMessageId?: string;
 }
@@ -98,7 +100,19 @@ export interface MemoryUsage {
   source: string;
 }
 
+export interface BotInteraction {
+  id: string;
+  bot: string;
+  scope: 'bot' | 'team';
+  answer?: string;
+  question: string;
+  choices?: string[];
+  permissionTools?: string[];
+  status: 'pending' | 'resolved' | 'cancelled';
+}
+
 export interface ChatMessage {
+  botInteraction?: BotInteraction;
   memoryUsed?: MemoryUsage[];
   taskId?: string;
   replyToMessageId?: string;

@@ -407,3 +407,17 @@ describe('automatic Bot execution handoff', () => {
     expect(state.chats.c1.messages.filter(m => m.teamTurnId === 'turn').map(m => m.taskId)).toEqual(['website', 'website'])
   })
 })
+
+it('keeps a pending Bot card while peers stream and does not reset the active turn on reply', () => {
+  let state = baseState()
+  const request = { id: 'request-a', role: 'assistant' as const, content: 'Choose', timestamp: 1,
+    botInteraction: { id: 'request-a', bot: 'a', scope: 'bot' as const, question: 'Choose', status: 'pending' as const } }
+  state = reducer(state, { type: 'botInteraction', chatId: 'c1', message: request })
+  state = reducer(state, { type: 'botStart', chatId: 'c1', teamTurnId: 't', messageId: 'b', step: 2, bot: 'b' })
+  state = reducer(state, { type: 'streamToken', chatId: 'c1', messageId: 'b', token: 'progress' })
+  expect(state.chats.c1.messages.find(m => m.id === 'request-a')?.botInteraction?.status).toBe('pending')
+  const flight = state.inFlight.c1
+  state = reducer(state, { type: 'botInteraction', chatId: 'c1', message: { ...request, botInteraction: { ...request.botInteraction, status: 'resolved' } } })
+  expect(state.inFlight.c1).toBe(flight)
+  expect(state.chats.c1.messages.find(m => m.id === 'b')?.content).toBe('progress')
+});

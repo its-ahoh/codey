@@ -158,3 +158,75 @@ describe('ParallelTeamRunner', () => {
     expect(ctrl?.status).toBe('running');
   });
 });
+
+
+it('pauses only the asking Bot, keeps peers running, and routes each reply once', async () => {
+  const questions: any[] = [];
+  const calls: Array<{ bot: string; prompt: string; resume?: string }> = [];
+  const onFinal = vi.fn();
+  const runner = makeRunner({
+    onUserQuestion: q => questions.push(q), onFinal,
+    botRunner: async (req, bot) => {
+      calls.push({ bot, prompt: req.prompt, resume: req.resumeSessionId });
+      await new Promise(resolve => setTimeout(resolve, 5));
+      if (bot === 'a' && !req.resumeSessionId) return { success: true, output: '[ASK_USER:choice]: Database? | SQLite | Postgres', sessionId: 'session-a' } as any;
+      return { success: true, output: 'progress', sessionId: `session-${bot}` } as any;
+    },
+    advisorRunner: async () => ({ success: true, output: '{"action":"finalize","reason":"consensus","final_message":"done"}' } as any),
+  }, { advisorPollMs: 10, maxDurationMs: 10000 });
+  try {
+    await runner.start();
+    await vi.waitFor(() => expect(questions).toHaveLength(1));
+    await vi.waitFor(() => expect(calls.filter(c => c.bot === 'b').length).toBeGreaterThan(2));
+    expect(calls.filter(c => c.bot === 'a')).toHaveLength(1);
+    expect(onFinal).not.toHaveBeenCalled();
+    await questions[0].resume('SQLite');
+    await expect(questions[0].resume('Postgres')).rejects.toThrow('no longer');
+    await vi.waitFor(() => expect(calls.some(c => c.bot === 'a' && c.resume === 'session-a' && c.prompt.includes('SQLite'))).toBe(true));
+    expect(calls.filter(c => c.bot === 'b').every(c => !c.prompt.includes('SQLite'))).toBe(true);
+  } finally { await runner.stop('user_cancel'); }
+});
+
+it('keeps simultaneous permission and choice requests distinct and cancels them on stop', async () => {
+  const questions: any[] = [];
+  const resolved = vi.fn();
+  const runner = makeRunner({
+    onUserQuestion: q => questions.push(q), onInteractionResolved: resolved,
+    botRunner: async (_req, bot) => bot === 'a'
+      ? { success: false, output: 'blocked', permissionDenials: [{ toolName: 'Read' }] } as any
+      : { success: true, output: '[ASK_USER:choice]: Choose? | One | Two' } as any,
+    advisorRunner: async () => ({ success: true, output: '{"action":"finalize","reason":"consensus"}' } as any),
+  }, { advisorPollMs: 10, maxDurationMs: 10000 });
+  await runner.start();
+  await vi.waitFor(() => expect(questions).toHaveLength(2));
+  expect(new Set(questions.map(q => q.id)).size).toBe(2);
+  expect(questions.find(q => q.bot === 'a').permissionTools).toEqual(['Read']);
+  await runner.stop('user_cancel');
+  expect(resolved).toHaveBeenCalledTimes(2);
+  await expect(questions[0].resume('late')).rejects.toThrow('no longer');
+});
+
+it('holds a dependent Bot until the blocked peer returns a result', async () => {
+  const questions: any[] = [];
+  const calls: string[] = [];
+  const dependency = vi.fn();
+  const runner = makeRunner({
+    onUserQuestion: q => questions.push(q), onBotDependency: dependency,
+    botRunner: async (req, bot) => {
+      calls.push(bot);
+      await new Promise(resolve => setTimeout(resolve, 5));
+      if (bot === 'a' && !req.resumeSessionId) return { success: true, output: '[ASK_USER]: Input?', sessionId: 'a-session' } as any;
+      if (bot === 'b' && !req.resumeSessionId) return { success: true, output: '[ASK: a]: Need the result', sessionId: 'b-session' } as any;
+      return { success: true, output: 'result ready', sessionId: `${bot}-session` } as any;
+    },
+    advisorRunner: async () => ({ success: true, output: '{"action":"continue","reason":"continuing"}' } as any),
+  }, { advisorPollMs: 10, maxDurationMs: 10000 });
+  try {
+    await runner.start();
+    await vi.waitFor(() => expect(dependency).toHaveBeenCalledWith('b', 'a'));
+    expect(calls).toEqual(['a', 'b']);
+    await questions[0].resume('Proceed');
+    await vi.waitFor(() => expect(dependency).toHaveBeenCalledWith('b'));
+    await vi.waitFor(() => expect(calls.filter(bot => bot === 'b').length).toBeGreaterThan(1));
+  } finally { await runner.stop('user_cancel'); }
+});

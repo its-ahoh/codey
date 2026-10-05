@@ -444,3 +444,25 @@ it('runs the actual workspace team path with separate bot sessions per task', as
   expect(requests[0][0].conversationId).not.toBe(requests[1][0].conversationId);
   expect(chat.messages.filter(m => m.bot === 'ben').map(m => m.taskId)).toEqual([a, b]);
 });
+
+it('routes a live interaction reply before the active chat turn queue', async () => {
+  const answerInteraction = vi.fn();
+  const gateway = Object.assign(Object.create(Codey.prototype), {
+    activeParallelRuns: new Map([['chat-a', { answerInteraction }]]),
+    sendToChatWithMemoryTrace: vi.fn(() => { throw new Error('Must not queue another turn'); }),
+  }) as Codey;
+  await gateway.sendToChat('chat-a', 'SQLite', () => {}, undefined, undefined, { interactionId: 'request-a' });
+  expect(answerInteraction).toHaveBeenCalledWith('request-a', 'SQLite');
+  await expect(gateway.sendToChat('chat-b', 'SQLite', () => {}, undefined, undefined, { interactionId: 'request-a' })).rejects.toThrow('no longer running');
+});
+
+it('expires a persisted interaction whose parallel run no longer exists', async () => {
+  const { gateway, manager, chat } = setup();
+  manager.appendMessage(chat.id, { id: 'stale', role: 'assistant', content: 'Old question', timestamp: 0,
+    botInteraction: { id: 'stale', bot: 'a', scope: 'bot', question: 'Old question', status: 'pending' } });
+  const events: any[] = [];
+  await expect(gateway.sendToChat(chat.id, 'Yes', event => events.push(event), undefined, undefined,
+    { interactionId: 'stale' })).rejects.toThrow('no longer running');
+  expect(manager.get(chat.id)?.messages.find(m => m.id === 'stale')?.botInteraction?.status).toBe('cancelled');
+  expect(events[0].type).toBe('bot_interaction');
+});
