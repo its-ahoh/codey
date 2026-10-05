@@ -208,7 +208,7 @@ describe('global Bot conversations', () => {
     await expect(gateway.inviteBotsToGroup(group.id, 'Invalid', ['claire'], '')).rejects.toThrow('direct chat');
     await expect(gateway.inviteBotsToGroup(direct.id, 'Invalid', ['alice'], '')).rejects.toThrow('two Bots');
   });
-  it('persists membership changes and blocks edits during running or paused tasks', async () => {
+  it('persists membership changes and defers edits during running or paused tasks', async () => {
     const { gateway, manager, root } = await bots();
     const group = await gateway.createBotGroup('Review', ['alice', 'ben']);
     manager.appendMessage(group.id, { id: 'past', role: 'assistant', content: 'Past review', timestamp: 1 });
@@ -221,11 +221,28 @@ describe('global Bot conversations', () => {
     expect(group.messages).toHaveLength(2);
     await expect(gateway.updateBotGroup(group.id, ['alice', 'missing'])).rejects.toThrow('not found');
     (gateway as any).chatAborts.set(group.id, new AbortController());
-    await expect(gateway.updateBotGroup(group.id, ['alice', 'ben'])).rejects.toThrow('current group turn');
+    group.sessionAnchors = [{ agent: 'codex', scopeKey: 'current', sessionId: 'original' }] as any;
+    await gateway.updateBotGroup(group.id, ['alice', 'ben']);
+    expect(group.botChat?.members).toEqual(['alice', 'claire']);
+    expect(group.botChat?.pendingMembers).toEqual(['alice', 'ben']);
+    expect(group.botChat?.membershipRevision).toBe(1);
+    expect(group.sessionAnchors?.[0].sessionId).toBe('original');
+    expect(new ChatManager(root).get(group.id)?.botChat?.pendingMembers).toEqual(['alice', 'ben']);
     (gateway as any).chatAborts.delete(group.id);
     group.pendingTeam = { mode: 'auto' } as any;
-    await expect(gateway.updateBotGroup(group.id, ['alice', 'ben'])).rejects.toThrow('paused group task');
+    await gateway.updateBotGroup(group.id, ['ben', 'claire']);
+    expect(group.botChat?.pendingMembers).toEqual(['ben', 'claire']);
     expect(group.botChat?.members).toEqual(['alice', 'claire']);
+    expect(group.sessionAnchors?.[0].sessionId).toBe('original');
+    await gateway.updateBotGroup(group.id, ['alice', 'claire']);
+    expect(group.botChat?.pendingMembers).toBeUndefined();
+    await gateway.updateBotGroup(group.id, ['alice', 'ben']);
+    manager.setPendingTeam(group.id, null);
+    manager.applyPendingBotGroupMembers(group.id);
+    expect(group.botChat?.members).toEqual(['alice', 'ben']);
+    expect(group.botChat?.membershipRevision).toBe(2);
+    expect(group.botChat?.pendingMembers).toBeUndefined();
+    expect(group.sessionAnchors).toBeUndefined();
   });
   it('validates group members and keeps unrelated direct histories private', async () => {
     const { gateway, manager } = await bots();
@@ -371,6 +388,44 @@ describe('mention execution contexts', () => {
     Object.assign(h.gateway, { runTeamForChat: dispatch });
     return { ...h, dispatch };
   }
+
+  it('keeps the running roster and adopts saved members on the next task', async () => {
+    const { gateway, manager, bots, dispatch } = await harness();
+    await bots.saveBot('claire', { role: 'Reviewer', soul: 'Helpful', instructions: 'Review.' }, { tools: [] });
+    const group = await gateway.createBotGroup('Review', ['alice', 'ben']);
+    const normalDispatch = dispatch.getMockImplementation()!;
+    dispatch.mockImplementationOnce(async (...args) => {
+      await gateway.updateBotGroup(group.id, ['alice', 'claire']);
+      expect(args[1].members).toEqual(['alice', 'ben']);
+      expect(group.botChat?.members).toEqual(['alice', 'ben']);
+      return normalDispatch(...args);
+    });
+    await gateway.sendToChat(group.id, 'Review this', () => {});
+    expect(group.botChat?.pendingMembers).toEqual(['alice', 'claire']);
+    await gateway.sendToChat(group.id, 'Review again', () => {});
+    expect(dispatch.mock.calls[1][1].members).toEqual(['alice', 'claire']);
+    expect(group.botChat?.pendingMembers).toBeUndefined();
+    expect(manager.get(group.id)?.id).toBe(group.id);
+  });
+
+  it('keeps paused replies on the original roster before applying the next roster', async () => {
+    const { gateway, manager, bots, dispatch } = await harness();
+    await bots.saveBot('claire', { role: 'Reviewer', soul: 'Helpful', instructions: 'Review.' }, { tools: [] });
+    const group = await gateway.createBotGroup('Review', ['alice', 'ben']);
+    manager.setPendingTeam(group.id, { mode: 'auto', teamName: 'Review', teamTurnId: 'paused', askingBot: 'alice', members: ['alice', 'ben'] } as any);
+    await gateway.updateBotGroup(group.id, ['ben', 'claire']);
+    const resume = vi.fn(async () => {
+      expect(group.botChat?.members).toEqual(['alice', 'ben']);
+      expect(group.botChat?.membershipRevision).toBeUndefined();
+      return 'Continued';
+    });
+    Object.assign(gateway, { resumeTeamFromAnswer: resume });
+    await gateway.sendToChat(group.id, 'Yes', () => {});
+    expect(resume).toHaveBeenCalledOnce();
+    expect(group.botChat?.pendingMembers).toEqual(['ben', 'claire']);
+    await gateway.sendToChat(group.id, 'Next task', () => {});
+    expect(dispatch.mock.calls[0][1].members).toEqual(['ben', 'claire']);
+  });
 
   it('automatically hands off cross-Bot work without exposing other tasks', async () => {
     const { gateway, manager, dispatch } = await harness();

@@ -876,8 +876,8 @@ export class Codey {
   }
 
   public async updateBotGroup(chatId: string, names: string[]): Promise<Chat> {
-    if (this.chatAborts.has(chatId)) throw new Error('Wait for the current group turn to finish before changing members.');
-    return this.chatManager.updateBotGroup(chatId, this.resolveBotGroupMembers(names));
+    const active = this.chatAborts.has(chatId) || (this.pendingChatTurns.get(chatId) ?? 0) > 0;
+    return this.chatManager.updateBotGroup(chatId, this.resolveBotGroupMembers(names), active);
   }
 
   public async inviteBotsToGroup(sourceChatId: string, title: string, names: string[], sharedContext: string): Promise<Chat> {
@@ -6149,6 +6149,10 @@ Example: /model gpt-4.1 write a Python script`;
     let chat = this.chatManager.get(chatId);
     if (!chat) throw new Error(`Chat not found: ${chatId}`);
     const answeringTeam = chat.pendingTeam && !/^\s*\//.test(userTextParam) && !origin?.skillInvoke;
+    // Keep the current/paused task's members and session scope intact.
+    if (!answeringTeam && !this.chatAborts.has(chatId) && chat.botChat?.pendingMembers) {
+      chat = this.chatManager.applyPendingBotGroupMembers(chatId);
+    }
     const directTaskChat = chat.selection.type !== 'team' && chat.botChat?.kind !== 'group' && !chat.pendingTeam && chat.kind !== 'automation';
     let taskId: string | undefined;
     if (directTaskChat) {
