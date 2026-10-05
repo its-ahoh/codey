@@ -22,3 +22,7 @@ export function groupMessages(messages: ChatMessage[]): RenderItem[] {
     return [{ kind: 'single' as const, message }]
   })
 }
+
+export function isLatestChatMessage(message: ChatMessage, messages: ChatMessage[]): boolean {
+  return messages[messages.length - 1]?.id === message.id
+}

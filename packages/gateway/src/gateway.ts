@@ -1,3 +1,4 @@
+import { teamInteractionResponse } from './team-interaction';
 import { inheritWorktreeMemory } from './worktree-memory';
 import { CoMemoClient } from '@codey/core';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -402,8 +403,19 @@ export class Codey {
     workingDir?: string;
     browserChatId?: string;
     interactive?: boolean;
+    onPermissionDenials?: (denials: NonNullable<AgentResponse['permissionDenials']>) => void;
     skipPermissions?: boolean;
   }): Promise<{ response: AgentResponse; usedResume: boolean }> {
+    const finishResponse = (response: AgentResponse): AgentResponse => {
+      const denials = response.permissionDenials?.filter(d => d.toolName !== 'AskUserQuestion');
+      if (denials?.length) {
+        try {
+          if (opts.onPermissionDenials) opts.onPermissionDenials(denials);
+          else if (opts.browserChatId) this.chatEventListener?.({ type: 'permission_denials', chatId: opts.browserChatId, denials });
+        } catch { /* a disconnected UI must not prevent persisting the pause */ }
+      }
+      return teamInteractionResponse(response);
+    };
     const memoryEpoch = this.memoryEpoch ?? 0;
     const workingDir = opts.workingDir ?? this.workingDir;
     const ctxWindow = await this.contextManager.getOrCreate(opts.conversationId);
@@ -448,12 +460,12 @@ export class Codey {
           ...existing,
           blackboardSeenCount: opts.blackboard.totalCount(),
         });
-        return { response: resp, usedResume: true };
+        return { response: finishResponse(resp), usedResume: true };
       }
       // Only a definitively missing session makes the anchor stale. A timeout
       // or any other failure must not fall through to a second execution.
       if (!isMissingSessionFailure(resp)) {
-        return { response: resp, usedResume: true };
+        return { response: finishResponse(resp), usedResume: true };
       }
       this.logger.warn(`[bot:${opts.botName}] resume of ${existing.sessionId} failed; bootstrapping fresh`);
       await this.contextManager.clearBotAnchor(ctxWindow.id, opts.botName);
@@ -487,7 +499,7 @@ export class Codey {
         await this.contextManager.setBotAnchor(ctxWindow.id, opts.botName, anchor);
       }
     }
-    return { response: resp, usedResume: false };
+    return { response: finishResponse(resp), usedResume: false };
   }
 
   /**
@@ -4433,6 +4445,7 @@ Example: /model gpt-4.1 write a Python script`;
         botName,
         task: pending.task,
         browserChatId: resumedChat ? chatId : undefined,
+        onPermissionDenials: emitter.permissionDenials ? denials => emitter.permissionDenials!(denials) : undefined,
         blackboard,
         codingAgent,
         modelConfig,
@@ -5086,6 +5099,8 @@ Example: /model gpt-4.1 write a Python script`;
       const { response } = await this.runBotStep({
         conversationId: teamConv,
         browserChatId: chatId,
+        skipPermissions: this.getSkipPermissions(),
+        onPermissionDenials: denials => sink({ type: 'permission_denials', chatId, denials }),
         botName,
         task: prompt,
         blackboard,
@@ -5603,7 +5618,7 @@ Example: /model gpt-4.1 write a Python script`;
       request = { ...request, effort: this.getDefaultEffort(agent) };
     }
     const response = await this.runAgentWithNetworkRetry(agent, request);
-    if (response.success) return response;
+    if (response.success || response.permissionDenials?.length || response.userQuestion) return response;
 
     // User-initiated abort — do NOT churn through every fallback agent,
     // spawning subprocesses the user just asked to cancel.
@@ -5659,7 +5674,7 @@ Example: /model gpt-4.1 write a Python script`;
         ...rebaseForFallbackAgent(request, agent, entry.agent, response),
         model: resolvedModel,
       });
-      if (fallbackResponse.success) {
+      if (fallbackResponse.success || fallbackResponse.permissionDenials?.length || fallbackResponse.userQuestion) {
         const fromLabel = originalModel ? `${agent}(${originalModel})` : agent;
         // Carry the fallback as structured metadata rather than prepending a
         // banner to the output text. The Aide reuses this same fallback-routed

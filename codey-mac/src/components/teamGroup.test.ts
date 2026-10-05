@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { groupMessages } from './teamGroup'
+import { groupMessages, isLatestChatMessage } from './teamGroup'
 import type { ChatMessage } from '../types'
 const m = (id: string, extra: Partial<ChatMessage> = {}): ChatMessage => ({ id, role: 'assistant', content: id, timestamp: 0, ...extra })
 describe('shared bot transcript', () => {
@@ -20,3 +20,12 @@ describe('shared bot transcript', () => {
     expect(groupMessages(messages).map(x => x.message)).toEqual(messages)
   })
 })
+
+it('keeps controls on the latest message after pending team members are hidden', () => {
+  const messages = [m('pending', { teamTurnId: 't', bot: 'b', botStatus: 'pending' }),
+    m('question', { teamTurnId: 't', choices: ['Yes', 'No'] })];
+  const visible = groupMessages(messages);
+  expect(visible).toHaveLength(1);
+  expect(isLatestChatMessage(visible[0].message, messages)).toBe(true);
+  expect(isLatestChatMessage(visible[0].message, [...messages, m('answer', { role: 'user' })])).toBe(false);
+});

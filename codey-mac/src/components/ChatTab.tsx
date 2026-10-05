@@ -18,7 +18,7 @@ import { ChatContextPanel } from './ChatContextPanel'
 import type { ContextPanelTab } from './ChatContextPanel'
 import { useQuickQuestion } from '../hooks/useQuickQuestion'
 import { parseTeamMessage } from './teamMessageFormat'
-import { groupMessages } from './teamGroup'
+import { groupMessages, isLatestChatMessage } from './teamGroup'
 import { BotAvatar } from './BotAvatar'
 import { botAvatarState } from './botAvatarModel'
 import { StatusSidecar } from './StatusSidecar'
@@ -2140,7 +2140,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
             revision={findRevision}
             onNavigate={() => setFollowLatest(false)}
           />
-          {renderItems.map((item, idx) => {
+          {renderItems.map((item) => {
           const msg = item.message
           const isBotMessage = !!msg.bot && !msg.builtinMember && !msg.teamFinal
           const member = isBotMessage ? bots.find(w => w.name.toLowerCase() === msg.bot!.toLowerCase()) : undefined
@@ -2359,7 +2359,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                 )}
               </div>
               {msg.role === 'assistant'
-                && idx === chat.messages.length - 1
+                && isLatestChatMessage(msg, chat.messages)
                 && chat.messages[chat.messages.length - 1]?.role !== 'user'
                 && msg.userQuestion
                 && msg.userQuestion.options.length > 0
@@ -2423,7 +2423,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                 && !msg.userQuestion
                 && msg.choices
                 && msg.choices.length > 0
-                && idx === chat.messages.length - 1
+                && isLatestChatMessage(msg, chat.messages)
                 && chat.messages[chat.messages.length - 1]?.role !== 'user'
                 && (
                   <div style={styles.choiceRow}>
@@ -2441,7 +2441,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                 )
               }
               {msg.role === 'assistant'
-                && idx === chat.messages.length - 1
+                && isLatestChatMessage(msg, chat.messages)
                 && state.pendingPermissions[chatId]
                 && (
                   <PermissionCard
