@@ -21,6 +21,7 @@ export default tseslint.config(
       '**/release/**',
       '**/release-local/**',
       '**/build/**',
+      'voice/.build/**',
       '**/out/**',
       '.worktrees/**',
       'chrome-extension/**',

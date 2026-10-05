@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useRef, useState } from 'react'
 import type { ChatMessage } from '../types'
 import { apiService } from '../services/api'
 
@@ -7,11 +7,14 @@ export function BotInteractionCard({ chatId, message }: { chatId: string; messag
   const request = message.botInteraction
   const [answer, setAnswer] = useState('')
   const [busy, setBusy] = useState(false)
+  const sending = useRef(false)
   const [error, setError] = useState('')
   if (!request) return null
   if (request.status !== 'pending') return <small>{request.status === 'resolved' ? `Answered${request.answer ? `: ${request.answer}` : ''}` : 'Cancelled'}</small>
   const send = async (text: string, grant = false) => {
-    if (busy) return
+    // React state can lag behind consecutive events in the same batch.
+    if (sending.current) return
+    sending.current = true
     setBusy(true)
     setError('')
     try {
@@ -21,7 +24,7 @@ export function BotInteractionCard({ chatId, message }: { chatId: string; messag
       }
       await apiService.chats.send(chatId, text, undefined, { interactionId: request.id })
     } catch (err) { setError((err as Error).message) }
-    finally { setBusy(false) }
+    finally { sending.current = false; setBusy(false) }
   }
   return <section aria-label={`Waiting for your response: ${request.bot}`} style={{ padding: 12, border: '1px solid currentColor', borderRadius: 8, margin: '8px 0' }}>
     <strong>{request.bot} · {request.scope === 'team' ? 'Team waiting' : 'Waiting for you'}</strong>
