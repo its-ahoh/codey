@@ -1,3 +1,4 @@
+import { TeamAvatar } from './TeamAvatar'
 import { BotInteractionCard } from './BotInteractionCard'
 import { ChatHeaderActions } from './ChatHeaderActions'
 import { BotMembers } from './BotMembers'
@@ -1853,7 +1854,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
         <div style={{ ...styles.headerIdentity, ...(containerWidth > 0 && containerWidth < 760 ? { flex: 1, overflow: 'hidden' } : {}) }}>
           <span style={styles.workspaceTag}>{chat.botChat?.kind === 'direct'
             ? <BotAvatar name={chat.botChat.members[0]} config={bots.find(bot => bot.name === chat.botChat!.members[0])?.config.avatar} state={flight?.queuedPosition ? 'waiting' : isSending ? 'working' : 'idle'} size={30} />
-            : <UIIcon name={chat.botChat ? 'users' : 'workspace'} size={13} />}{chat.botChat ? (chat.botChat.kind === 'direct' && chat.title === chat.botChat.members[0] ? bots.find(bot => bot.name === chat.botChat!.members[0])?.config.displayName || chat.title : chat.title) : chat.workspaceName}</span>
+            : chat.botChat?.kind === 'group' ? <TeamAvatar name={chat.title} members={chat.botChat.members} bots={bots} size={30} state={flight?.queuedPosition ? 'waiting' : isSending ? 'working' : 'idle'} /> : <UIIcon name="workspace" size={13} />}{chat.botChat ? (chat.botChat.kind === 'direct' && chat.title === chat.botChat.members[0] ? bots.find(bot => bot.name === chat.botChat!.members[0])?.config.displayName || chat.title : chat.title) : chat.workspaceName}</span>
           {chat.botChat?.kind === 'direct' && isSending && <span role="status" style={{ fontSize: 11, color: C.fg3 }}>{flight?.queuedPosition ? 'Queued' : 'Working…'}</span>}
           {chat.botChat && <BotMembers key={chat.id} chat={chat} running={isSending} />}
         </div>

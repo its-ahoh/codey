@@ -1,3 +1,4 @@
+import { TeamAvatar } from './TeamAvatar'
 import { BotCreationGuide } from './BotCreationGuide'
 import { useEffect, useState, useCallback, useRef, type CSSProperties } from 'react'
 import { apiService, BotDto } from '../services/api'
@@ -148,7 +149,7 @@ export default function GlobalTeamsSection() {
         <div key={name} style={styles.teamCard}>
           {/* Header: name · member count · delete */}
           <div style={styles.teamHeader}>
-            <span style={styles.teamAvatar}><UIIcon name="users" size={17} /></span>
+            <TeamAvatar name={name} members={team.members} bots={bots} size={32} />
             <input defaultValue={name} onBlur={e => renameTeam(name, e.target.value.trim())} aria-label="Team name"
               style={styles.teamName} />
             <span style={styles.memberCount}><UIIcon name="users" size={12} />{team.members.length}</span>
@@ -329,7 +330,6 @@ const styles: Record<string, CSSProperties> = {
   emptyText: { color: C.fg3, fontSize: 12, lineHeight: 1.5, maxWidth: 300, marginTop: 5 },
   teamCard: { marginBottom: 16, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, overflow: 'hidden', boxShadow: '0 6px 18px rgba(0,0,0,0.05)' },
   teamHeader: { display: 'flex', alignItems: 'center', gap: 9, padding: '13px 15px', borderBottom: `1px solid ${C.border}`, background: C.surface2 },
-  teamAvatar: { width: 32, height: 32, borderRadius: 10, display: 'grid', placeItems: 'center', background: C.accentDim, color: C.accent },
   teamName: { flex: 1, background: 'transparent', color: C.fg, border: 'none', fontSize: 15, fontWeight: 750, outline: 'none' },
   memberCount: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: C.fg3, background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 12, padding: '4px 7px' },
   deleteBtn: { width: 28, height: 28, display: 'grid', placeItems: 'center', background: 'transparent', color: C.fg3, border: 'none', cursor: 'pointer', borderRadius: 7 },
