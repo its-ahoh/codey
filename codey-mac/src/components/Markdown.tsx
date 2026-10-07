@@ -1,6 +1,7 @@
 import React from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import remarkCjkFriendly from 'remark-cjk-friendly'
 import { C } from '../theme'
 import { FilePathLink } from './FilePathLink'
 import { parseFileRef } from './filePathRef'
@@ -247,7 +248,10 @@ const MarkdownInner: React.FC<MarkdownProps> = ({ children, variant = 'assistant
       style={{ minWidth: 0, maxWidth: '100%', fontSize: M.fontSize, lineHeight: M.lineHeight, overflowWrap: 'anywhere', wordBreak: 'break-word' }}
     >
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        // CommonMark won't close `**Label:**text` when the colon is full-width
+        // Chinese punctuation and a Chinese letter follows the closing `**`;
+        // this plugin relaxes that rule for CJK text without changing English.
+        remarkPlugins={[remarkGfm, remarkCjkFriendly]}
         components={{
           p: ({ children }) => <p style={{ margin: `0 0 ${M.blockGap}px 0` }}>{children}</p>,
           a: ({ href, children }) => (
