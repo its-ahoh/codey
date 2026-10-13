@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkCjkFriendly from 'remark-cjk-friendly'
 import { C } from '../theme'
-import { FilePathLink } from './FilePathLink'
+import { FilePathCwd, FilePathLink } from './FilePathLink'
 import { parseFileRef } from './filePathRef'
 
 interface MarkdownProps {
@@ -220,6 +220,24 @@ function preserveLineBreaks(src: string): string {
 }
 
 const MarkdownInner: React.FC<MarkdownProps> = ({ children, variant = 'assistant', layout = 'compact' }) => {
+  const cwd = React.useContext(FilePathCwd)
+  const openLink = async (href: string, reveal: boolean) => {
+    try {
+      if (/^https?:\/\//i.test(href)) {
+        await window.codey.openExternal(href)
+        return
+      }
+      // Keep URL schemes and protocol-relative URLs out of the filesystem
+      // bridge. Markdown percent-encodes spaces and non-ASCII path characters.
+      if (!href || href.startsWith('#') || href.startsWith('//') || /^[a-z][a-z0-9+.-]*:/i.test(href)) return
+      const decoded = decodeURIComponent(href)
+      const path = decoded.replace(/:\d+(?::\d+)?$/, '')
+      const res = await window.codey.fileRef.open(path, cwd, { reveal })
+      if (!res.ok) throw new Error(res.error)
+    } catch (error) {
+      alert(`Couldn't open ${href}: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
   const onUser = variant === 'user'
   const M = METRICS[layout]
   // Inside a user bubble the fill is the accent, which is dark in some
@@ -259,7 +277,8 @@ const MarkdownInner: React.FC<MarkdownProps> = ({ children, variant = 'assistant
               href={href}
               onClick={e => {
                 e.preventDefault()
-                if (href) window.codey?.openExternal?.(href)
+                e.stopPropagation()
+                if (href) void openLink(href, e.metaKey || e.shiftKey)
               }}
               style={{ color: linkColor, textDecoration: 'underline' }}
             >
