@@ -243,9 +243,10 @@ export async function generateAideTurnDigest(
   const briefSource = (raw?.taskBrief ?? raw) as Record<string, unknown> | null;
   const state = briefSource?.state as Record<string, unknown> | undefined;
   // A display fallback is useful, but must never become a permanent cache hit.
+  // Only reject a brief with no usable goal or status: small slips such as a
+  // quoted progress number or a missing timeline are repaired by coercion.
   if (rejectFallback && (!briefSource || typeof briefSource.goal !== 'string' || !briefSource.goal.trim()
-    || !state || !['working', 'waiting', 'blocked', 'done'].includes(String(state.status))
-    || typeof state.progress !== 'number' || !Number.isFinite(state.progress) || !Array.isArray(briefSource.timeline))) {
+    || !state || !['working', 'waiting', 'blocked', 'done'].includes(String(state.status)))) {
     throw new Error('Aide returned an invalid task brief');
   }
   const taskBrief = coerceTaskBrief(briefSource, fallbackGoal);

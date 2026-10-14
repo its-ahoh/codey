@@ -28,6 +28,8 @@ export interface ParallelFinalEvent {
   message: string;
   summary: string;
   perBot: Array<{ name: string; excerpt: string }>;
+  /** True only when the Advisor itself chose `finalize`, not a terminate mapped to consensus. */
+  advisorFinalized?: boolean;
 }
 
 export interface ParallelUserQuestion {
@@ -70,6 +72,9 @@ export class ParallelTeamRunner {
   private peerWaits = new Map<string, { target: string; resolve: (output: string | null) => void }>();
   private interactionRevision = 0;
   private resumingBots = new Set<string>();
+  /** Completed Bot rounds; a finished round is new evidence even when its opinion file is unchanged. */
+  private completedRounds = 0;
+  private advisorFinalized = false;
   private interactions = new Map<string, { bot?: string; question: string; resolve: (answer: string | null) => void }>();
   private lastMtimeMs = 0;
   private startedAt = 0;
@@ -216,6 +221,7 @@ export class ParallelTeamRunner {
           this.opts.onBotDependency?.(waitingBot);
           pending.resolve(res.success ? res.output : `Bot failed: ${res.error ?? res.output}`);
         }
+        this.completedRounds++;
         console.log(`[parallel-runner] bot "${bot}" round ${round} done. success=${res.success} output=${(res.output || '').substring(0, 100)}`);
         await appendTranscript(wsRoot, ws, chat, {
           actor: bot, kind: res.success ? 'bot_done' : 'bot_failed',
@@ -290,12 +296,15 @@ export class ParallelTeamRunner {
       }));
       const pendingAsks = extractPendingAsks(opinions);
       const ctrl = await readControl(ctrlPath);
+      // Bots can spend longer than the idle window inside one run without
+      // writing; a live Advisor loop keeps the discussion open, as before.
+      this.idleSince = Date.now();
       const interactionRevision = this.interactionRevision;
       // Exclude the Advisor's own summary/control writes: they are not new
       // evidence and must not trigger another model call by themselves.
       const evidence = {
         topic, opinions: [...opinions].sort((a, b) => a.name.localeCompare(b.name)),
-        interactionRevision, failures: [...this.failedBots],
+        interactionRevision, completedRounds: this.completedRounds, failures: [...this.failedBots],
         dependencies: [...this.peerWaits].map(([bot, wait]) => [bot, wait.target]),
         resuming: [...this.resumingBots].sort(),
         userAnswer: pendingUserAnswer,
@@ -365,6 +374,7 @@ export class ParallelTeamRunner {
       if (turn.action === 'finalize' || turn.action === 'terminate') {
         if (this.interactions.size || this.peerWaits.size || this.resumingBots.size || interactionRevision !== this.interactionRevision) continue;
         const reason: DiscussionTerminatedReason = turn.action === 'finalize' ? 'consensus' : (turn.reason === 'drift' ? 'drift' : 'consensus');
+        this.advisorFinalized = turn.action === 'finalize';
         await this.stop(reason, turn.final_message || '');
         break;
       }
@@ -418,7 +428,7 @@ export class ParallelTeamRunner {
       const excerpt = contentLines.slice(0, 3).join(' ').slice(0, 300);
       perBot.push({ name: w, excerpt: excerpt || '(no content)' });
     }
-    this.opts.onFinal({ reason, message, summary, perBot });
+    this.opts.onFinal({ reason, message, summary, perBot, advisorFinalized: this.advisorFinalized });
   }
 }
 

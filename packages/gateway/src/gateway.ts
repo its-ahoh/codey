@@ -732,21 +732,22 @@ export class Codey {
     }
   }
 
+  private taskBriefCache = new TaskBriefCache();
+
   /**
    * Generate (and cache) the Task HUD brief for a chat on demand. Returns null
    * when the Aide is not configured, the chat is missing, or generation fails —
    * callers keep showing whatever was cached.
    */
-  private taskBriefCache = new TaskBriefCache();
-
   public async generateTaskBrief(chatId: string): Promise<TaskBrief | null> {
     if (!this.isAideConfigured()) return null;
     const chat = this.chatManager.get(chatId);
     if (!chat) return null;
     try {
-      return await (this.taskBriefCache ??= new TaskBriefCache()).get(chatId,
+      return await this.taskBriefCache.get(chatId,
         () => this.chatManager.get(chatId), brief => this.chatManager.setTaskBrief(chatId, brief),
-        snapshot => generateTaskBrief(snapshot, this.getAideOptions(), true));
+        snapshot => generateTaskBrief(snapshot, this.getAideOptions(), true),
+        JSON.stringify(this.getAideAgentAndModel()));
     } catch (err) {
       this.logger.warn(`Aide task-brief generation failed: ${(err as Error).message}`);
       return null;
@@ -3924,6 +3925,8 @@ Example: /model gpt-4.1 write a Python script`;
     runBot: (bot: string, prompt: string, codingAgent: CodingAgent, modelConfig: ModelConfig | undefined, blackboard: TeamBlackboard) => Promise<{ success: boolean; output: string; error?: string; thinking?: string }>,
     onStepDone?: (d: { step: number; bot: string; failed: boolean; error?: string }) => void,
     coordinator?: { agent: CodingAgent; model?: ModelConfig },
+    /** The user's own words, without composed chat context; gates the Aide first route. */
+    firstRouteTask?: string,
   ): Promise<
     | { fallback: true; fallbackReason: string }
     | {
@@ -3998,10 +4001,14 @@ Example: /model gpt-4.1 write a Python script`;
           history, lastBot, lastOutput,
           pendingQuestion: pendingArbitration ?? undefined,
         };
-        const firstRoute = canUseAideForFirstRoute(advisorInput) && this.isAideConfigured()
-          ? await routeAutomaticFirst(advisorInput, this.getAideOptions(signal, false)) : null;
+        // Judge simplicity on the user's request, not the composed prompt
+        // (chat context and addressed-bot notes make it multi-line). The bot
+        // still receives the full task as its instruction.
+        const routeInput = { ...advisorInput, task: firstRouteTask?.trim() || task };
+        const firstRoute = canUseAideForFirstRoute(routeInput) && this.isAideConfigured()
+          ? await routeAutomaticFirst(routeInput, this.getAideOptions(signal, false)) : null;
         if (signal?.aborted) break;
-        const turn: AdvisorTurn = firstRoute ?? await runAdvisor(
+        const turn: AdvisorTurn = firstRoute ? { ...firstRoute, instruction: task } : await runAdvisor(
           advisorInput,
           { agent: mAgent, model: mModel, runner: this.advisorRunner, signal },
         );
@@ -4123,9 +4130,25 @@ Example: /model gpt-4.1 write a Python script`;
       pendingArbitration = { bot: turnNext, question: ask.question, options: ask.options };
     }
 
-    // The Aide finalizer summarizes terminal results, including capped runs.
-    // Keep summaries returned with routing decisions, but do not make a
-    // separate Advisor request solely to repeat that presentation work.
+    // Cap exhausted without explicit done. The Aide finalizer summarizes
+    // capped runs, so only ask the Advisor for a closing summary when no Aide
+    // is configured — otherwise the run would end with no model conclusion.
+    // Skip when the user aborted: no fresh request after cancellation.
+    if (!finalSummary && parts.length > 0 && !fallbackMidRun && !signal?.aborted && !this.isAideConfigured()) {
+      const closing = await runAdvisor(
+        {
+          task,
+          members: members.map(n => ({ name: n, hint: botManager.getDispatchHint(n) })),
+          history,
+          lastBot,
+          lastOutput,
+          finalize: true,
+        },
+        { agent: mAgent, model: mModel, runner: this.advisorRunner, signal },
+      );
+      if (!closing.fallback) finalSummary = closing.final_summary ?? '';
+    }
+
     return { fallback: false, parts, finalSummary, fallbackMidRun, blackboard, thinkingByStep };
   }
 
@@ -5323,7 +5346,7 @@ Example: /model gpt-4.1 write a Python script`;
       const origOnFinal = runner['opts'].onFinal;
       runner['opts'].onFinal = (ev: ParallelFinalEvent) => {
         finalResponse = this.formatParallelFinal(ev, teamName);
-        if (ev.reason === 'consensus') advisorSummary = [ev.summary, ev.message].filter(Boolean).join('\n\n');
+        if (ev.advisorFinalized) advisorSummary = [ev.summary, ev.message].filter(Boolean).join('\n\n');
         origOnFinal(ev);
       };
       await runner.start();
@@ -5366,6 +5389,7 @@ Example: /model gpt-4.1 write a Python script`;
         runOneBot,
         (d) => botMsgs.endBot(d.failed ? 'failed' : 'done', d.failed ? { failureReason: d.error ?? 'Bot failed without an error message' } : undefined),
         this.getAdvisorAgentAndModel(),
+        opts.routingTask,
       );
 
       if (result.fallback) {

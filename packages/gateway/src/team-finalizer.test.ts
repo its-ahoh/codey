@@ -19,6 +19,7 @@ describe('Aide terminal message', () => {
     { messages: [bot('failed', { botFailureReason: 'Checks failed' })] },
     { messages: [bot('done', { botNextUserAction: { text: 'Choose a destination' } })] },
     { reason: 'Step limit reached' },
+    { messages: [bot(), bot('pending', { id: 'b', bot: 'Bob' })] },
   ])('keeps the evidence summarizer for exceptions: %j', async extra => {
     const run = vi.fn().mockResolvedValue('Unfinished work requires attention.');
     const result = await composeTeamFinal({ ...input(), advisorSummary: 'Finished.', ...extra, run });

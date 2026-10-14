@@ -2,7 +2,7 @@ import { type AdvisorInput, type AdvisorTurn, type AideOptions, runAideJson } fr
 
 /** Cheap, conservative admission gate. Unknown languages/shapes keep the Advisor. */
 export function canUseAideForFirstRoute(input: AdvisorInput): boolean {
-  if (input.history.length || input.lastBot !== null || input.lastOutput !== null
+  if (input.history.length || input.lastBot != null || input.lastOutput != null
     || input.pendingQuestion || input.userClarification || input.finalize || !input.members.length) return false;
   const task = input.task.trim();
   if (task.length > 500 || /[\n\r]|```|@/.test(task)) return false;

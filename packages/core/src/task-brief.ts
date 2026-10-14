@@ -33,7 +33,9 @@ export function coerceTaskBrief(raw: unknown, fallbackGoal: string, now: number 
   const s = o.state && typeof o.state === 'object' ? (o.state as Record<string, unknown>) : {};
 
   const status = (STATUSES as string[]).includes(s.status as string) ? (s.status as TaskStatus) : 'working';
-  const rawProgress = typeof s.progress === 'number' && Number.isFinite(s.progress) ? s.progress : 0;
+  // Models sometimes quote the number ("40"); accept that rather than reset to 0.
+  const numericProgress = typeof s.progress === 'string' && s.progress.trim() ? Number(s.progress) : s.progress;
+  const rawProgress = typeof numericProgress === 'number' && Number.isFinite(numericProgress) ? numericProgress : 0;
   const progress = Math.max(0, Math.min(100, Math.round(rawProgress)));
 
   const na = o.nextAction && typeof o.nextAction === 'object' ? (o.nextAction as Record<string, unknown>) : undefined;

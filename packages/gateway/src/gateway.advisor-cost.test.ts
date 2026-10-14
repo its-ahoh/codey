@@ -2,6 +2,39 @@ import { describe, expect, it, vi } from 'vitest';
 import { Codey } from './gateway';
 
 describe('Advisor call budget', () => {
+  function cappedHarness(aideConfigured: boolean) {
+    const advisorRunner = vi.fn().mockImplementation(async (req: { prompt: string }) => ({ success: true,
+      output: JSON.stringify(/finalize|FINAL/.test(req.prompt) && advisorRunner.mock.calls.length > 4
+        ? { done: true, final_summary: 'Notes are ready' }
+        : { done: false, next: 'writer', instruction: 'Refine the notes', summary_of_last: 'Notes refined' }) }));
+    const gateway = Object.assign(Object.create(Codey.prototype), {
+      logger: { info: vi.fn() },
+      workspaceManager: { getBotManager: () => ({
+        getDispatchHint: (name: string) => name,
+        buildTeamBotPrompt: (_name: string, prompt: string) => prompt,
+      }) },
+      getAdvisorAgentAndModel: () => ({ agent: 'pi' }), advisorRunner,
+      getDefaultAgent: () => 'codex', getDefaultModelConfig: () => undefined,
+      isAideConfigured: () => aideConfigured,
+    });
+    return { gateway, advisorRunner };
+  }
+  it('leaves capped-run summaries to the Aide when one is configured', async () => {
+    const { gateway, advisorRunner } = cappedHarness(true);
+    const runBot = vi.fn().mockResolvedValue({ success: true, output: 'Draft revised' });
+    const result = await gateway.runAdvisorLoop({ members: ['writer'] }, 'Prepare notes',
+      undefined, undefined, undefined, () => {}, runBot);
+    expect(advisorRunner).toHaveBeenCalledTimes(4);
+    expect(result.finalSummary).toBe('');
+  });
+  it('asks the Advisor for a closing summary when no Aide is configured', async () => {
+    const { gateway, advisorRunner } = cappedHarness(false);
+    const runBot = vi.fn().mockResolvedValue({ success: true, output: 'Draft revised' });
+    const result = await gateway.runAdvisorLoop({ members: ['writer'] }, 'Prepare notes',
+      undefined, undefined, undefined, () => {}, runBot);
+    expect(advisorRunner).toHaveBeenCalledTimes(5);
+    expect(result.finalSummary).toBe('Notes are ready');
+  });
   it('returns capped worker results without a separate summary request', async () => {
     const advisorRunner = vi.fn().mockResolvedValue({ success: true, output: JSON.stringify({
       done: false, next: 'writer', instruction: 'Refine the notes', summary_of_last: 'Notes refined',
@@ -14,6 +47,7 @@ describe('Advisor call budget', () => {
       }) },
       getAdvisorAgentAndModel: () => ({ agent: 'pi' }), advisorRunner,
       getDefaultAgent: () => 'codex', getDefaultModelConfig: () => undefined,
+      isAideConfigured: () => true,
     });
     const runBot = vi.fn().mockResolvedValue({ success: true, output: 'Draft revised' });
     const result = await gateway.runAdvisorLoop({ members: ['writer'] }, 'Prepare notes',
@@ -49,6 +83,16 @@ describe('automatic first-turn Aide integration', () => {
     expect(runBot).toHaveBeenCalledTimes(1);
     expect(result.parts[0].bot).toBe('writer');
     expect(result.finalSummary).toBe('Finished');
+  });
+  it('judges simplicity on the user request, but gives the bot the full prompt', async () => {
+    const { gateway, aide, advisor } = harness();
+    const runBot = vi.fn().mockResolvedValue({ success: true, output: 'Explanation complete.' });
+    const composed = 'Explain closures.\n\n[Earlier context]\nThe user is reading a JavaScript guide.';
+    await gateway.runAdvisorLoop({ members: ['writer', 'reviewer'] }, composed,
+      undefined, undefined, undefined, () => {}, runBot, undefined, undefined, 'Explain closures.');
+    expect(aide).toHaveBeenCalledTimes(1);
+    expect(advisor).toHaveBeenCalledTimes(1);
+    expect(runBot.mock.calls[0][1]).toContain('[Earlier context]');
   });
   it('sends complex tasks directly to Advisor', async () => {
     const { gateway, aide, advisor } = harness();

@@ -17,7 +17,7 @@ export function advisorInstructions(input: AdvisorInput): string {
     ].join('\n');
   }
   common.push('Choose only exact names from ROSTER. Every routing decision needs a concrete instruction and a short reason shown to the user.');
-  const hasLastOutput = input.lastBot !== null || input.lastOutput !== null;
+  const hasLastOutput = input.lastBot != null || input.lastOutput != null;
   if (hasLastOutput) common.push('Include summary_of_last: a one-to-three-sentence summary of LAST OUTPUT.');
   if (input.pendingQuestion) {
     return [...common,

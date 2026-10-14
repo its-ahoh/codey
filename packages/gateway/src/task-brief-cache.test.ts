@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Chat, TaskBrief } from '@codey/core';
 import { generateTaskBrief } from '@codey/core';
-import { TaskBriefCache } from './task-brief-cache';
+import { TASK_BRIEF_RETRY_MS, TaskBriefCache } from './task-brief-cache';
 
 const brief: TaskBrief = { goal: 'Review', state: { status: 'working', progress: 0 }, timeline: [], generatedAt: 100 };
 const chat = () => ({ title: 'Notes', messages: [{ id: 'm', role: 'user', content: 'Prepare notes', timestamp: 1 }] } as Chat);
@@ -11,11 +11,13 @@ describe('Task overview cache', () => {
     const current = chat();
     const runner = vi.fn().mockResolvedValueOnce({ success: true, output: 'not json' })
       .mockResolvedValue({ success: true, output: JSON.stringify(brief) });
-    const cache = new TaskBriefCache();
+    let now = 0;
+    const cache = new TaskBriefCache(() => now);
     const save = (value: TaskBrief) => { current.taskBrief = value; };
     const generate = (snapshot: Chat) => generateTaskBrief(snapshot, { agent: 'codex', runner }, true);
     await expect(cache.get('c', () => current, save, generate)).rejects.toThrow('invalid task brief');
     expect(current.taskBrief).toBeUndefined();
+    now += TASK_BRIEF_RETRY_MS;
     expect(await cache.get('c', () => current, save, generate)).toMatchObject({ goal: 'Review' });
     expect(runner).toHaveBeenCalledTimes(2);
   });
@@ -48,12 +50,37 @@ describe('Task overview cache', () => {
     expect(save.mock.calls[0][0].goal).toBe('Updated');
   });
 
-  it('retries a failed request', async () => {
+  it('backs off a failed input, then retries it later', async () => {
     const current = chat();
-    const cache = new TaskBriefCache();
+    let now = 0;
+    const cache = new TaskBriefCache(() => now);
     const generate = vi.fn().mockRejectedValueOnce(new Error('Temporary')).mockResolvedValue(brief);
     await expect(cache.get('c', () => current, vi.fn(), generate)).rejects.toThrow('Temporary');
+    await expect(cache.get('c', () => current, vi.fn(), generate)).rejects.toThrow('failed recently');
+    expect(generate).toHaveBeenCalledOnce();
+    now += TASK_BRIEF_RETRY_MS;
     expect(await cache.get('c', () => current, vi.fn(), generate)).toMatchObject({ goal: 'Review' });
+    expect(generate).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries a failed input at once when the chat changes', async () => {
+    const current = chat();
+    const cache = new TaskBriefCache(() => 0);
+    const generate = vi.fn().mockRejectedValueOnce(new Error('Temporary')).mockResolvedValue(brief);
+    await expect(cache.get('c', () => current, vi.fn(), generate)).rejects.toThrow('Temporary');
+    current.messages[0].content = 'Prepare shorter notes';
+    expect(await cache.get('c', () => current, vi.fn(), generate)).toMatchObject({ goal: 'Review' });
+  });
+
+  it('regenerates when the Aide agent or model changes', async () => {
+    const current = chat();
+    const save = (value: TaskBrief) => { current.taskBrief = value; };
+    const generate = vi.fn().mockResolvedValue(brief);
+    const cache = new TaskBriefCache();
+    await cache.get('c', () => current, save, generate, 'codex');
+    await cache.get('c', () => current, save, generate, 'codex');
+    expect(generate).toHaveBeenCalledOnce();
+    await cache.get('c', () => current, save, generate, 'claude-code');
     expect(generate).toHaveBeenCalledTimes(2);
   });
 

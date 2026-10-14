@@ -95,7 +95,7 @@ export async function composeTeamFinal(input: TeamFinalInput): Promise<ChatMessa
   // Reuse only a clean terminal decision. Failures, questions and partial
   // runs still need the evidence-based finalizer to preserve their details.
   if (input.advisorSummary?.trim() && !input.reason && !input.stopped && !input.signal?.aborted
-    && done.length > 0 && bots.every(m => m.botStatus === 'done' || m.botStatus === 'pending')
+    && done.length > 0 && bots.every(m => m.botStatus === 'done')
     && !bots.some(m => m.botNextUserAction?.text)) {
     content = input.advisorSummary.trim();
     source = 'advisor';
