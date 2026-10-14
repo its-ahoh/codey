@@ -75,3 +75,7 @@ Reproduction: build Core and Gateway, run `node scripts/coordination-eval/run.cj
 ## Isolated PR verification
 
 Rebased onto main `d4ed6532` with only the coordination changes included. Core: 715/715; Gateway: 631/631; desktop: 1,109/1,109. Core/Gateway builds, all-workspace typecheck, and lint pass (existing warnings remain). The initial desktop run lacked the Electron binary after installing dependencies without lifecycle scripts; installing that binary and rerunning the full desktop suite passed. Counts differ from the earlier working-directory runs because unrelated in-progress changes are excluded from this PR.
+
+## Follow-up: scenario-specific JSON
+
+The later production change replaces generic Advisor instructions with scenario-specific JSON guidance. See [SCENARIO-JSON.md](SCENARIO-JSON.md) for its separate paired experiment, the initial escalation failure, and the repair/retest evidence. This is distinct from the earlier appended-budget and first-turn-only candidates above.

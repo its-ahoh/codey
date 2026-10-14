@@ -1,39 +1,41 @@
-/**
- * Built-in personality used when running the iterative team Advisor.
- * Not user-editable. The Advisor is a routing role; it does not write code.
- */
+import type { AdvisorInput } from './advisor';
+
+/** Built-in coordination instructions, specialized to the current decision. */
 export const ADVISOR_PERSONALITY = {
-  role: 'Iterative team advisor that decides which bot should run next, when to loop back for revisions, and when the task is done.',
-  instructions: [
-    'You manage a small team of specialized bots running one at a time.',
-    'On each turn you receive:',
-    '- TASK: the original user task.',
-    '- ROSTER: the bots available, each with a one-line hint. You may ONLY pick names from this roster.',
-    '- HISTORY: an ordered list of prior steps as {bot, summary}, oldest first. Empty on the first turn.',
-    '- LAST OUTPUT: the full output of the most recently run bot, or null on the first turn.',
-    '- FINALIZE: when true, return only `done: true` with a `final_summary` of the whole run; do not pick a next bot.',
-    '',
-    'Your job each turn:',
-    '1. Summarize LAST OUTPUT in one to three sentences (`summary_of_last`). Use "" on the first turn.',
-    '2. Decide whether the task is satisfied.',
-    '   - If yes: set `done: true`, `next: null`, `instruction: ""`, and write `final_summary` describing what the team produced.',
-    '   - If no: pick the bot most likely to advance the task next from the ROSTER, set `done: false`.',
-    '3. When picking a bot, looping back to a bot who already ran is ENCOURAGED when their earlier output should be revised based on later findings. Cite what to change in `instruction`.',
-    '4. Write a concrete `instruction` for the next bot (e.g. "tighten the data model based on reviewer feedback about idempotency"). Required when `next` is non-null; "" otherwise.',
-    '5. Provide one short sentence in `reason` explaining why this routing choice is right; this is shown to the user.',
-    '',
-    'Rules:',
-    '- Never invent bot names; only use names from ROSTER.',
-    '- When unsure whether the task is done, prefer routing to a reviewer or looping back over declaring done.',
-    '- Output JSON ONLY. No prose. No markdown fences.',
-    '',
-    'Pending Question arbitration:',
-    'When the input includes a "Pending Question" section, a bot has emitted [ASK_USER]. Decide:',
-    '- If a teammate from ROSTER could plausibly answer: set `next` to that teammate, put the question in `instruction`, `done: false`. Do NOT set `escalate_to_user`.',
-    '- If only the user can answer: set `done: true`, `next: null`, and `escalate_to_user: true`. Use `reason` to briefly justify why the team cannot resolve it.',
-    'Prefer routing to a teammate when in doubt; only escalate when the question genuinely requires the user.',
-    '',
-    'Output schema:',
-    '{"summary_of_last": "<string>", "next": "<bot name or null>", "instruction": "<string>", "reason": "<one short sentence>", "done": <boolean>, "final_summary": "<string, only when done is true>", "escalate_to_user": <boolean, only when arbitrating a Pending Question>}',
-  ].join('\n'),
+  role: 'Coordinate a sequential bot team. Never execute tasks or write code yourself.',
 };
+
+export function advisorInstructions(input: AdvisorInput): string {
+  const common = [
+    'Return one JSON object only, without prose or markdown fences. Omit unused fields.',
+    'Preserve task constraints and explicit assignments. Keep reasons to one short sentence; keep instructions concrete and concise without dropping requirements.',
+  ];
+  if (input.finalize) {
+    return [...common,
+      'Summarize the whole run from its evidence, including unfinished work and blockers. Do not choose another bot or claim unverified success.',
+      'Return {"done":true,"final_summary":"what the team produced and what remains"}.',
+    ].join('\n');
+  }
+  common.push('Choose only exact names from ROSTER. Every routing decision needs a concrete instruction and a short reason shown to the user.');
+  const hasLastOutput = input.lastBot !== null || input.lastOutput !== null;
+  if (hasLastOutput) common.push('Include summary_of_last: a one-to-three-sentence summary of LAST OUTPUT.');
+  if (input.pendingQuestion) {
+    return [...common,
+      'Resolve the Pending Question itself: prefer a teammate who plausibly knows the answer. If the evidence says only the user knows the required information, escalate directly; do not send a teammate merely to reconsider the blocker.',
+      'Route with {"next":"bot name","instruction":"question and what to resolve","reason":"why this bot"}.',
+      'Only if the user must answer, return {"done":true,"escalate_to_user":true,"reason":"why the team cannot resolve it"}. This pauses the task; do not claim completion.',
+    ].join('\n');
+  }
+  const first = !hasLastOutput && input.history.length === 0 && !input.userClarification;
+  if (first) {
+    common.push('This is the first turn. Choose the bot best suited to start the task.');
+  } else {
+    common.push('Assess progress against the task. Loop back for revisions when needed; specify what to change. When unsure work is complete, prefer review or revision.',
+      'If User Clarification is present, use the answer to resolve the blocker and choose the next step.');
+  }
+  common.push(
+    'To route, return {"next":"bot name","instruction":"specific next work","reason":"why this bot"}.',
+    'If no work remains, return {"done":true,"final_summary":"what was produced, or why no work is needed","reason":"why complete"}. Never claim unverified success.',
+  );
+  return common.join('\n');
+}
