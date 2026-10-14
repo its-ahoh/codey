@@ -1,3 +1,4 @@
+import { canUseAideForFirstRoute, routeAutomaticFirst } from './automatic-first-route';
 import { TaskBriefCache } from './task-brief-cache';
 import { openingChatTitle } from './chat-title';
 import { botOutputStream } from './bot-output';
@@ -3991,15 +3992,17 @@ Example: /model gpt-4.1 write a Python script`;
         isRevision = seenBots.has(turnNext);
         directNext = null;
       } else {
-        const turn: AdvisorTurn = await runAdvisor(
-          {
-            task,
-            members: members.map(n => ({ name: n, hint: botManager.getDispatchHint(n) })),
-            history,
-            lastBot,
-            lastOutput,
-            pendingQuestion: pendingArbitration ?? undefined,
-          },
+        const advisorInput = {
+          task,
+          members: members.map(n => ({ name: n, hint: botManager.getDispatchHint(n) })),
+          history, lastBot, lastOutput,
+          pendingQuestion: pendingArbitration ?? undefined,
+        };
+        const firstRoute = canUseAideForFirstRoute(advisorInput) && this.isAideConfigured()
+          ? await routeAutomaticFirst(advisorInput, this.getAideOptions(signal, false)) : null;
+        if (signal?.aborted) break;
+        const turn: AdvisorTurn = firstRoute ?? await runAdvisor(
+          advisorInput,
           { agent: mAgent, model: mModel, runner: this.advisorRunner, signal },
         );
         if (turn.fallback) {

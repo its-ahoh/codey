@@ -79,3 +79,7 @@ Rebased onto main `d4ed6532` with only the coordination changes included. Core: 
 ## Follow-up: scenario-specific JSON
 
 The later production change replaces generic Advisor instructions with scenario-specific JSON guidance. See [SCENARIO-JSON.md](SCENARIO-JSON.md) for its separate paired experiment, the initial escalation failure, and the repair/retest evidence. This is distinct from the earlier appended-budget and first-turn-only candidates above.
+
+## Follow-up: automatic first routing
+
+[FIRST-ROUTE.md](FIRST-ROUTE.md) measures moving simple automatic-team first decisions to Aide, with direct Advisor handling of recognized complex requests. It includes the extra-call cost of uncertain Aide fallback and does not claim overall token savings.
