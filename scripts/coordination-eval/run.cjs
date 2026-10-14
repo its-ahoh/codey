@@ -1,5 +1,5 @@
 // Live model experiment. Synthetic data only. Never changes production configuration.
-const fs = require('fs'), path = require('path'), crypto = require('crypto');
+const fs = require('fs'), path = require('path');
 const { execFileSync } = require('child_process');
 const Module = require('module'), ts = require('typescript');
 const root = path.resolve(__dirname, '../..');
