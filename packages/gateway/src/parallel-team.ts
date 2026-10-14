@@ -274,6 +274,7 @@ export class ParallelTeamRunner {
     const topPath = topicPath(wsRoot, ws, chat);
 
     let pendingUserAnswer: { question: string; answer: string } | undefined;
+    let lastEvaluatedState: string | undefined;
 
     while (!this.done) {
       await new Promise<void>(res => setTimeout(res, this.opts.settings.advisorPollMs));
@@ -289,15 +290,23 @@ export class ParallelTeamRunner {
       }));
       const pendingAsks = extractPendingAsks(opinions);
       const ctrl = await readControl(ctrlPath);
-      this.idleSince = Date.now();
-
       const interactionRevision = this.interactionRevision;
+      // Exclude the Advisor's own summary/control writes: they are not new
+      // evidence and must not trigger another model call by themselves.
+      const evidence = {
+        topic, opinions: [...opinions].sort((a, b) => a.name.localeCompare(b.name)),
+        interactionRevision, failures: [...this.failedBots],
+        dependencies: [...this.peerWaits].map(([bot, wait]) => [bot, wait.target]),
+        resuming: [...this.resumingBots].sort(),
+        userAnswer: pendingUserAnswer,
+      };
+      const evidenceState = JSON.stringify(evidence);
+      if (evidenceState === lastEvaluatedState) continue;
       const prompt = buildParallelAdvisorPrompt({
         topic, summary, opinions, pendingAsks, idleMs: 0,
         revision: ctrl?.revision ?? 0,
         userAnswer: pendingUserAnswer,
       }) + `\n\nBots waiting for user input: ${JSON.stringify([...this.interactions.values()].map(p => ({ bot: p.bot, question: p.question })))}. Keep independent work moving. Do not finalize while these requests are pending. Use ask_user only for a decision that must pause the entire team.`;
-      pendingUserAnswer = undefined;
 
       console.log(`[parallel-runner] advisor poll: opinions=${opinions.map(o => o.name).join(',')}, revision=${ctrl?.revision ?? 0}`);
       let resp: AgentResponse;
@@ -320,6 +329,8 @@ export class ParallelTeamRunner {
         await appendTranscript(wsRoot, ws, chat, { actor: 'advisor', kind: 'parse_error' });
         continue;
       }
+      lastEvaluatedState = JSON.stringify({ ...evidence, userAnswer: undefined });
+      pendingUserAnswer = undefined;
 
       if (turn.summary_update) {
         await fs.promises.writeFile(sumPath, `# Summary\n\n${turn.summary_update}\n`, 'utf-8');

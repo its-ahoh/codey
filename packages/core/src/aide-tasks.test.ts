@@ -23,6 +23,9 @@ function optsReturning(json: string): AideOptions {
 }
 
 describe('generateTaskBrief', () => {
+  it.each(['not json', '{}', '{"goal":"Review","state":{"status":"done"},"timeline":[]}'])('rejects a fallback when generating for the cache: %s', async output => {
+    await expect(generateTaskBrief(makeChat(), optsReturning(output), true)).rejects.toThrow('invalid task brief');
+  });
   it('parses a JSON brief from the Aide and fills generatedAt', async () => {
     const opts = optsReturning(JSON.stringify({
       goal: 'Add OAuth login',

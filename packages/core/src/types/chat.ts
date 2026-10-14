@@ -155,7 +155,7 @@ export interface ChatMessage {
   /** Built-in identity, distinct from an editable bot named Advisor. */
   builtinMember?: 'aide' | 'advisor';
   /** Authoritative terminal message; never deduplicate by its prose. */
-  teamFinal?: { source: 'aide' | 'fallback'; reason: string; outcome?: 'completed' | 'partial' | 'failed' | 'stopped' | 'empty' };
+  teamFinal?: { source: 'aide' | 'advisor' | 'fallback'; reason: string; outcome?: 'completed' | 'partial' | 'failed' | 'stopped' | 'empty' };
   /** Team name for a bot message (for the group header). */
   teamName?: string;
   /** Dispatch mode of the owning team run. */
@@ -217,6 +217,7 @@ export interface Chat {
   tasks?: ConversationTask[];
   id: string;
   title: string;
+  titleIsManual?: boolean;
   workspaceName: string;
   /** 'automation' marks a hidden system chat owned by an automation; absent = normal user chat. */
   kind?: 'automation';
@@ -381,6 +382,8 @@ export interface TaskBrief {
   timeline: TaskEvent[];
   /** When the Aide produced this (epoch ms). */
   generatedAt: number;
+  /** Exact source fingerprint used to validate the persisted overview cache. */
+  inputKey?: string;
   /** Terminal team turn summarized by the same Aide call, when applicable. */
   teamTurnId?: string;
 }

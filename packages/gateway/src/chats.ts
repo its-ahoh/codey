@@ -372,9 +372,10 @@ export class ChatManager {
     }
   }
 
-  rename(chatId: string, title: string): Chat {
+  rename(chatId: string, title: string, manual = true): Chat {
     const chat = this.requireChat(chatId);
     chat.title = title;
+    chat.titleIsManual = manual;
     chat.updatedAt = Date.now();
     this.persist(chat);
     return chat;
@@ -742,7 +743,7 @@ export class ChatManager {
     if (task) task.updatedAt = Date.now();
     chat.updatedAt = Date.now();
     // Automation chats keep their authoritative "Automation: <name>" title.
-    if (chat.messages.length === 1 && message.role === 'user' && chat.kind !== 'automation' && !chat.botChat) {
+    if (chat.messages.length === 1 && message.role === 'user' && chat.kind !== 'automation' && !chat.botChat && !chat.titleIsManual) {
       chat.title = deriveTitle(message.content);
     }
     this.persist(chat);

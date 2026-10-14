@@ -27,6 +27,14 @@ const route = (over: Partial<{ channel: string; channelUserId: string; channelCh
 }) as Parameters<ChatManager['addRoute']>[1];
 
 describe('ChatManager routes', () => {
+  it('preserves a manually renamed title when the first message arrives', () => {
+    const mgr = new ChatManager(tmpRoot());
+    const chat = mgr.create({ workspaceName: 'main' });
+    mgr.rename(chat.id, 'My notebook');
+    mgr.appendMessage(chat.id, { id: 'first', role: 'user', content: 'Prepare release notes', timestamp: 1 });
+    expect(mgr.get(chat.id)?.title).toBe('My notebook');
+    expect(mgr.get(chat.id)?.titleIsManual).toBe(true);
+  });
   it('attaches a route to a chat', () => {
     const mgr = new ChatManager(tmpRoot());
     const chat = mgr.create({ workspaceName: 'main', title: 't' });
