@@ -1,5 +1,5 @@
 import { AgentRequest, AgentResponse, CodingAgent, ModelConfig } from './types';
-import { ADVISOR_PERSONALITY } from './advisor-personality';
+import { ADVISOR_PERSONALITY, advisorInstructions } from './advisor-personality';
 import { runWithTimeout } from './utils/run';
 
 export interface AdvisorMember {
@@ -61,7 +61,7 @@ export function buildAdvisorPrompt(input: AdvisorInput): string {
   lines.push('## Role');
   lines.push(ADVISOR_PERSONALITY.role);
   lines.push('## Instructions');
-  lines.push(ADVISOR_PERSONALITY.instructions);
+  lines.push(advisorInstructions(input));
   lines.push('## Task');
   lines.push(input.task);
   lines.push('## Roster');
@@ -94,9 +94,6 @@ export function buildAdvisorPrompt(input: AdvisorInput): string {
     const q = input.pendingQuestion;
     lines.push('## Pending Question');
     lines.push(`Bot ${q.bot} asked: ${q.question}`);
-    lines.push(
-      'Decide one of: (a) route this to a teammate from the Roster who can answer — set `next` to that teammate and put the question in `instruction`; or (b) escalate to the user — set `escalate_to_user: true` and `done: true` with no `next`. Prefer (a) when a teammate plausibly has the answer.',
-    );
   }
   if (input.finalize) {
     lines.push('## Finalize');

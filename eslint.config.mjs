@@ -17,6 +17,8 @@ export default tseslint.config(
     ignores: [
       '**/node_modules/**',
       '**/dist/**',
+      // Frozen compiled evidence from the live coordination experiment.
+      'scripts/coordination-eval/results/evaluated/**',
       '**/dist-electron/**',
       '**/release/**',
       '**/release-local/**',

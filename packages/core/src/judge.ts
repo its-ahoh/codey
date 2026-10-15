@@ -77,6 +77,9 @@ function fallback(reason: string): JudgeDecision {
 
 export async function runJudge(input: JudgeInput, opts: JudgeOptions): Promise<JudgeDecision> {
   if (input.edges.length === 0) return fallback('no outgoing edges');
+  if (input.edges.length === 1 && !input.edges[0].condition?.trim() && !input.question?.trim()) {
+    return { edgeId: input.edges[0].id, reason: 'Only unconditional route.', fallback: false };
+  }
 
   const prompt = buildJudgePrompt(input);
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;

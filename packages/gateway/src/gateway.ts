@@ -1,3 +1,6 @@
+import { canUseAideForFirstRoute, routeAutomaticFirst } from './automatic-first-route';
+import { TaskBriefCache } from './task-brief-cache';
+import { openingChatTitle } from './chat-title';
 import { botOutputStream } from './bot-output';
 import { teamInteractionResponse } from './team-interaction';
 import { inheritWorktreeMemory } from './worktree-memory';
@@ -729,6 +732,8 @@ export class Codey {
     }
   }
 
+  private taskBriefCache = new TaskBriefCache();
+
   /**
    * Generate (and cache) the Task HUD brief for a chat on demand. Returns null
    * when the Aide is not configured, the chat is missing, or generation fails —
@@ -739,9 +744,10 @@ export class Codey {
     const chat = this.chatManager.get(chatId);
     if (!chat) return null;
     try {
-      const brief = await generateTaskBrief(chat, this.getAideOptions());
-      this.chatManager.setTaskBrief(chatId, brief);
-      return brief;
+      return await this.taskBriefCache.get(chatId,
+        () => this.chatManager.get(chatId), brief => this.chatManager.setTaskBrief(chatId, brief),
+        snapshot => generateTaskBrief(snapshot, this.getAideOptions(), true),
+        JSON.stringify(this.getAideAgentAndModel()));
     } catch (err) {
       this.logger.warn(`Aide task-brief generation failed: ${(err as Error).message}`);
       return null;
@@ -3919,6 +3925,8 @@ Example: /model gpt-4.1 write a Python script`;
     runBot: (bot: string, prompt: string, codingAgent: CodingAgent, modelConfig: ModelConfig | undefined, blackboard: TeamBlackboard) => Promise<{ success: boolean; output: string; error?: string; thinking?: string }>,
     onStepDone?: (d: { step: number; bot: string; failed: boolean; error?: string }) => void,
     coordinator?: { agent: CodingAgent; model?: ModelConfig },
+    /** The user's own words, without composed chat context; gates the Aide first route. */
+    firstRouteTask?: string,
   ): Promise<
     | { fallback: true; fallbackReason: string }
     | {
@@ -3987,15 +3995,21 @@ Example: /model gpt-4.1 write a Python script`;
         isRevision = seenBots.has(turnNext);
         directNext = null;
       } else {
-        const turn: AdvisorTurn = await runAdvisor(
-          {
-            task,
-            members: members.map(n => ({ name: n, hint: botManager.getDispatchHint(n) })),
-            history,
-            lastBot,
-            lastOutput,
-            pendingQuestion: pendingArbitration ?? undefined,
-          },
+        const advisorInput = {
+          task,
+          members: members.map(n => ({ name: n, hint: botManager.getDispatchHint(n) })),
+          history, lastBot, lastOutput,
+          pendingQuestion: pendingArbitration ?? undefined,
+        };
+        // Judge simplicity on the user's request, not the composed prompt
+        // (chat context and addressed-bot notes make it multi-line). The bot
+        // still receives the full task as its instruction.
+        const routeInput = { ...advisorInput, task: firstRouteTask?.trim() || task };
+        const firstRoute = canUseAideForFirstRoute(routeInput) && this.isAideConfigured()
+          ? await routeAutomaticFirst(routeInput, this.getAideOptions(signal, false)) : null;
+        if (signal?.aborted) break;
+        const turn: AdvisorTurn = firstRoute ? { ...firstRoute, instruction: task } : await runAdvisor(
+          advisorInput,
           { agent: mAgent, model: mModel, runner: this.advisorRunner, signal },
         );
         if (turn.fallback) {
@@ -4116,10 +4130,11 @@ Example: /model gpt-4.1 write a Python script`;
       pendingArbitration = { bot: turnNext, question: ask.question, options: ask.options };
     }
 
-    // Cap exhausted without explicit done — request a final summary.
-    // Skip when the user aborted: the inner runner will fail anyway and we
-    // shouldn't send a fresh request after cancellation.
-    if (!finalSummary && parts.length > 0 && !fallbackMidRun && !signal?.aborted) {
+    // Cap exhausted without explicit done. The Aide finalizer summarizes
+    // capped runs, so only ask the Advisor for a closing summary when no Aide
+    // is configured — otherwise the run would end with no model conclusion.
+    // Skip when the user aborted: no fresh request after cancellation.
+    if (!finalSummary && parts.length > 0 && !fallbackMidRun && !signal?.aborted && !this.isAideConfigured()) {
       const closing = await runAdvisor(
         {
           task,
@@ -4165,6 +4180,7 @@ Example: /model gpt-4.1 write a Python script`;
     task: string,
     steps: TeamStepRecord[],
     signal?: AbortSignal,
+    advisorSummary?: string,
   ): Promise<void> {
     if (emitter.rendersBotBubbles) return;
     const teamTurnId = `channel:${teamName}`;
@@ -4172,6 +4188,7 @@ Example: /model gpt-4.1 write a Python script`;
       teamTurnId,
       teamName,
       messages: teamStepRecords(steps, teamTurnId, teamName),
+      advisorSummary,
       task,
       signal,
       run: this.isAideConfigured()
@@ -4335,6 +4352,7 @@ Example: /model gpt-4.1 write a Python script`;
       await this.notifyTeamFinal(
         finalEmitter, teamName, task,
         result.parts.map(p => ({ step: p.step, bot: p.bot, output: p.output })),
+        undefined, result.fallbackMidRun ? undefined : result.finalSummary,
       );
       return;
     }
@@ -4640,17 +4658,6 @@ Example: /model gpt-4.1 write a Python script`;
       return emitter.transcript;
     }
     emitter.endBot?.('done');
-    const closing = await runAdvisor(
-      {
-        task: pending.task,
-        members: team.members.map(n => ({ name: n, hint: wm.getDispatchHint(n) })),
-        history: newHistory,
-        lastBot: turn.next,
-        lastOutput: response.output,
-        finalize: true,
-      },
-      { agent: mAgent, model: mModel, runner: this.advisorRunner, signal },
-    );
     await this.notifyTeamFinal(emitter, pending.teamName, pending.task, newParts, signal);
     return emitter.transcript;
   }
@@ -5049,7 +5056,7 @@ Example: /model gpt-4.1 write a Python script`;
     opts: { forceAll?: boolean; routingTask?: string; taskId?: string } = {},
     chatAgent?: CodingAgent,
     chatModel?: ModelConfig,
-  ): Promise<{ response: string; tokens?: number; choices?: string[]; thinkingByStep?: Record<number, string>; teamTurnId?: string }> {
+  ): Promise<{ response: string; tokens?: number; choices?: string[]; thinkingByStep?: Record<number, string>; teamTurnId?: string; advisorSummary?: string }> {
     if (!team || !team.members || team.members.length === 0) {
       throw new Error(`Team not found or empty: ${teamName}`);
     }
@@ -5335,14 +5342,16 @@ Example: /model gpt-4.1 write a Python script`;
       }
       this.activeParallelRuns.set(chat.id, runner);
       let finalResponse = '';
+      let advisorSummary: string | undefined;
       const origOnFinal = runner['opts'].onFinal;
       runner['opts'].onFinal = (ev: ParallelFinalEvent) => {
         finalResponse = this.formatParallelFinal(ev, teamName);
+        if (ev.advisorFinalized) advisorSummary = [ev.summary, ev.message].filter(Boolean).join('\n\n');
         origOnFinal(ev);
       };
       await runner.start();
       await runner.waitDone();
-      return { response: finalResponse, teamTurnId };
+      return { response: finalResponse, teamTurnId, advisorSummary };
     }
     // === end parallel dispatch branch ===
 
@@ -5380,6 +5389,7 @@ Example: /model gpt-4.1 write a Python script`;
         runOneBot,
         (d) => botMsgs.endBot(d.failed ? 'failed' : 'done', d.failed ? { failureReason: d.error ?? 'Bot failed without an error message' } : undefined),
         this.getAdvisorAgentAndModel(),
+        opts.routingTask,
       );
 
       if (result.fallback) {
@@ -5441,7 +5451,8 @@ Example: /model gpt-4.1 write a Python script`;
         // Chat renders the whiteboard in the context panel, so the reply
         // carries only the Advisor summary.
         const response = summary;
-        return { response, thinkingByStep: result.thinkingByStep, teamTurnId };
+        return { response, thinkingByStep: result.thinkingByStep, teamTurnId,
+          advisorSummary: result.fallbackMidRun ? undefined : result.finalSummary };
       }
     }
 
@@ -6161,6 +6172,7 @@ Example: /model gpt-4.1 write a Python script`;
     }
     const directTaskChat = chat.selection.type !== 'team' && chat.botChat?.kind !== 'group' && !chat.pendingTeam && chat.kind !== 'automation';
     let taskId: string | undefined;
+    let classifiedTitle: string | undefined;
     if (directTaskChat) {
       const matchingAbort = new AbortController();
       const ownsMatchingAbort = !this.chatAborts.has(chatId);
@@ -6176,6 +6188,7 @@ Example: /model gpt-4.1 write a Python script`;
         }
         taskId = decision.taskId;
         if (decision.newTitle) {
+          classifiedTitle = decision.newTitle;
           const updated = this.chatManager.createTask(chatId, decision.newTitle);
           taskId = updated.tasks![updated.tasks!.length - 1].id;
         }
@@ -6349,6 +6362,7 @@ Example: /model gpt-4.1 write a Python script`;
     let activeTeamName = pendingTeam?.teamName ?? (chat.selection.type === 'team' ? chat.selection.name : adHocTeam?.name);
     let teamTermination: string | undefined;
     let finalTeamMessage: ChatMessage | null = null;
+    let advisorFinalSummary: string | undefined;
 
     // Persisted alongside the assistant message at completion. Declared here
     // so the sink wrapper can capture 'info' events into it (see below).
@@ -6646,9 +6660,10 @@ Example: /model gpt-4.1 write a Python script`;
     // as the fallback if the Aide fails or returns nothing.
     // Automation chats keep their authoritative "Automation: <name>" title —
     // no LLM title generation.
+    const titleAtStart = afterUser.title;
     const titlePromise: Promise<string> | undefined =
-      afterUser.messages.length === 1 && this.isAideConfigured() && chat.kind !== 'automation' && !chat.botChat
-        ? this.generateChatTitleSafe(userText)
+      afterUser.messages.length === 1 && this.isAideConfigured() && chat.kind !== 'automation' && !chat.botChat && !chat.titleIsManual
+        ? openingChatTitle(classifiedTitle, () => this.generateChatTitleSafe(userText))
         : undefined;
 
     let streamedText = '';
@@ -6723,7 +6738,7 @@ Example: /model gpt-4.1 write a Python script`;
       // real team run (a named team, or an ad-hoc team with several members).
       if (isSoloMentionRun(messages, activeTeamId, chat.selection.type === 'team')) return null;
       const message = await publishTeamFinal({
-        teamTurnId: activeTeamId, teamName: activeTeamName, messages, context, task: pendingTeam?.task ?? userText,
+        teamTurnId: activeTeamId, teamName: activeTeamName, messages, context, advisorSummary: advisorFinalSummary, task: pendingTeam?.task ?? userText,
         reason: reason || teamTermination, stopped, signal: abortController.signal,
         run: this.isAideConfigured() ? (prompt, signal) => runAide(prompt, { ...this.getAideOptions(signal, false), retries: 0 }) : undefined,
       }, {
@@ -6793,6 +6808,7 @@ Example: /model gpt-4.1 write a Python script`;
         tokens = r.tokens;
         teamChoices = r.choices;
         teamThinkingByStep = r.thinkingByStep;
+        advisorFinalSummary = r.advisorSummary;
         teamTurnId = r.teamTurnId;
       } else if (chat.selection.type === 'team') {
         // Resolve the team from the chat's workspace.json (read above), not from
@@ -6835,6 +6851,7 @@ Example: /model gpt-4.1 write a Python script`;
         tokens = r.tokens;
         teamChoices = r.choices;
         teamThinkingByStep = r.thinkingByStep;
+        advisorFinalSummary = r.advisorSummary;
         teamTurnId = r.teamTurnId;
       } else {
         let response = await this.runWithFallback(agent, {
@@ -7092,10 +7109,12 @@ Example: /model gpt-4.1 write a Python script`;
       let finalTitle = this.chatManager.get(chatId)?.title;
       if (titlePromise && !activeTeamId && !abortController.signal.aborted) {
         const aiTitle = await titlePromise;
-        if (aiTitle && aiTitle !== finalTitle) {
-          this.chatManager.rename(chatId, aiTitle);
+        if (aiTitle && this.chatManager.get(chatId)?.title === titleAtStart
+          && !this.chatManager.get(chatId)?.titleIsManual) {
+          this.chatManager.rename(chatId, aiTitle, false);
           finalTitle = aiTitle;
         }
+        finalTitle = this.chatManager.get(chatId)?.title;
       }
 
       const adoptedWorkspace = chat.botChat ? undefined : await this.adoptAgentCreatedWorktree(chatId);

@@ -1,0 +1,196 @@
+{
+  "baseRef": "9cff31c6",
+  "model": "gpt-5.6-terra",
+  "effort": "medium",
+  "cases": [
+    "escalate",
+    "teammate"
+  ],
+  "rounds": 2,
+  "design": "Authored scenarios with paired alternating order; fresh sessions, no retries. Checks are limited semantic smoke checks, not general model-quality proof.",
+  "calls": [
+    {
+      "case": "escalate",
+      "round": 0,
+      "variant": "baseline",
+      "prompt": "# Advisor\n\n## Role\n\nIterative team advisor that decides which bot should run next, when to loop back for revisions, and when the task is done.\n\n## Instructions\n\nYou manage a small team of specialized bots running one at a time.\nOn each turn you receive:\n- TASK: the original user task.\n- ROSTER: the bots available, each with a one-line hint. You may ONLY pick names from this roster.\n- HISTORY: an ordered list of prior steps as {bot, summary}, oldest first. Empty on the first turn.\n- LAST OUTPUT: the full output of the most recently run bot, or null on the first turn.\n- FINALIZE: when true, return only `done: true` with a `final_summary` of the whole run; do not pick a next bot.\n\nYour job each turn:\n1. Summarize LAST OUTPUT in one to three sentences (`summary_of_last`). Use \"\" on the first turn.\n2. Decide whether the task is satisfied.\n   - If yes: set `done: true`, `next: null`, `instruction: \"\"`, and write `final_summary` describing what the team produced.\n   - If no: pick the bot most likely to advance the task next from the ROSTER, set `done: false`.\n3. When picking a bot, looping back to a bot who already ran is ENCOURAGED when their earlier output should be revised based on later findings. Cite what to change in `instruction`.\n4. Write a concrete `instruction` for the next bot (e.g. \"tighten the data model based on reviewer feedback about idempotency\"). Required when `next` is non-null; \"\" otherwise.\n5. Provide one short sentence in `reason` explaining why this routing choice is right; this is shown to the user.\n\nRules:\n- Never invent bot names; only use names from ROSTER.\n- When unsure whether the task is done, prefer routing to a reviewer or looping back over declaring done.\n- Output JSON ONLY. No prose. No markdown fences.\n\nPending Question arbitration:\nWhen the input includes a \"Pending Question\" section, a bot has emitted [ASK_USER]. Decide:\n- If a teammate from ROSTER could plausibly answer: set `next` to that teammate, put the question in `instruction`, `done: false`. Do NOT set `escalate_to_user`.\n- If only the user can answer: set `done: true`, `next: null`, and `escalate_to_user: true`. Use `reason` to briefly justify why the team cannot resolve it.\nPrefer routing to a teammate when in doubt; only escalate when the question genuinely requires the user.\n\nOutput schema:\n{\"summary_of_last\": \"<string>\", \"next\": \"<bot name or null>\", \"instruction\": \"<string>\", \"reason\": \"<one short sentence>\", \"done\": <boolean>, \"final_summary\": \"<string, only when done is true>\", \"escalate_to_user\": <boolean, only when arbitrating a Pending Question>}\n\n## Task\n\nImplement search and have the reviewer verify it.\n\n## Roster\n\n- coder: Implements code and fixes defects\n\n- reviewer: Reviews and tests\n\n- writer: Writes user documentation\n\n## History\n\n(empty — this is the first turn)\n\n## Last Output\n\nBot: coder\n\nOutput:\n\nBlocked on a private deployment destination only the user knows.\n\n## Pending Question\n\nBot coder asked: Which private deployment destination?\n\nDecide one of: (a) route this to a teammate from the Roster who can answer — set `next` to that teammate and put the question in `instruction`; or (b) escalate to the user — set `escalate_to_user: true` and `done: true` with no `next`. Prefer (a) when a teammate plausibly has the answer.",
+      "output": "{\"summary_of_last\":\"Coder is blocked waiting for a private deployment destination, which only the user can provide.\",\"next\":null,\"instruction\":\"\",\"reason\":\"The deployment destination is user-specific and cannot be determined by the available teammates.\",\"done\":true,\"final_summary\":\"Implementation and review cannot proceed until the user provides the private deployment destination.\",\"escalate_to_user\":true}",
+      "tokens": {
+        "input": 19274,
+        "output": 128,
+        "total": 19402
+      },
+      "ms": 10915.801417,
+      "turn": {
+        "summary_of_last": "Coder is blocked waiting for a private deployment destination, which only the user can provide.",
+        "next": null,
+        "instruction": "",
+        "reason": "The deployment destination is user-specific and cannot be determined by the available teammates.",
+        "done": true,
+        "final_summary": "Implementation and review cannot proceed until the user provides the private deployment destination.",
+        "fallback": false,
+        "escalateToUser": true
+      },
+      "correct": true
+    },
+    {
+      "case": "escalate",
+      "round": 0,
+      "variant": "specialized",
+      "prompt": "# Advisor\n\n## Role\n\nCoordinate a sequential bot team. Never execute tasks or write code yourself.\n\n## Instructions\n\nReturn one JSON object only, without prose or markdown fences. Omit unused fields.\nPreserve task constraints and explicit assignments. Keep reasons to one short sentence; keep instructions concrete and concise without dropping requirements.\nChoose only exact names from ROSTER. Every routing decision needs a concrete instruction and a short reason shown to the user.\nInclude summary_of_last: a one-to-three-sentence summary of LAST OUTPUT.\nResolve the Pending Question itself: prefer a teammate who plausibly knows the answer. If the evidence says only the user knows the required information, escalate directly; do not send a teammate merely to reconsider the blocker.\nRoute with {\"next\":\"bot name\",\"instruction\":\"question and what to resolve\",\"reason\":\"why this bot\"}.\nOnly if the user must answer, return {\"done\":true,\"escalate_to_user\":true,\"reason\":\"why the team cannot resolve it\"}. This pauses the task; do not claim completion.\n\n## Task\n\nImplement search and have the reviewer verify it.\n\n## Roster\n\n- coder: Implements code and fixes defects\n\n- reviewer: Reviews and tests\n\n- writer: Writes user documentation\n\n## History\n\n(empty — this is the first turn)\n\n## Last Output\n\nBot: coder\n\nOutput:\n\nBlocked on a private deployment destination only the user knows.\n\n## Pending Question\n\nBot coder asked: Which private deployment destination?",
+      "output": "{\"summary_of_last\":\"Coder reported being blocked because the deployment destination is private and unknown.\",\"done\":true,\"escalate_to_user\":true,\"reason\":\"Only you can provide the private deployment destination.\"}",
+      "tokens": {
+        "input": 18785,
+        "output": 46,
+        "total": 18831
+      },
+      "ms": 8879.754417000002,
+      "turn": {
+        "summary_of_last": "Coder reported being blocked because the deployment destination is private and unknown.",
+        "next": null,
+        "instruction": "",
+        "reason": "Only you can provide the private deployment destination.",
+        "done": true,
+        "fallback": false,
+        "escalateToUser": true
+      },
+      "correct": true
+    },
+    {
+      "case": "teammate",
+      "round": 0,
+      "variant": "specialized",
+      "prompt": "# Advisor\n\n## Role\n\nCoordinate a sequential bot team. Never execute tasks or write code yourself.\n\n## Instructions\n\nReturn one JSON object only, without prose or markdown fences. Omit unused fields.\nPreserve task constraints and explicit assignments. Keep reasons to one short sentence; keep instructions concrete and concise without dropping requirements.\nChoose only exact names from ROSTER. Every routing decision needs a concrete instruction and a short reason shown to the user.\nInclude summary_of_last: a one-to-three-sentence summary of LAST OUTPUT.\nResolve the Pending Question itself: prefer a teammate who plausibly knows the answer. If the evidence says only the user knows the required information, escalate directly; do not send a teammate merely to reconsider the blocker.\nRoute with {\"next\":\"bot name\",\"instruction\":\"question and what to resolve\",\"reason\":\"why this bot\"}.\nOnly if the user must answer, return {\"done\":true,\"escalate_to_user\":true,\"reason\":\"why the team cannot resolve it\"}. This pauses the task; do not claim completion.\n\n## Task\n\nImplement search and have the reviewer verify it.\n\n## Roster\n\n- coder: Implements code and fixes defects\n\n- reviewer: Reviews and tests\n\n- writer: Writes user documentation\n\n## History\n\n(empty — this is the first turn)\n\n## Last Output\n\nBot: coder\n\nOutput:\n\nReviewer has the test results.\n\n## Pending Question\n\nBot coder asked: Reviewer, did search tests pass?",
+      "output": "{\"summary_of_last\":\"Coder reports that the reviewer has the search test results.\",\"next\":\"reviewer\",\"instruction\":\"Confirm whether the search tests passed and report any failures with concise details.\",\"reason\":\"Reviewer owns testing and can answer directly.\"}",
+      "tokens": {
+        "input": 18782,
+        "output": 83,
+        "total": 18865
+      },
+      "ms": 10573.059416,
+      "turn": {
+        "summary_of_last": "Coder reports that the reviewer has the search test results.",
+        "next": "reviewer",
+        "instruction": "Confirm whether the search tests passed and report any failures with concise details.",
+        "reason": "Reviewer owns testing and can answer directly.",
+        "done": false,
+        "fallback": false
+      },
+      "correct": true
+    },
+    {
+      "case": "teammate",
+      "round": 0,
+      "variant": "baseline",
+      "prompt": "# Advisor\n\n## Role\n\nIterative team advisor that decides which bot should run next, when to loop back for revisions, and when the task is done.\n\n## Instructions\n\nYou manage a small team of specialized bots running one at a time.\nOn each turn you receive:\n- TASK: the original user task.\n- ROSTER: the bots available, each with a one-line hint. You may ONLY pick names from this roster.\n- HISTORY: an ordered list of prior steps as {bot, summary}, oldest first. Empty on the first turn.\n- LAST OUTPUT: the full output of the most recently run bot, or null on the first turn.\n- FINALIZE: when true, return only `done: true` with a `final_summary` of the whole run; do not pick a next bot.\n\nYour job each turn:\n1. Summarize LAST OUTPUT in one to three sentences (`summary_of_last`). Use \"\" on the first turn.\n2. Decide whether the task is satisfied.\n   - If yes: set `done: true`, `next: null`, `instruction: \"\"`, and write `final_summary` describing what the team produced.\n   - If no: pick the bot most likely to advance the task next from the ROSTER, set `done: false`.\n3. When picking a bot, looping back to a bot who already ran is ENCOURAGED when their earlier output should be revised based on later findings. Cite what to change in `instruction`.\n4. Write a concrete `instruction` for the next bot (e.g. \"tighten the data model based on reviewer feedback about idempotency\"). Required when `next` is non-null; \"\" otherwise.\n5. Provide one short sentence in `reason` explaining why this routing choice is right; this is shown to the user.\n\nRules:\n- Never invent bot names; only use names from ROSTER.\n- When unsure whether the task is done, prefer routing to a reviewer or looping back over declaring done.\n- Output JSON ONLY. No prose. No markdown fences.\n\nPending Question arbitration:\nWhen the input includes a \"Pending Question\" section, a bot has emitted [ASK_USER]. Decide:\n- If a teammate from ROSTER could plausibly answer: set `next` to that teammate, put the question in `instruction`, `done: false`. Do NOT set `escalate_to_user`.\n- If only the user can answer: set `done: true`, `next: null`, and `escalate_to_user: true`. Use `reason` to briefly justify why the team cannot resolve it.\nPrefer routing to a teammate when in doubt; only escalate when the question genuinely requires the user.\n\nOutput schema:\n{\"summary_of_last\": \"<string>\", \"next\": \"<bot name or null>\", \"instruction\": \"<string>\", \"reason\": \"<one short sentence>\", \"done\": <boolean>, \"final_summary\": \"<string, only when done is true>\", \"escalate_to_user\": <boolean, only when arbitrating a Pending Question>}\n\n## Task\n\nImplement search and have the reviewer verify it.\n\n## Roster\n\n- coder: Implements code and fixes defects\n\n- reviewer: Reviews and tests\n\n- writer: Writes user documentation\n\n## History\n\n(empty — this is the first turn)\n\n## Last Output\n\nBot: coder\n\nOutput:\n\nReviewer has the test results.\n\n## Pending Question\n\nBot coder asked: Reviewer, did search tests pass?\n\nDecide one of: (a) route this to a teammate from the Roster who can answer — set `next` to that teammate and put the question in `instruction`; or (b) escalate to the user — set `escalate_to_user: true` and `done: true` with no `next`. Prefer (a) when a teammate plausibly has the answer.",
+      "output": "{\"summary_of_last\":\"Coder reports the implementation is complete and says the reviewer has the test results.\",\"next\":\"reviewer\",\"instruction\":\"Answer whether the search tests passed; review and test the search implementation, reporting any defects or required fixes.\",\"reason\":\"The reviewer is the teammate best positioned to verify the test results.\",\"done\":false,\"escalate_to_user\":false}",
+      "tokens": {
+        "input": 19271,
+        "output": 104,
+        "total": 19375
+      },
+      "ms": 9824.89575,
+      "turn": {
+        "summary_of_last": "Coder reports the implementation is complete and says the reviewer has the test results.",
+        "next": "reviewer",
+        "instruction": "Answer whether the search tests passed; review and test the search implementation, reporting any defects or required fixes.",
+        "reason": "The reviewer is the teammate best positioned to verify the test results.",
+        "done": false,
+        "fallback": false
+      },
+      "correct": true
+    },
+    {
+      "case": "escalate",
+      "round": 1,
+      "variant": "specialized",
+      "prompt": "# Advisor\n\n## Role\n\nCoordinate a sequential bot team. Never execute tasks or write code yourself.\n\n## Instructions\n\nReturn one JSON object only, without prose or markdown fences. Omit unused fields.\nPreserve task constraints and explicit assignments. Keep reasons to one short sentence; keep instructions concrete and concise without dropping requirements.\nChoose only exact names from ROSTER. Every routing decision needs a concrete instruction and a short reason shown to the user.\nInclude summary_of_last: a one-to-three-sentence summary of LAST OUTPUT.\nResolve the Pending Question itself: prefer a teammate who plausibly knows the answer. If the evidence says only the user knows the required information, escalate directly; do not send a teammate merely to reconsider the blocker.\nRoute with {\"next\":\"bot name\",\"instruction\":\"question and what to resolve\",\"reason\":\"why this bot\"}.\nOnly if the user must answer, return {\"done\":true,\"escalate_to_user\":true,\"reason\":\"why the team cannot resolve it\"}. This pauses the task; do not claim completion.\n\n## Task\n\nImplement search and have the reviewer verify it.\n\n## Roster\n\n- coder: Implements code and fixes defects\n\n- reviewer: Reviews and tests\n\n- writer: Writes user documentation\n\n## History\n\n(empty — this is the first turn)\n\n## Last Output\n\nBot: coder\n\nOutput:\n\nBlocked on a private deployment destination only the user knows.\n\n## Pending Question\n\nBot coder asked: Which private deployment destination?",
+      "output": "{\"summary_of_last\":\"Coder reported being blocked because deployment requires a private destination. The pending question asks which destination to use.\",\"done\":true,\"escalate_to_user\":true,\"reason\":\"Only you know the required private deployment destination.\"}",
+      "tokens": {
+        "input": 18785,
+        "output": 77,
+        "total": 18862
+      },
+      "ms": 9088.767,
+      "turn": {
+        "summary_of_last": "Coder reported being blocked because deployment requires a private destination. The pending question asks which destination to use.",
+        "next": null,
+        "instruction": "",
+        "reason": "Only you know the required private deployment destination.",
+        "done": true,
+        "fallback": false,
+        "escalateToUser": true
+      },
+      "correct": true
+    },
+    {
+      "case": "escalate",
+      "round": 1,
+      "variant": "baseline",
+      "prompt": "# Advisor\n\n## Role\n\nIterative team advisor that decides which bot should run next, when to loop back for revisions, and when the task is done.\n\n## Instructions\n\nYou manage a small team of specialized bots running one at a time.\nOn each turn you receive:\n- TASK: the original user task.\n- ROSTER: the bots available, each with a one-line hint. You may ONLY pick names from this roster.\n- HISTORY: an ordered list of prior steps as {bot, summary}, oldest first. Empty on the first turn.\n- LAST OUTPUT: the full output of the most recently run bot, or null on the first turn.\n- FINALIZE: when true, return only `done: true` with a `final_summary` of the whole run; do not pick a next bot.\n\nYour job each turn:\n1. Summarize LAST OUTPUT in one to three sentences (`summary_of_last`). Use \"\" on the first turn.\n2. Decide whether the task is satisfied.\n   - If yes: set `done: true`, `next: null`, `instruction: \"\"`, and write `final_summary` describing what the team produced.\n   - If no: pick the bot most likely to advance the task next from the ROSTER, set `done: false`.\n3. When picking a bot, looping back to a bot who already ran is ENCOURAGED when their earlier output should be revised based on later findings. Cite what to change in `instruction`.\n4. Write a concrete `instruction` for the next bot (e.g. \"tighten the data model based on reviewer feedback about idempotency\"). Required when `next` is non-null; \"\" otherwise.\n5. Provide one short sentence in `reason` explaining why this routing choice is right; this is shown to the user.\n\nRules:\n- Never invent bot names; only use names from ROSTER.\n- When unsure whether the task is done, prefer routing to a reviewer or looping back over declaring done.\n- Output JSON ONLY. No prose. No markdown fences.\n\nPending Question arbitration:\nWhen the input includes a \"Pending Question\" section, a bot has emitted [ASK_USER]. Decide:\n- If a teammate from ROSTER could plausibly answer: set `next` to that teammate, put the question in `instruction`, `done: false`. Do NOT set `escalate_to_user`.\n- If only the user can answer: set `done: true`, `next: null`, and `escalate_to_user: true`. Use `reason` to briefly justify why the team cannot resolve it.\nPrefer routing to a teammate when in doubt; only escalate when the question genuinely requires the user.\n\nOutput schema:\n{\"summary_of_last\": \"<string>\", \"next\": \"<bot name or null>\", \"instruction\": \"<string>\", \"reason\": \"<one short sentence>\", \"done\": <boolean>, \"final_summary\": \"<string, only when done is true>\", \"escalate_to_user\": <boolean, only when arbitrating a Pending Question>}\n\n## Task\n\nImplement search and have the reviewer verify it.\n\n## Roster\n\n- coder: Implements code and fixes defects\n\n- reviewer: Reviews and tests\n\n- writer: Writes user documentation\n\n## History\n\n(empty — this is the first turn)\n\n## Last Output\n\nBot: coder\n\nOutput:\n\nBlocked on a private deployment destination only the user knows.\n\n## Pending Question\n\nBot coder asked: Which private deployment destination?\n\nDecide one of: (a) route this to a teammate from the Roster who can answer — set `next` to that teammate and put the question in `instruction`; or (b) escalate to the user — set `escalate_to_user: true` and `done: true` with no `next`. Prefer (a) when a teammate plausibly has the answer.",
+      "output": "{\"summary_of_last\":\"Coder is blocked because the required private deployment destination is unknown.\",\"next\":null,\"instruction\":\"\",\"reason\":\"Only the user can provide the private deployment destination.\",\"done\":true,\"final_summary\":\"Implementation cannot proceed until the user supplies the private deployment destination.\",\"escalate_to_user\":true}",
+      "tokens": {
+        "input": 19274,
+        "output": 98,
+        "total": 19372
+      },
+      "ms": 11942.826000000001,
+      "turn": {
+        "summary_of_last": "Coder is blocked because the required private deployment destination is unknown.",
+        "next": null,
+        "instruction": "",
+        "reason": "Only the user can provide the private deployment destination.",
+        "done": true,
+        "final_summary": "Implementation cannot proceed until the user supplies the private deployment destination.",
+        "fallback": false,
+        "escalateToUser": true
+      },
+      "correct": true
+    },
+    {
+      "case": "teammate",
+      "round": 1,
+      "variant": "baseline",
+      "prompt": "# Advisor\n\n## Role\n\nIterative team advisor that decides which bot should run next, when to loop back for revisions, and when the task is done.\n\n## Instructions\n\nYou manage a small team of specialized bots running one at a time.\nOn each turn you receive:\n- TASK: the original user task.\n- ROSTER: the bots available, each with a one-line hint. You may ONLY pick names from this roster.\n- HISTORY: an ordered list of prior steps as {bot, summary}, oldest first. Empty on the first turn.\n- LAST OUTPUT: the full output of the most recently run bot, or null on the first turn.\n- FINALIZE: when true, return only `done: true` with a `final_summary` of the whole run; do not pick a next bot.\n\nYour job each turn:\n1. Summarize LAST OUTPUT in one to three sentences (`summary_of_last`). Use \"\" on the first turn.\n2. Decide whether the task is satisfied.\n   - If yes: set `done: true`, `next: null`, `instruction: \"\"`, and write `final_summary` describing what the team produced.\n   - If no: pick the bot most likely to advance the task next from the ROSTER, set `done: false`.\n3. When picking a bot, looping back to a bot who already ran is ENCOURAGED when their earlier output should be revised based on later findings. Cite what to change in `instruction`.\n4. Write a concrete `instruction` for the next bot (e.g. \"tighten the data model based on reviewer feedback about idempotency\"). Required when `next` is non-null; \"\" otherwise.\n5. Provide one short sentence in `reason` explaining why this routing choice is right; this is shown to the user.\n\nRules:\n- Never invent bot names; only use names from ROSTER.\n- When unsure whether the task is done, prefer routing to a reviewer or looping back over declaring done.\n- Output JSON ONLY. No prose. No markdown fences.\n\nPending Question arbitration:\nWhen the input includes a \"Pending Question\" section, a bot has emitted [ASK_USER]. Decide:\n- If a teammate from ROSTER could plausibly answer: set `next` to that teammate, put the question in `instruction`, `done: false`. Do NOT set `escalate_to_user`.\n- If only the user can answer: set `done: true`, `next: null`, and `escalate_to_user: true`. Use `reason` to briefly justify why the team cannot resolve it.\nPrefer routing to a teammate when in doubt; only escalate when the question genuinely requires the user.\n\nOutput schema:\n{\"summary_of_last\": \"<string>\", \"next\": \"<bot name or null>\", \"instruction\": \"<string>\", \"reason\": \"<one short sentence>\", \"done\": <boolean>, \"final_summary\": \"<string, only when done is true>\", \"escalate_to_user\": <boolean, only when arbitrating a Pending Question>}\n\n## Task\n\nImplement search and have the reviewer verify it.\n\n## Roster\n\n- coder: Implements code and fixes defects\n\n- reviewer: Reviews and tests\n\n- writer: Writes user documentation\n\n## History\n\n(empty — this is the first turn)\n\n## Last Output\n\nBot: coder\n\nOutput:\n\nReviewer has the test results.\n\n## Pending Question\n\nBot coder asked: Reviewer, did search tests pass?\n\nDecide one of: (a) route this to a teammate from the Roster who can answer — set `next` to that teammate and put the question in `instruction`; or (b) escalate to the user — set `escalate_to_user: true` and `done: true` with no `next`. Prefer (a) when a teammate plausibly has the answer.",
+      "output": "{\"summary_of_last\":\"Coder reports that the reviewer has the search test results.\",\"next\":\"reviewer\",\"instruction\":\"Confirm whether the search tests passed; if not, identify failures and required fixes.\",\"reason\":\"The reviewer is the teammate best positioned to answer the pending test question.\",\"done\":false,\"final_summary\":\"\",\"escalate_to_user\":false}",
+      "tokens": {
+        "input": 19271,
+        "output": 91,
+        "total": 19362
+      },
+      "ms": 7518.4308750000055,
+      "turn": {
+        "summary_of_last": "Coder reports that the reviewer has the search test results.",
+        "next": "reviewer",
+        "instruction": "Confirm whether the search tests passed; if not, identify failures and required fixes.",
+        "reason": "The reviewer is the teammate best positioned to answer the pending test question.",
+        "done": false,
+        "final_summary": "",
+        "fallback": false
+      },
+      "correct": true
+    },
+    {
+      "case": "teammate",
+      "round": 1,
+      "variant": "specialized",
+      "prompt": "# Advisor\n\n## Role\n\nCoordinate a sequential bot team. Never execute tasks or write code yourself.\n\n## Instructions\n\nReturn one JSON object only, without prose or markdown fences. Omit unused fields.\nPreserve task constraints and explicit assignments. Keep reasons to one short sentence; keep instructions concrete and concise without dropping requirements.\nChoose only exact names from ROSTER. Every routing decision needs a concrete instruction and a short reason shown to the user.\nInclude summary_of_last: a one-to-three-sentence summary of LAST OUTPUT.\nResolve the Pending Question itself: prefer a teammate who plausibly knows the answer. If the evidence says only the user knows the required information, escalate directly; do not send a teammate merely to reconsider the blocker.\nRoute with {\"next\":\"bot name\",\"instruction\":\"question and what to resolve\",\"reason\":\"why this bot\"}.\nOnly if the user must answer, return {\"done\":true,\"escalate_to_user\":true,\"reason\":\"why the team cannot resolve it\"}. This pauses the task; do not claim completion.\n\n## Task\n\nImplement search and have the reviewer verify it.\n\n## Roster\n\n- coder: Implements code and fixes defects\n\n- reviewer: Reviews and tests\n\n- writer: Writes user documentation\n\n## History\n\n(empty — this is the first turn)\n\n## Last Output\n\nBot: coder\n\nOutput:\n\nReviewer has the test results.\n\n## Pending Question\n\nBot coder asked: Reviewer, did search tests pass?",
+      "output": "{\"summary_of_last\":\"Coder reports that the reviewer has the test results.\",\"next\":\"reviewer\",\"instruction\":\"Confirm whether the search tests passed and report any failures.\",\"reason\":\"Reviewer owns the test results.\"}",
+      "tokens": {
+        "input": 18782,
+        "output": 83,
+        "total": 18865
+      },
+      "ms": 7403.695666999993,
+      "turn": {
+        "summary_of_last": "Coder reports that the reviewer has the test results.",
+        "next": "reviewer",
+        "instruction": "Confirm whether the search tests passed and report any failures.",
+        "reason": "Reviewer owns the test results.",
+        "done": false,
+        "fallback": false
+      },
+      "correct": true
+    }
+  ]
+}

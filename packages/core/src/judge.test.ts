@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { buildJudgePrompt, runJudge, JudgeInput } from './judge';
 import { AgentResponse } from './types';
 
@@ -52,6 +52,24 @@ describe('buildJudgePrompt — decision question', () => {
 });
 
 describe('runJudge', () => {
+  it('follows a sole unconditional edge without a model call', async () => {
+    const runner = vi.fn();
+    const result = await runJudge({ ...input(), edges: [{ id: 'next', targetBot: 'reviewer' }] },
+      { agent: 'claude-code', runner });
+    expect(result).toMatchObject({ edgeId: 'next', fallback: false });
+    expect(runner).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { condition: 'checks passed', question: undefined },
+    { condition: undefined, question: 'Are checks complete?' },
+  ])('still evaluates a sole edge with a condition or question: %j', async ({ condition, question }) => {
+    const runner = vi.fn().mockResolvedValue({ success: true, output: '{"edge_id":"next"}' });
+    await runJudge({ ...input(), question, edges: [{ id: 'next', targetBot: 'reviewer', condition }] },
+      { agent: 'claude-code', runner });
+    expect(runner).toHaveBeenCalledOnce();
+  });
+
   it('returns the chosen edge id and reason from JSON output', async () => {
     const runner = async (): Promise<AgentResponse> =>
       ({ success: true, output: '{"edge_id":"e3","reason":"tests fail"}' } as AgentResponse);

@@ -7,6 +7,8 @@ export interface TeamFinalInput {
   messages: ChatMessage[];
   task: string;
   context?: string;
+  /** Final conclusion returned by this run's Advisor decision, never arbitrary Bot output. */
+  advisorSummary?: string;
   reason?: string;
   stopped?: boolean;
   paused?: boolean;
@@ -89,11 +91,19 @@ export async function composeTeamFinal(input: TeamFinalInput): Promise<ChatMessa
   if (!bots.some(m => m.botStatus !== 'pending')) facts.splice(1, 0, 'No member executed in this run.');
   if (!bots.some(m => m.botNextUserAction?.text)) facts.push('No specific user action was recorded.');
   let content = `Execution record summary (no Aide model summary available)\n\n${facts.join('\n\n')}`;
-  let source: 'aide' | 'fallback' = 'fallback';
+  let source: 'aide' | 'advisor' | 'fallback' = 'fallback';
+  // Reuse only a clean terminal decision. Failures, questions and partial
+  // runs still need the evidence-based finalizer to preserve their details.
+  if (input.advisorSummary?.trim() && !input.reason && !input.stopped && !input.signal?.aborted
+    && done.length > 0 && bots.every(m => m.botStatus === 'done')
+    && !bots.some(m => m.botNextUserAction?.text)) {
+    content = input.advisorSummary.trim();
+    source = 'advisor';
+  }
   let summaryFailure = input.stopped || input.signal?.aborted ? 'Summary skipped because execution was stopped.' : 'Aide is not configured.';
   // Cancellation never launches another model. Race also protects against an
   // adapter that is slow to acknowledge its abort signal.
-  if (input.run && !input.stopped && !input.signal?.aborted) {
+  if (source !== 'advisor' && input.run && !input.stopped && !input.signal?.aborted) {
     const controller = new AbortController();
     let cancel!: () => void;
     const cancelled = new Promise<string>(resolve => { cancel = () => { controller.abort(); resolve(''); }; });

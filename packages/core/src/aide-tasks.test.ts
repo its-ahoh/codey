@@ -23,6 +23,15 @@ function optsReturning(json: string): AideOptions {
 }
 
 describe('generateTaskBrief', () => {
+  it.each(['not json', '{}', '{"goal":"Review","state":{"progress":10}}'])('rejects a fallback when generating for the cache: %s', async output => {
+    await expect(generateTaskBrief(makeChat(), optsReturning(output), true)).rejects.toThrow('invalid task brief');
+  });
+  it('repairs a quoted progress and a missing timeline instead of rejecting', async () => {
+    const brief = await generateTaskBrief(makeChat(),
+      optsReturning('{"goal":"Review","state":{"progress":"40","status":"working"}}'), true);
+    expect(brief.state.progress).toBe(40);
+    expect(brief.timeline).toEqual([]);
+  });
   it('parses a JSON brief from the Aide and fills generatedAt', async () => {
     const opts = optsReturning(JSON.stringify({
       goal: 'Add OAuth login',

@@ -8,6 +8,24 @@ import * as path from 'path';
 const bot = (status: ChatMessage['botStatus'] = 'done', extra: Partial<ChatMessage> = {}): ChatMessage => ({ id: 'w', role: 'assistant', bot: 'Alice', botStatus: status, teamTurnId: 't', content: 'Implemented search', timestamp: 1, ...extra });
 const input = () => ({ teamTurnId: 't', task: 'Build search', messages: [bot()] });
 describe('Aide terminal message', () => {
+  it('reuses a clean Advisor conclusion without another model call', async () => {
+    const run = vi.fn();
+    const result = await composeTeamFinal({ ...input(), advisorSummary: 'Search implemented and reviewed.', run });
+    expect(result?.content).toBe('Search implemented and reviewed.');
+    expect(result?.teamFinal?.source).toBe('advisor');
+    expect(run).not.toHaveBeenCalled();
+  });
+  it.each([
+    { messages: [bot('failed', { botFailureReason: 'Checks failed' })] },
+    { messages: [bot('done', { botNextUserAction: { text: 'Choose a destination' } })] },
+    { reason: 'Step limit reached' },
+    { messages: [bot(), bot('pending', { id: 'b', bot: 'Bob' })] },
+  ])('keeps the evidence summarizer for exceptions: %j', async extra => {
+    const run = vi.fn().mockResolvedValue('Unfinished work requires attention.');
+    const result = await composeTeamFinal({ ...input(), advisorSummary: 'Finished.', ...extra, run });
+    expect(run).toHaveBeenCalledOnce();
+    expect(result?.teamFinal?.source).toBe('aide');
+  });
   it.each(['sequential', 'graph', 'auto', 'roundtable'] as const)('summarizes evidence across members in %s', async teamMode => {
     const run = vi.fn().mockResolvedValue('Search works; review is still blocked. Grant access.');
     const message = await composeTeamFinal({ ...input(), messages: [bot('done', { teamMode }), bot('failed', { id: 'b', bot: 'Bob', botFailureReason: 'No access', botNextUserAction: { text: 'Grant access' } })], run });

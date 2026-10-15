@@ -27,6 +27,83 @@ function makeRunner(overrides: Partial<ConstructorParameters<typeof ParallelTeam
 }
 
 describe('ParallelTeamRunner', () => {
+  it('skips unchanged evidence, including its own writes, and evaluates new opinions', async () => {
+    const advisorRunner = vi.fn().mockResolvedValue({ success: true,
+      output: '{"action":"continue","summary_update":"Reviewed","directive":"Proceed","reason":"continuing"}' });
+    const r = makeRunner({ advisorRunner, botRunner: () => new Promise(() => {}) },
+      { advisorPollMs: 20, idleTimeoutMs: 5000, maxDurationMs: 10000 });
+    try {
+      await r.start();
+      await vi.waitFor(() => expect(advisorRunner).toHaveBeenCalledOnce());
+      await new Promise(resolve => setTimeout(resolve, 100));
+      expect(advisorRunner).toHaveBeenCalledOnce();
+      fs.appendFileSync(path.join(r.discussionDir, 'opinions', 'a.md'), '\nChecks complete.');
+      await vi.waitFor(() => expect(advisorRunner).toHaveBeenCalledTimes(2));
+      await new Promise(resolve => setTimeout(resolve, 100));
+      expect(advisorRunner).toHaveBeenCalledTimes(2);
+    } finally { await r.stop('user_cancel'); }
+  });
+
+  it('retries unchanged evidence after a failed evaluation', async () => {
+    const advisorRunner = vi.fn()
+      .mockResolvedValueOnce({ success: false, output: '', error: 'Temporary failure' })
+      .mockResolvedValue({ success: true, output: '{"action":"continue","reason":"continuing"}' });
+    const r = makeRunner({ advisorRunner, botRunner: () => new Promise(() => {}) },
+      { advisorPollMs: 20, idleTimeoutMs: 5000, maxDurationMs: 10000 });
+    try {
+      await r.start();
+      await vi.waitFor(() => expect(advisorRunner).toHaveBeenCalledTimes(2));
+      await new Promise(resolve => setTimeout(resolve, 100));
+      expect(advisorRunner).toHaveBeenCalledTimes(2);
+    } finally { await r.stop('user_cancel'); }
+  });
+
+  it('keeps a long bot run alive past the idle window while the Advisor polls', async () => {
+    const advisorRunner = vi.fn().mockResolvedValue({ success: true,
+      output: '{"action":"continue","reason":"continuing"}' });
+    const onFinal = vi.fn();
+    const r = makeRunner({ advisorRunner, onFinal, botRunner: () => new Promise(() => {}) },
+      { advisorPollMs: 20, idleTimeoutMs: 250, maxDurationMs: 800 });
+    try {
+      await r.start();
+      fs.appendFileSync(path.join(r.discussionDir, 'opinions', 'a.md'), '\nStarted.');
+      await r.waitDone();
+      expect(onFinal).toHaveBeenCalledWith(expect.objectContaining({ reason: 'max_duration' }));
+      expect(advisorRunner.mock.calls.length).toBeLessThanOrEqual(2);
+    } finally { await r.stop('user_cancel'); }
+  });
+
+  it('asks the Advisor again after a bot finishes a round without editing its opinion', async () => {
+    const advisorRunner = vi.fn()
+      .mockResolvedValueOnce({ success: true, output: '{"action":"continue","reason":"continuing"}' })
+      .mockResolvedValue({ success: true, output: '{"action":"finalize","reason":"consensus","final_message":"Agreed"}' });
+    let releaseRound!: () => void;
+    const round = new Promise<void>(resolve => { releaseRound = resolve; });
+    const botRunner = vi.fn().mockImplementationOnce(async () => { await round; return { success: true, output: 'Same view' }; })
+      .mockImplementation(() => new Promise(() => {}));
+    const onFinal = vi.fn();
+    const r = makeRunner({ advisorRunner, onFinal, botRunner, members: ['a'] },
+      { advisorPollMs: 20, idleTimeoutMs: 5000, maxDurationMs: 10000 });
+    try {
+      await r.start();
+      await vi.waitFor(() => expect(advisorRunner).toHaveBeenCalledOnce());
+      releaseRound();
+      await r.waitDone();
+      expect(onFinal).toHaveBeenCalledWith(expect.objectContaining({ reason: 'consensus', advisorFinalized: true }));
+    } finally { await r.stop('user_cancel'); }
+  });
+
+  it('does not mark a non-drift termination as an Advisor finalize', async () => {
+    const advisorRunner = vi.fn().mockResolvedValue({ success: true,
+      output: '{"action":"terminate","reason":"idle","final_message":"Bots are deadlocked"}' });
+    const onFinal = vi.fn();
+    const r = makeRunner({ advisorRunner, onFinal, botRunner: () => new Promise(() => {}) },
+      { advisorPollMs: 20, idleTimeoutMs: 5000, maxDurationMs: 10000 });
+    await r.start();
+    await r.waitDone();
+    expect(onFinal).toHaveBeenCalledWith(expect.objectContaining({ advisorFinalized: false }));
+  });
+
   it('initializes discussion files on start()', async () => {
     const r = makeRunner();
     await r.start();

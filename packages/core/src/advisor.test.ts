@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { runAdvisor, AdvisorInput, AdvisorRunner } from './advisor';
+import { runAdvisor, buildAdvisorPrompt, AdvisorInput, AdvisorRunner } from './advisor';
 import { AgentRequest, AgentResponse } from './types';
 
 function makeRunner(replies: string[]): AdvisorRunner {
@@ -126,5 +126,81 @@ describe('runAdvisor fallback', () => {
     const turn = await runAdvisor(baseInput, { agent: 'claude-code', runner: makeRunner([reply({})]) });
 
     expect(turn.fallback).toBe(true);
+  });
+});
+
+describe('scenario-specific JSON', () => {
+  it('normalizes a compact routing response without default fields', async () => {
+    const turn = await runAdvisor(baseInput, { agent: 'claude-code', runner: makeRunner([
+      JSON.stringify({ next: 'architect', instruction: 'Draft a migration plan', reason: 'Design first' }),
+    ]) });
+    expect(turn).toMatchObject({ next: 'architect', instruction: 'Draft a migration plan',
+      reason: 'Design first', done: false, summary_of_last: '', fallback: false });
+  });
+
+  it('retains revision evidence and concrete instructions', async () => {
+    const turn = await runAdvisor({ ...baseInput, lastBot: 'reviewer', lastOutput: 'Migration loses data.' }, {
+      agent: 'claude-code', runner: makeRunner([JSON.stringify({ next: 'architect',
+        instruction: 'Fix migration data loss and verify rollback.', reason: 'Revision needed',
+        summary_of_last: 'Reviewer found migration data loss.' })]),
+    });
+    expect(turn).toMatchObject({ done: false, fallback: false, next: 'architect',
+      summary_of_last: 'Reviewer found migration data loss.', instruction: 'Fix migration data loss and verify rollback.' });
+  });
+
+  it('distinguishes compact escalation from task completion', async () => {
+    const turn = await runAdvisor({ ...baseInput,
+      pendingQuestion: { bot: 'architect', question: 'Which private tenant?' } }, {
+      agent: 'claude-code', runner: makeRunner(['{"done":true,"escalate_to_user":true,"reason":"Only the user knows"}']),
+    });
+    expect(turn).toMatchObject({ done: true, escalateToUser: true, next: null, fallback: false });
+    expect(turn.final_summary).toBeUndefined();
+  });
+
+  it('routes a pending question to a teammate with compact fields', async () => {
+    const turn = await runAdvisor({ ...baseInput,
+      pendingQuestion: { bot: 'architect', question: 'Does the migration pass review?' } }, {
+      agent: 'claude-code', runner: makeRunner(['{"next":"reviewer","instruction":"Verify the migration","reason":"Reviewer can check"}']),
+    });
+    expect(turn).toMatchObject({ done: false, next: 'reviewer', fallback: false });
+    expect(turn.escalateToUser).not.toBe(true);
+  });
+
+  it('accepts a final summary without routing placeholders', async () => {
+    const turn = await runAdvisor({ ...baseInput, finalize: true }, {
+      agent: 'claude-code', runner: makeRunner(['{"done":true,"final_summary":"Draft prepared; review still pending."}']),
+    });
+    expect(turn).toMatchObject({ done: true, next: null, instruction: '', fallback: false,
+      final_summary: 'Draft prepared; review still pending.' });
+  });
+});
+
+
+describe('Advisor prompt scope', () => {
+  it('omits irrelevant response fields on the opening turn', () => {
+    const prompt = buildAdvisorPrompt(baseInput);
+    expect(prompt).not.toContain('summary_of_last');
+    expect(prompt).not.toContain('escalate_to_user');
+    expect(prompt).toContain('instruction');
+    expect(prompt).toContain('reason');
+    expect(prompt).toContain('explicit assignments');
+  });
+
+  it('preserves revision, clarification, and evidence rules after a worker runs', () => {
+    const prompt = buildAdvisorPrompt({ ...baseInput, lastBot: 'architect', lastOutput: '',
+      userClarification: { bot: 'architect', question: 'Which tenant?', answer: 'Staging' } });
+    expect(prompt).toContain('summary_of_last');
+    expect(prompt).toContain('Loop back for revisions');
+    expect(prompt).toContain('User answered: Staging');
+    expect(prompt).not.toContain('escalate_to_user');
+  });
+
+  it('does not invite completion while a question is pending', () => {
+    const prompt = buildAdvisorPrompt({ ...baseInput,
+      pendingQuestion: { bot: 'architect', question: 'Which tenant?' } });
+    expect(prompt).toContain('escalate_to_user');
+    expect(prompt).not.toContain('final_summary');
+    expect(prompt).toContain('This pauses the task');
+    expect(prompt).toContain('only the user knows the required information, escalate directly');
   });
 });
