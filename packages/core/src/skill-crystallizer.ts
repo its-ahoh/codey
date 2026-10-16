@@ -846,13 +846,15 @@ export function bindParameter(task: string, param: SkillParameter): string | nul
   return null;
 }
 
-/** Supply an optional procedure without claiming the agent used it. */
-export function suggestSkill(task: string, skill: SkillEntry): string {
-  return `Optional skill candidate: ${skill.name} (v${skill.version})
+/** Offer a learned playbook as an optional procedure, without claiming the
+ *  agent used it. Only unpromoted playbooks reach here; promoted ones are
+ *  SKILL.md files the agent discovers itself. */
+export function suggestPlaybook(task: string, skill: SkillEntry): string {
+  return `Optional playbook from earlier runs: ${skill.name} (v${skill.version})
 Description: ${skill.description}
 When to use: ${skill.whenToUse}
-Decide whether this procedure fits the requested action. Use it only if relevant; otherwise ignore it. Do not ask the user to confirm Skill selection. The user's request takes precedence.
-Candidate procedure:
+Decide whether this playbook fits the requested action. Use it only if relevant; otherwise ignore it. Do not ask the user to confirm the choice. The user's request takes precedence.
+Playbook steps:
 ${skill.steps}
 
 ---

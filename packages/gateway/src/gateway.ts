@@ -12,7 +12,7 @@ import { publishTeamFinal, composeTeamFinal, planTeamFooter, isSoloMentionRun, p
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { writeTranscriptSlice, TranscriptSlice, AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, runAide, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, parseBotMentions, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, BlackboardSnapshot, BotAnchor, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, suggestSkill, applySkill, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, AutomationCheck, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, pickVoiceAck, needsDigest, buildSpeechDigestPrompt, stripForSpeech, needsPolish, buildVoicePolishPrompt, sanitizePolished, DEFAULT_POLISH_TIMEOUT_MS, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort, DEFAULT_THINKING_EFFORT, ApiType, unwiredAllProtocols } from '@codey/core';
+import { writeTranscriptSlice, TranscriptSlice, AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, runAide, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, parseBotMentions, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, BlackboardSnapshot, BotAnchor, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, suggestPlaybook, applySkill, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, AutomationCheck, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, pickVoiceAck, needsDigest, buildSpeechDigestPrompt, stripForSpeech, needsPolish, buildVoicePolishPrompt, sanitizePolished, DEFAULT_POLISH_TIMEOUT_MS, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort, DEFAULT_THINKING_EFFORT, ApiType, unwiredAllProtocols } from '@codey/core';
 import { randomUUID, createHash } from 'crypto';
 import { AutomationStore } from './automations/store';
 import { AutomationEngine, TargetResult } from './automations/engine';
@@ -2622,7 +2622,7 @@ export class Codey {
     // ── Skill matching (pre-run) ──────────────────────────
     // Explicit `/skill <name> <task>` invoke (carried on this turn's queue
     // payload by handleMessage — works even with autoApply off) takes
-    // precedence; automatic matches are optional candidates for the agent.
+    // precedence; automatic matches are optional playbook suggestions for the agent.
     let appliedSkill: SkillEntry | null = null;
     const skillsCfg = this.configManager?.getSkillsConfig();
     let runPrompt = parsed.prompt;
@@ -2634,8 +2634,8 @@ export class Codey {
       // runPrompt is non-empty here: empty prompts already returned above.
       const match = matchSkill(runPrompt, this.workspaceManager.getSkillStore().getActive());
       if (match) {
-        runPrompt = suggestSkill(runPrompt, match.skill);
-        this.logger.info(`[skills] candidate: ${match.skill.name} v${match.skill.version} (${match.confidence})`);
+        runPrompt = suggestPlaybook(runPrompt, match.skill);
+        this.logger.info(`[skills] playbook suggested: ${match.skill.name} v${match.skill.version} (${match.confidence})`);
       }
     }
 
@@ -6446,7 +6446,7 @@ Example: /model gpt-4.1 write a Python script`;
     // persisted user message and downstream bootstrap see the clean text —
     // the banner is applied exactly once at prompt build (see below).
     let appliedChatSkill: SkillEntry | null = null;
-    let suggestedChatSkill: SkillEntry | null = null;
+    let suggestedChatPlaybook: SkillEntry | null = null;
     let chatSkillTask: string | null = null;
     if (origin?.skillInvoke) {
       appliedChatSkill = origin.skillInvoke.skill;
@@ -6626,9 +6626,9 @@ Example: /model gpt-4.1 write a Python script`;
       const chatSkillStore = await this.resolveSkillStore(chat.workspaceName);
       const match = matchSkill(userText, chatSkillStore.getActive());
       if (match) {
-        suggestedChatSkill = match.skill;
-        prompt = suggestSkill(prompt, match.skill);
-        this.logger.info(`[skills] candidate (chat): ${match.skill.name} v${match.skill.version} (${match.confidence})`);
+        suggestedChatPlaybook = match.skill;
+        prompt = suggestPlaybook(prompt, match.skill);
+        this.logger.info(`[skills] playbook suggested (chat): ${match.skill.name} v${match.skill.version} (${match.confidence})`);
       }
     }
 
@@ -6874,7 +6874,7 @@ Example: /model gpt-4.1 write a Python script`;
           // Re-apply the skill banner: the rebuilt bootstrap prompt replaced
           // the one that carried it (still exactly once per prompt build).
           if (appliedChatSkill) prompt = applySkill(prompt, appliedChatSkill);
-          else if (suggestedChatSkill) prompt = suggestSkill(prompt, suggestedChatSkill);
+          else if (suggestedChatPlaybook) prompt = suggestPlaybook(prompt, suggestedChatPlaybook);
           response = await this.runWithFallback(agent, {
             prompt,
             agent,
