@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { suggestSkill, applySkill } from './skill-crystallizer';
+import { suggestSkill, applySkill, matchSkill } from './skill-crystallizer';
 import type { SkillEntry } from './skill-crystallizer';
 
 describe('optional skill candidate', () => {
@@ -11,5 +11,12 @@ describe('optional skill candidate', () => {
     expect(candidate).toContain('List the changes.');
     expect(candidate).not.toContain('Follow this procedure:');
     expect(applySkill('Prepare notes', skill)).toContain('Follow this procedure:');
+  });
+
+  it('skips promoted playbooks the agent already discovers as SKILL.md', () => {
+    const skill = { name: 'notes', version: 1, description: 'draft release notes', whenToUse: 'prepare release notes', steps: 'List the changes.', archived: false } as SkillEntry;
+    const task = 'draft the release notes';
+    expect(matchSkill(task, [skill])?.skill.name).toBe('notes');
+    expect(matchSkill(task, [{ ...skill, promotedToSkill: true }])).toBeNull();
   });
 });

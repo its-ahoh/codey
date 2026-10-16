@@ -756,7 +756,9 @@ export async function nameTemplate(
 }
 
 export function matchSkill(task: string, skills: SkillEntry[]): SkillMatch | null {
-  const active = skills.filter(s => !s.archived);
+  // Promoted playbooks are SKILL.md files the agent discovers on its own;
+  // suggesting them again would only repeat that procedure in the prompt.
+  const active = skills.filter(s => !s.archived && !s.promotedToSkill);
   if (active.length === 0) return null;
   // Dedupe both token lists so repeated words can't inflate the intersection
   // count past the LLM confirm gate; this also makes the score true Jaccard.
