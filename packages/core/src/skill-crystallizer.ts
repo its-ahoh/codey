@@ -772,8 +772,8 @@ export function matchSkill(task: string, skills: SkillEntry[]): SkillMatch | nul
     const score = intersection.length / unionSize;
     // 'high' (auto-apply without the LLM gate) needs REAL overlap: 3+ shared
     // keywords and a strong Jaccard. Two-token matches are too easy to hit by
-    // accident (e.g. "merged PRs" alone), so they stay borderline and must
-    // pass the confirmMatch gate before being applied.
+    // accident (e.g. "merged PRs" alone), so they stay borderline. Automatic
+    // matches are candidates; the executing agent decides whether to use them.
     const confidence: SkillMatch['confidence'] =
       intersection.length >= 3 && score >= 0.25 ? 'high' : 'borderline';
     if (!best || score > best.score) {
@@ -842,6 +842,20 @@ export function bindParameter(task: string, param: SkillParameter): string | nul
     return task.match(pattern)?.[0] ?? null;
   }
   return null;
+}
+
+/** Supply an optional procedure without claiming the agent used it. */
+export function suggestSkill(task: string, skill: SkillEntry): string {
+  return `Optional skill candidate: ${skill.name} (v${skill.version})
+Description: ${skill.description}
+When to use: ${skill.whenToUse}
+Decide whether this procedure fits the requested action. Use it only if relevant; otherwise ignore it. Do not ask the user to confirm Skill selection. The user's request takes precedence.
+Candidate procedure:
+${skill.steps}
+
+---
+User task:
+${task}`;
 }
 
 /** Prefix a task with the skill's procedure. Parameters the task plainly
