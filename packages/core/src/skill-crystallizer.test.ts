@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { InducedTemplate } from './playbook-induction';
-import { SkillStore, RECENT_TRACES_MAX, TRACES_FILE_VERSION, HISTORY_MAX, REJECTED_MAX, EVOLUTION_MAX, distillCandidate, RunTrace, DistillDeps, DistillResult, matchSkill, confirmMatch, SkillEntry, SkillEvolutionEvent, applySkill, bindParameter, nameTemplate, evolveSkill, isLowSignalTrace } from './skill-crystallizer';
+import { SkillStore, RECENT_TRACES_MAX, TRACES_FILE_VERSION, HISTORY_MAX, REJECTED_MAX, EVOLUTION_MAX, distillCandidate, RunTrace, DistillDeps, DistillResult, matchSkill, SkillEntry, SkillEvolutionEvent, applySkill, bindParameter, nameTemplate, evolveSkill, isLowSignalTrace } from './skill-crystallizer';
 
 describe('SkillStore', () => {
   let tmp: string;
@@ -611,25 +611,6 @@ describe('matchSkill', () => {
     const m = matchSkill('generate release notes covering the quarterly summary report deck', verbose);
     expect(m?.skill.name).toBe('verbose3');
     expect(m?.confidence).toBe('borderline');
-  });
-});
-
-describe('confirmMatch', () => {
-  const skill = makeSkill({ name: 'release-notes', description: 'Generate release notes', whenToUse: 'release notes or changelog' });
-
-  it('returns true on YES', async () => {
-    const deps = fakeDeps(async () => ({ success: true, output: 'YES', error: null, tokens: { total: 5 } }));
-    expect(await confirmMatch(deps, 'write a changelog', skill)).toBe(true);
-  });
-
-  it('returns false on NO', async () => {
-    const deps = fakeDeps(async () => ({ success: true, output: 'NO', error: null, tokens: { total: 5 } }));
-    expect(await confirmMatch(deps, 'build an API', skill)).toBe(false);
-  });
-
-  it('returns false on failed agent call', async () => {
-    const deps = fakeDeps(async () => ({ success: false, output: '', error: 'crash', tokens: { total: 0 } }));
-    expect(await confirmMatch(deps, 'write a changelog', skill)).toBe(false);
   });
 });
 

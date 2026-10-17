@@ -106,7 +106,8 @@ export interface DistillResult {
 
 export interface SkillMatch {
   skill: SkillEntry;
-  /** high → apply directly; borderline → confirm with the LLM gate first. */
+  /** Strength of the keyword overlap. Informational only (logged): every
+   *  automatic match is an optional suggestion the agent may ignore. */
   confidence: 'high' | 'borderline';
   score: number;
 }
@@ -756,10 +757,12 @@ export async function nameTemplate(
 }
 
 export function matchSkill(task: string, skills: SkillEntry[]): SkillMatch | null {
-  const active = skills.filter(s => !s.archived);
+  // Promoted playbooks are SKILL.md files the agent discovers on its own;
+  // suggesting them again would only repeat that procedure in the prompt.
+  const active = skills.filter(s => !s.archived && !s.promotedToSkill);
   if (active.length === 0) return null;
   // Dedupe both token lists so repeated words can't inflate the intersection
-  // count past the LLM confirm gate; this also makes the score true Jaccard.
+  // count into 'high'; this also makes the score true Jaccard.
   const taskTokens = [...new Set(tokenizeLax(task))];
   if (taskTokens.length === 0) return null;
   let best: SkillMatch | null = null;
@@ -770,10 +773,10 @@ export function matchSkill(task: string, skills: SkillEntry[]): SkillMatch | nul
     if (intersection.length < 1) continue;
     const unionSize = new Set([...taskTokens, ...skillTokens]).size;
     const score = intersection.length / unionSize;
-    // 'high' (auto-apply without the LLM gate) needs REAL overlap: 3+ shared
-    // keywords and a strong Jaccard. Two-token matches are too easy to hit by
-    // accident (e.g. "merged PRs" alone), so they stay borderline and must
-    // pass the confirmMatch gate before being applied.
+    // 'high' needs REAL overlap: 3+ shared keywords and a strong Jaccard.
+    // Two-token matches are too easy to hit by accident (e.g. "merged PRs"
+    // alone), so they stay borderline. Either way the match is only a
+    // suggestion; the executing agent decides whether to use it.
     const confidence: SkillMatch['confidence'] =
       intersection.length >= 3 && score >= 0.25 ? 'high' : 'borderline';
     if (!best || score > best.score) {
@@ -800,32 +803,6 @@ function tokenizeLax(text: string): string[] {
     .filter(t => t.length > 1 && !stopWords.has(t));
 }
 
-const MATCH_CONFIRM_PROMPT = `Does the following task match this skill? The skill should only apply when the user is asking for exactly this kind of work.
-
-Skill: %SKILL_NAME%
-Description: %SKILL_DESC%
-When to use: %SKILL_WHEN%
-
-Task: %TASK%
-
-Return ONLY "YES" or "NO".`;
-
-export async function confirmMatch(
-  deps: DistillDeps,
-  task: string,
-  skill: SkillEntry,
-): Promise<boolean> {
-  const prompt = fillPrompt(MATCH_CONFIRM_PROMPT, {
-    '%SKILL_NAME%': skill.name,
-    '%SKILL_DESC%': skill.description,
-    '%SKILL_WHEN%': skill.whenToUse,
-    '%TASK%': task,
-  });
-  const output = await runCrystallizerLLM(deps, prompt);
-  if (output === null) return false;
-  return output.trim().toUpperCase() === 'YES';
-}
-
 /** Pull a value for one parameter out of the task text, or null.
  *
  *  Deliberately a cheap syntactic pass — no LLM. A wrong auto-bound value is
@@ -842,6 +819,22 @@ export function bindParameter(task: string, param: SkillParameter): string | nul
     return task.match(pattern)?.[0] ?? null;
   }
   return null;
+}
+
+/** Offer a learned playbook as an optional procedure, without claiming the
+ *  agent used it. Only unpromoted playbooks reach here; promoted ones are
+ *  SKILL.md files the agent discovers itself. */
+export function suggestPlaybook(task: string, skill: SkillEntry): string {
+  return `Optional playbook from earlier runs: ${skill.name} (v${skill.version})
+Description: ${skill.description}
+When to use: ${skill.whenToUse}
+Decide whether this playbook fits the requested action. Use it only if relevant; otherwise ignore it. Do not ask the user to confirm the choice. The user's request takes precedence.
+Playbook steps:
+${skill.steps}
+
+---
+User task:
+${task}`;
 }
 
 /** Prefix a task with the skill's procedure. Parameters the task plainly
