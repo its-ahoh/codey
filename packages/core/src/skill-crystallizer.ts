@@ -106,7 +106,8 @@ export interface DistillResult {
 
 export interface SkillMatch {
   skill: SkillEntry;
-  /** high → apply directly; borderline → confirm with the LLM gate first. */
+  /** Strength of the keyword overlap. Informational only (logged): every
+   *  automatic match is an optional suggestion the agent may ignore. */
   confidence: 'high' | 'borderline';
   score: number;
 }
@@ -761,7 +762,7 @@ export function matchSkill(task: string, skills: SkillEntry[]): SkillMatch | nul
   const active = skills.filter(s => !s.archived && !s.promotedToSkill);
   if (active.length === 0) return null;
   // Dedupe both token lists so repeated words can't inflate the intersection
-  // count past the LLM confirm gate; this also makes the score true Jaccard.
+  // count into 'high'; this also makes the score true Jaccard.
   const taskTokens = [...new Set(tokenizeLax(task))];
   if (taskTokens.length === 0) return null;
   let best: SkillMatch | null = null;
@@ -772,10 +773,10 @@ export function matchSkill(task: string, skills: SkillEntry[]): SkillMatch | nul
     if (intersection.length < 1) continue;
     const unionSize = new Set([...taskTokens, ...skillTokens]).size;
     const score = intersection.length / unionSize;
-    // 'high' (auto-apply without the LLM gate) needs REAL overlap: 3+ shared
-    // keywords and a strong Jaccard. Two-token matches are too easy to hit by
-    // accident (e.g. "merged PRs" alone), so they stay borderline. Automatic
-    // matches are candidates; the executing agent decides whether to use them.
+    // 'high' needs REAL overlap: 3+ shared keywords and a strong Jaccard.
+    // Two-token matches are too easy to hit by accident (e.g. "merged PRs"
+    // alone), so they stay borderline. Either way the match is only a
+    // suggestion; the executing agent decides whether to use it.
     const confidence: SkillMatch['confidence'] =
       intersection.length >= 3 && score >= 0.25 ? 'high' : 'borderline';
     if (!best || score > best.score) {
@@ -800,32 +801,6 @@ function tokenizeLax(text: string): string[] {
   return text.toLowerCase()
     .split(/[^a-z0-9_\-]+/i)
     .filter(t => t.length > 1 && !stopWords.has(t));
-}
-
-const MATCH_CONFIRM_PROMPT = `Does the following task match this skill? The skill should only apply when the user is asking for exactly this kind of work.
-
-Skill: %SKILL_NAME%
-Description: %SKILL_DESC%
-When to use: %SKILL_WHEN%
-
-Task: %TASK%
-
-Return ONLY "YES" or "NO".`;
-
-export async function confirmMatch(
-  deps: DistillDeps,
-  task: string,
-  skill: SkillEntry,
-): Promise<boolean> {
-  const prompt = fillPrompt(MATCH_CONFIRM_PROMPT, {
-    '%SKILL_NAME%': skill.name,
-    '%SKILL_DESC%': skill.description,
-    '%SKILL_WHEN%': skill.whenToUse,
-    '%TASK%': task,
-  });
-  const output = await runCrystallizerLLM(deps, prompt);
-  if (output === null) return false;
-  return output.trim().toUpperCase() === 'YES';
 }
 
 /** Pull a value for one parameter out of the task text, or null.

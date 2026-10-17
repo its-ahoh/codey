@@ -6430,7 +6430,7 @@ Example: /model gpt-4.1 write a Python script`;
                       trigger: { runId: 'user-confirmed', promptSummary: s.description },
                       // Present only when the suggestion came from an induced template.
                       parameters: s.parameters, inducedFrom: s.inducedFrom });
-          responseText = `✅ Skill **${name}** saved. It will be auto-applied on matching tasks.`;
+          responseText = `✅ Skill **${name}** saved. It will be suggested to the agent on matching tasks.`;
         }
         this.chatManager.setPendingSkillSuggestion(chatId, null);
         return finishSkillReply(responseText);
@@ -6612,13 +6612,13 @@ Example: /model gpt-4.1 write a Python script`;
 
     // ── Skill application (pre-run) ─────────────────────────────────
     // Explicit invoke wins outright (banner applied once, no matching);
-    // otherwise auto-apply matches against active skills — solo chats only.
+    // otherwise suggest a matching playbook to the agent — solo chats only.
     const skillsCfg = this.configManager?.getSkillsConfig();
     if (appliedChatSkill) {
       prompt = applySkill(prompt, appliedChatSkill);
       this.logger.info(`[skills] explicit invoke (chat): ${appliedChatSkill.name} v${appliedChatSkill.version}`);
     } else if (skillsCfg?.enabled && skillsCfg.autoApply
-        // Unattended automation runs execute a frozen brief — never auto-apply skills.
+        // Unattended automation runs execute a frozen brief — never suggest playbooks.
         && chat.kind !== 'automation'
         && !isTeamTurn && !isSlashTurn) {
       // Skills are per-workspace: match against the CHAT's workspace store
