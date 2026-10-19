@@ -3397,7 +3397,7 @@ export class Codey {
           && store.markPromotionHinted(usedEntry.name)) {
         await opts.notify(
           `📘 Playbook **${usedEntry.name}** has been used ${usedEntry.useCount} times. ` +
-          `Promote it to a Skill in the Codey app's Playbooks tab so the agent can find it on its own.`);
+          `Promote it to a Skill in the Codey app (Tools → Playbooks) so the agent can find it on its own.`);
       }
 
       if (!opts.clean) return; // failed runs contribute a correction signal, not a trace
