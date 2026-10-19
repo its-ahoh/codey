@@ -34,6 +34,9 @@ export interface SkillEntry {
   /** Promoted playbooks are backed by a durable agent SKILL.md and are never
    *  archived by either garbage collection or the playbook UI. */
   promotedToSkill?: boolean;
+  /** Set once the user has been told this playbook is ready to promote, so
+   *  the reminder never repeats. */
+  promotionHinted?: boolean;
   /** Inputs the procedure takes, discovered by diffing a cluster of runs.
    *  Absent on skills distilled from prose rather than induced. */
   parameters?: SkillParameter[];
@@ -106,8 +109,7 @@ export interface DistillResult {
 
 export interface SkillMatch {
   skill: SkillEntry;
-  /** Strength of the keyword overlap. Informational only (logged): every
-   *  automatic match is an optional suggestion the agent may ignore. */
+  /** Only high matches are suggested automatically; borderline ones are dropped. */
   confidence: 'high' | 'borderline';
   score: number;
 }
@@ -318,6 +320,16 @@ export class SkillStore {
     if (!entry) return false;
     entry.useCount++;
     entry.lastUsedAt = Date.now();
+    this.markIndexDirty();
+    return true;
+  }
+
+  /** Record that the promotion reminder was shown. Returns false when it was
+   *  already shown, the playbook is promoted, or it does not exist. */
+  markPromotionHinted(name: string): boolean {
+    const entry = this.index.entries.find(e => e.name === name);
+    if (!entry || entry.promotedToSkill || entry.promotionHinted) return false;
+    entry.promotionHinted = true;
     this.markIndexDirty();
     return true;
   }
@@ -762,7 +774,7 @@ export function matchSkill(task: string, skills: SkillEntry[]): SkillMatch | nul
   const active = skills.filter(s => !s.archived && !s.promotedToSkill);
   if (active.length === 0) return null;
   // Dedupe both token lists so repeated words can't inflate the intersection
-  // count into 'high'; this also makes the score true Jaccard.
+  // count into a high match; this also makes the score true Jaccard.
   const taskTokens = [...new Set(tokenizeLax(task))];
   if (taskTokens.length === 0) return null;
   let best: SkillMatch | null = null;
@@ -775,8 +787,7 @@ export function matchSkill(task: string, skills: SkillEntry[]): SkillMatch | nul
     const score = intersection.length / unionSize;
     // 'high' needs REAL overlap: 3+ shared keywords and a strong Jaccard.
     // Two-token matches are too easy to hit by accident (e.g. "merged PRs"
-    // alone), so they stay borderline. Either way the match is only a
-    // suggestion; the executing agent decides whether to use it.
+    // alone), so they stay borderline and are never suggested automatically.
     const confidence: SkillMatch['confidence'] =
       intersection.length >= 3 && score >= 0.25 ? 'high' : 'borderline';
     if (!best || score > best.score) {
@@ -784,6 +795,13 @@ export function matchSkill(task: string, skills: SkillEntry[]): SkillMatch | nul
     }
   }
   return best;
+}
+
+/** Automatic suggestions only take strong matches: one or two shared words
+ *  are too easy to hit by accident to spend prompt space on. */
+export function matchPlaybookSuggestion(task: string, skills: SkillEntry[]): SkillEntry | null {
+  const match = matchSkill(task, skills);
+  return match?.confidence === 'high' ? match.skill : null;
 }
 
 // Limitation: Latin/alphanumeric keywords only. CJK text produces no tokens,

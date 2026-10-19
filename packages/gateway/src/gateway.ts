@@ -12,7 +12,7 @@ import { publishTeamFinal, composeTeamFinal, planTeamFooter, isSoloMentionRun, p
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { writeTranscriptSlice, TranscriptSlice, AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, runAide, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, parseBotMentions, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, BlackboardSnapshot, BotAnchor, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchSkill, suggestPlaybook, applySkill, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, AutomationCheck, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, pickVoiceAck, needsDigest, buildSpeechDigestPrompt, stripForSpeech, needsPolish, buildVoicePolishPrompt, sanitizePolished, DEFAULT_POLISH_TIMEOUT_MS, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort, DEFAULT_THINKING_EFFORT, ApiType, unwiredAllProtocols } from '@codey/core';
+import { writeTranscriptSlice, TranscriptSlice, AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, runAide, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, parseBotMentions, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, BlackboardSnapshot, BotAnchor, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchPlaybookSuggestion, suggestPlaybook, applySkill, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, AutomationCheck, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, pickVoiceAck, needsDigest, buildSpeechDigestPrompt, stripForSpeech, needsPolish, buildVoicePolishPrompt, sanitizePolished, DEFAULT_POLISH_TIMEOUT_MS, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort, DEFAULT_THINKING_EFFORT, ApiType, unwiredAllProtocols } from '@codey/core';
 import { randomUUID, createHash } from 'crypto';
 import { AutomationStore } from './automations/store';
 import { AutomationEngine, TargetResult } from './automations/engine';
@@ -337,6 +337,7 @@ export class Codey {
   private static SKILL_DISTILL_COOLDOWN_MS = 300_000; // 5 min
   private static SKILL_GC_EVERY_N_RUNS = 20;
   private static SKILL_EVOLVE_EVERY_N_USES = 3;
+  private static PLAYBOOK_PROMOTE_HINT_USES = 5;
 
   // Pre-compiled regex for /team command parsing
   private static readonly REGEX_TEAM = /\/team\s+(\w+)(?:\s+(--all))?\s+(?!--all\s*$)(.+)/i;
@@ -2624,6 +2625,7 @@ export class Codey {
     // payload by handleMessage — works even with autoApply off) takes
     // precedence; automatic matches are optional playbook suggestions for the agent.
     let appliedSkill: SkillEntry | null = null;
+    let suggestedPlaybook: SkillEntry | null = null;
     const skillsCfg = this.configManager?.getSkillsConfig();
     let runPrompt = parsed.prompt;
     if (skillsCfg?.enabled && skillInvoke) {
@@ -2632,10 +2634,10 @@ export class Codey {
       this.logger.info(`[skills] explicit invoke: ${skillInvoke.skill.name} v${skillInvoke.skill.version}`);
     } else if (skillsCfg?.enabled && skillsCfg.autoApply) {
       // runPrompt is non-empty here: empty prompts already returned above.
-      const match = matchSkill(runPrompt, this.workspaceManager.getSkillStore().getActive());
-      if (match) {
-        runPrompt = suggestPlaybook(runPrompt, match.skill);
-        this.logger.info(`[skills] playbook suggested: ${match.skill.name} v${match.skill.version} (${match.confidence})`);
+      suggestedPlaybook = matchPlaybookSuggestion(runPrompt, this.workspaceManager.getSkillStore().getActive());
+      if (suggestedPlaybook) {
+        runPrompt = suggestPlaybook(runPrompt, suggestedPlaybook);
+        this.logger.info(`[skills] playbook suggested: ${suggestedPlaybook.name} v${suggestedPlaybook.version}`);
       }
     }
 
@@ -2717,6 +2719,7 @@ export class Codey {
       void this.afterRunSkillPass({
         trace,
         appliedSkill,
+        suggestedPlaybook,
         clean: response.success,
         store: this.workspaceManager.getSkillStore(),
         // Mirror the chat surface: a turn that ended with the agent asking the
@@ -3340,6 +3343,9 @@ export class Codey {
   private async afterRunSkillPass(opts: {
     trace: RunTrace;
     appliedSkill: SkillEntry | null;
+    /** Offered to the agent as optional; it may have been ignored, so it
+     *  counts as a use for cleanup but feeds no success signal or evolution. */
+    suggestedPlaybook?: SkillEntry | null;
     clean: boolean;
     /** The run's workspace-scoped skill store, resolved by the caller (the
      *  chat's workspace when the run had a chat binding, else the active one). */
@@ -3382,6 +3388,16 @@ export class Codey {
             this.logger.warn(`[skills] evolve stage failed: ${err}`);
           }
         }
+      }
+
+      if (opts.suggestedPlaybook) store.recordUse(opts.suggestedPlaybook.name);
+      const used = opts.appliedSkill ?? opts.suggestedPlaybook;
+      const usedEntry = used ? store.get(used.name) : undefined;
+      if (usedEntry && usedEntry.useCount >= Codey.PLAYBOOK_PROMOTE_HINT_USES
+          && store.markPromotionHinted(usedEntry.name)) {
+        await opts.notify(
+          `📘 Playbook **${usedEntry.name}** has been used ${usedEntry.useCount} times. ` +
+          `Promote it to a Skill in the Codey app's Playbooks tab so the agent can find it on its own.`);
       }
 
       if (!opts.clean) return; // failed runs contribute a correction signal, not a trace
@@ -6624,11 +6640,10 @@ Example: /model gpt-4.1 write a Python script`;
       // Skills are per-workspace: match against the CHAT's workspace store
       // (mirrors how workingDir/teams above come from chat.workspaceName).
       const chatSkillStore = await this.resolveSkillStore(chat.workspaceName);
-      const match = matchSkill(userText, chatSkillStore.getActive());
-      if (match) {
-        suggestedChatPlaybook = match.skill;
-        prompt = suggestPlaybook(prompt, match.skill);
-        this.logger.info(`[skills] playbook suggested (chat): ${match.skill.name} v${match.skill.version} (${match.confidence})`);
+      suggestedChatPlaybook = matchPlaybookSuggestion(userText, chatSkillStore.getActive());
+      if (suggestedChatPlaybook) {
+        prompt = suggestPlaybook(prompt, suggestedChatPlaybook);
+        this.logger.info(`[skills] playbook suggested (chat): ${suggestedChatPlaybook.name} v${suggestedChatPlaybook.version}`);
       }
     }
 
@@ -7163,6 +7178,7 @@ Example: /model gpt-4.1 write a Python script`;
         void this.afterRunSkillPass({
           trace: chatTrace,
           appliedSkill: appliedChatSkill,
+          suggestedPlaybook: suggestedChatPlaybook,
           clean: runSucceeded,
           // Per-workspace store, resolved from the CHAT's workspace binding.
           store: await this.resolveSkillStore(chat.workspaceName),
