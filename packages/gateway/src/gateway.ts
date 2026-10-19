@@ -12,7 +12,7 @@ import { publishTeamFinal, composeTeamFinal, planTeamFooter, isSoloMentionRun, p
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { writeTranscriptSlice, TranscriptSlice, AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, runAide, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, parseBotMentions, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, BlackboardSnapshot, BotAnchor, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchPlaybookSuggestion, suggestPlaybook, applySkill, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, AutomationCheck, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, pickVoiceAck, needsDigest, buildSpeechDigestPrompt, stripForSpeech, needsPolish, buildVoicePolishPrompt, sanitizePolished, DEFAULT_POLISH_TIMEOUT_MS, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort, DEFAULT_THINKING_EFFORT, ApiType, unwiredAllProtocols } from '@codey/core';
+import { writeTranscriptSlice, TranscriptSlice, AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, runAide, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, parseBotMentions, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, BlackboardSnapshot, BotAnchor, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, preparePlaybookIndex, withPlaybookIndex, playbooksRead, OfferedPlaybook, applySkill, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, AutomationCheck, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, pickVoiceAck, needsDigest, buildSpeechDigestPrompt, stripForSpeech, needsPolish, buildVoicePolishPrompt, sanitizePolished, DEFAULT_POLISH_TIMEOUT_MS, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort, DEFAULT_THINKING_EFFORT, ApiType, unwiredAllProtocols } from '@codey/core';
 import { randomUUID, createHash } from 'crypto';
 import { AutomationStore } from './automations/store';
 import { AutomationEngine, TargetResult } from './automations/engine';
@@ -2620,12 +2620,12 @@ export class Codey {
     const onStream = handler?.streamText ? (text: string) => handler.streamText!(text) : undefined;
     const streamed = { active: false };
 
-    // ── Skill matching (pre-run) ──────────────────────────
+    // ── Skills (pre-run) ──────────────────────────────────
     // Explicit `/skill <name> <task>` invoke (carried on this turn's queue
     // payload by handleMessage — works even with autoApply off) takes
-    // precedence; automatic matches are optional playbook suggestions for the agent.
+    // precedence; otherwise the agent gets the playbook index and decides.
     let appliedSkill: SkillEntry | null = null;
-    let suggestedPlaybook: SkillEntry | null = null;
+    let offeredPlaybooks: OfferedPlaybook[] = [];
     const skillsCfg = this.configManager?.getSkillsConfig();
     let runPrompt = parsed.prompt;
     if (skillsCfg?.enabled && skillInvoke) {
@@ -2634,11 +2634,8 @@ export class Codey {
       this.logger.info(`[skills] explicit invoke: ${skillInvoke.skill.name} v${skillInvoke.skill.version}`);
     } else if (skillsCfg?.enabled && skillsCfg.autoApply) {
       // runPrompt is non-empty here: empty prompts already returned above.
-      suggestedPlaybook = matchPlaybookSuggestion(runPrompt, this.workspaceManager.getSkillStore().getActive());
-      if (suggestedPlaybook) {
-        runPrompt = suggestPlaybook(runPrompt, suggestedPlaybook);
-        this.logger.info(`[skills] playbook suggested: ${suggestedPlaybook.name} v${suggestedPlaybook.version}`);
-      }
+      offeredPlaybooks = await preparePlaybookIndex(this.workspaceManager.getSkillStore());
+      runPrompt = withPlaybookIndex(runPrompt, offeredPlaybooks);
     }
 
     let prep = this.prepareAgentTurn(ctxWindow, agent, runPrompt, memoryContext);
@@ -2719,7 +2716,7 @@ export class Codey {
       void this.afterRunSkillPass({
         trace,
         appliedSkill,
-        suggestedPlaybook,
+        readPlaybooks: playbooksRead(meta.toolCalls, offeredPlaybooks),
         clean: response.success,
         store: this.workspaceManager.getSkillStore(),
         // Mirror the chat surface: a turn that ended with the agent asking the
@@ -3334,7 +3331,8 @@ export class Codey {
       this.logger.debug('[skills] induction: cluster produced no template');
       return null;
     }
-    return nameTemplate(this.getSkillDistillDeps(), template, store.getAll(), store.getRejected());
+    return nameTemplate(this.getSkillDistillDeps(), template, store.getAll(), store.getRejected(),
+      members.map(t => t.promptSummary));
   }
 
   /** Shared post-run skill pass for both surfaces. Never rejects — every LLM
@@ -3343,9 +3341,8 @@ export class Codey {
   private async afterRunSkillPass(opts: {
     trace: RunTrace;
     appliedSkill: SkillEntry | null;
-    /** Offered to the agent as optional; it may have been ignored, so it
-     *  counts as a use for cleanup but feeds no success signal or evolution. */
-    suggestedPlaybook?: SkillEntry | null;
+    /** Playbooks from the index whose file the agent opened this run. */
+    readPlaybooks?: SkillEntry[];
     clean: boolean;
     /** The run's workspace-scoped skill store, resolved by the caller (the
      *  chat's workspace when the run had a chat binding, else the active one). */
@@ -3364,14 +3361,20 @@ export class Codey {
       if (!cfg || !cfg.enabled) return;
       const store = opts.store;
 
-      if (opts.appliedSkill) {
+      // An explicit /skill and a playbook the agent chose to open are both
+      // real uses: they feed cleanup, success signals and evolution alike.
+      const used = [opts.appliedSkill, ...(opts.readPlaybooks ?? [])]
+        .filter((s, i, all): s is SkillEntry => !!s && all.findIndex(o => o?.name === s.name) === i);
+      for (const skill of used) {
         // Bookkeeping stays outside the LLM try block so it always happens.
-        store.recordUse(opts.appliedSkill.name);
-        store.recordSuccessSignal(opts.appliedSkill.name, opts.clean);
-        const entry = store.get(opts.appliedSkill.name);
+        store.recordUse(skill.name);
+        store.recordSuccessSignal(skill.name, opts.clean);
+        const entry = store.get(skill.name);
+        if (!entry) continue;
+        if (opts.readPlaybooks?.includes(skill)) this.logger.info(`[skills] playbook read: ${entry.name} v${entry.version}`);
         // Gate evolution to every Nth use — one weak trace is not enough signal
         // to rewrite steps on, and per-run LLM calls would be pure cost.
-        if (opts.clean && entry && entry.useCount % Codey.SKILL_EVOLVE_EVERY_N_USES === 0) {
+        if (opts.clean && entry.useCount % Codey.SKILL_EVOLVE_EVERY_N_USES === 0) {
           try {
             const evolved = await evolveSkill(this.getSkillDistillDeps(), entry, opts.trace);
             if (evolved) {
@@ -3388,16 +3391,11 @@ export class Codey {
             this.logger.warn(`[skills] evolve stage failed: ${err}`);
           }
         }
-      }
-
-      if (opts.suggestedPlaybook) store.recordUse(opts.suggestedPlaybook.name);
-      const used = opts.appliedSkill ?? opts.suggestedPlaybook;
-      const usedEntry = used ? store.get(used.name) : undefined;
-      if (usedEntry && usedEntry.useCount >= Codey.PLAYBOOK_PROMOTE_HINT_USES
-          && store.markPromotionHinted(usedEntry.name)) {
-        await opts.notify(
-          `📘 Playbook **${usedEntry.name}** has been used ${usedEntry.useCount} times. ` +
-          `Promote it to a Skill in the Codey app's Playbooks tab so the agent can find it on its own.`);
+        if (entry.useCount >= Codey.PLAYBOOK_PROMOTE_HINT_USES && store.markPromotionHinted(entry.name)) {
+          await opts.notify(
+            `📘 Playbook **${entry.name}** has been used ${entry.useCount} times. ` +
+            `Promote it to a Skill in the Codey app's Playbooks tab so the agent can find it on its own.`);
+        }
       }
 
       if (!opts.clean) return; // failed runs contribute a correction signal, not a trace
@@ -6115,7 +6113,7 @@ Example: /model gpt-4.1 write a Python script`;
     // we don't echo the message back to the user who typed it.
     // `skillInvoke` is an explicit `/skill <name> <task>` invocation threaded
     // per-turn from the channel surface (Task 12: apply it in this method's
-    // skill pre-run pass, taking precedence over the auto-apply matcher).
+    // skill pre-run pass, taking precedence over the playbook index).
     origin?: {
       channel?: ChannelType;
       channelUserId?: string;
@@ -6164,7 +6162,7 @@ Example: /model gpt-4.1 write a Python script`;
     // we don't echo the message back to the user who typed it.
     // `skillInvoke` is an explicit `/skill <name> <task>` invocation threaded
     // per-turn from the channel surface (Task 12: apply it in this method's
-    // skill pre-run pass, taking precedence over the auto-apply matcher).
+    // skill pre-run pass, taking precedence over the playbook index).
     origin?: {
       channel?: ChannelType;
       channelUserId?: string;
@@ -6446,7 +6444,7 @@ Example: /model gpt-4.1 write a Python script`;
                       trigger: { runId: 'user-confirmed', promptSummary: s.description },
                       // Present only when the suggestion came from an induced template.
                       parameters: s.parameters, inducedFrom: s.inducedFrom });
-          responseText = `✅ Skill **${name}** saved. It will be suggested to the agent on matching tasks.`;
+          responseText = `✅ Skill **${name}** saved. The agent will see it in its playbook list and use it when it fits.`;
         }
         this.chatManager.setPendingSkillSuggestion(chatId, null);
         return finishSkillReply(responseText);
@@ -6462,7 +6460,7 @@ Example: /model gpt-4.1 write a Python script`;
     // persisted user message and downstream bootstrap see the clean text —
     // the banner is applied exactly once at prompt build (see below).
     let appliedChatSkill: SkillEntry | null = null;
-    let suggestedChatPlaybook: SkillEntry | null = null;
+    let offeredChatPlaybooks: OfferedPlaybook[] = [];
     let chatSkillTask: string | null = null;
     if (origin?.skillInvoke) {
       appliedChatSkill = origin.skillInvoke.skill;
@@ -6637,14 +6635,11 @@ Example: /model gpt-4.1 write a Python script`;
         // Unattended automation runs execute a frozen brief — never suggest playbooks.
         && chat.kind !== 'automation'
         && !isTeamTurn && !isSlashTurn) {
-      // Skills are per-workspace: match against the CHAT's workspace store
+      // Skills are per-workspace: list the CHAT's workspace playbooks
       // (mirrors how workingDir/teams above come from chat.workspaceName).
       const chatSkillStore = await this.resolveSkillStore(chat.workspaceName);
-      suggestedChatPlaybook = matchPlaybookSuggestion(userText, chatSkillStore.getActive());
-      if (suggestedChatPlaybook) {
-        prompt = suggestPlaybook(prompt, suggestedChatPlaybook);
-        this.logger.info(`[skills] playbook suggested (chat): ${suggestedChatPlaybook.name} v${suggestedChatPlaybook.version}`);
-      }
+      offeredChatPlaybooks = await preparePlaybookIndex(chatSkillStore);
+      prompt = withPlaybookIndex(prompt, offeredChatPlaybooks);
     }
 
     const userMessage: ChatMessage = {
@@ -6889,7 +6884,7 @@ Example: /model gpt-4.1 write a Python script`;
           // Re-apply the skill banner: the rebuilt bootstrap prompt replaced
           // the one that carried it (still exactly once per prompt build).
           if (appliedChatSkill) prompt = applySkill(prompt, appliedChatSkill);
-          else if (suggestedChatPlaybook) prompt = suggestPlaybook(prompt, suggestedChatPlaybook);
+          else prompt = withPlaybookIndex(prompt, offeredChatPlaybooks);
           response = await this.runWithFallback(agent, {
             prompt,
             agent,
@@ -7178,7 +7173,7 @@ Example: /model gpt-4.1 write a Python script`;
         void this.afterRunSkillPass({
           trace: chatTrace,
           appliedSkill: appliedChatSkill,
-          suggestedPlaybook: suggestedChatPlaybook,
+          readPlaybooks: playbooksRead(toolCalls, offeredChatPlaybooks),
           clean: runSucceeded,
           // Per-workspace store, resolved from the CHAT's workspace binding.
           store: await this.resolveSkillStore(chat.workspaceName),

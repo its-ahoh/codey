@@ -107,13 +107,6 @@ export interface DistillResult {
   inducedFrom?: string[];
 }
 
-export interface SkillMatch {
-  skill: SkillEntry;
-  /** Only high matches are suggested automatically; borderline ones are dropped. */
-  confidence: 'high' | 'borderline';
-  score: number;
-}
-
 export const RECENT_TRACES_MAX = 20;
 export const HISTORY_MAX = 5;
 export const REJECTED_MAX = 20;
@@ -271,6 +264,11 @@ export class SkillStore {
 
   get(name: string): SkillEntry | undefined {
     return this.index.entries.find(e => e.name === name);
+  }
+
+  /** Where the agent-readable copy of a playbook lives (see playbook-index). */
+  playbookFilePath(name: string): string {
+    return path.join(this.skillsDir, 'playbooks', `${name}.md`);
   }
 
   getAll(): SkillEntry[] { return [...this.index.entries]; }
@@ -560,6 +558,7 @@ Return ONE JSON object (no markdown, no prose) or the literal word "NONE":
 
 Rules:
 - name must match /^[a-z][a-z0-9-]*$/ and be 3-30 chars.
+- Write description, whenToUse and steps in the language the user wrote their requests in; keep name in English kebab-case.
 - Output ONLY the JSON or "NONE". No markdown fences, no prose.`;
 
 /** How much of each trace's output preview reaches the distill prompt. The
@@ -698,6 +697,9 @@ The procedure (tool calls in order; «name» marks an input that varied between 
 Inputs it takes:
 %PARAMS%
 
+What the user asked in those runs:
+%REQUESTS%
+
 Existing skills (don't duplicate):
 %SKILLS%
 
@@ -717,6 +719,7 @@ duplicates an existing skill:
 
 Rules:
 - name must match /^[a-z][a-z0-9-]*$/ and be 3-30 chars.
+- Write description, whenToUse and steps in the language the user wrote their requests in; keep name in English kebab-case.
 - Output ONLY the JSON or "NONE". No markdown fences, no prose.`;
 
 /** Name a template that clustering already established.
@@ -730,6 +733,8 @@ export async function nameTemplate(
   template: InducedTemplate,
   existing: SkillEntry[],
   rejected: RejectedSuggestion[],
+  /** The member runs' requests, so the name and steps follow the user's language. */
+  requests: string[] = [],
 ): Promise<DistillResult | 'duplicate' | null> {
   const params = template.parameters.length
     ? template.parameters.map(p => `- ${p.name}: ${p.ext ? `${p.kind} (.${p.ext})` : p.kind}`).join('\n')
@@ -739,6 +744,7 @@ export async function nameTemplate(
     '%COUNT%': String(template.memberRunIds.length),
     '%TEMPLATE%': renderTemplate(template),
     '%PARAMS%': params,
+    '%REQUESTS%': requests.length ? requests.map(r => `- ${r}`).join('\n') : '(not recorded)',
     '%SKILLS%': formatSkillsForPrompt(existing.filter(s => !s.archived)),
     '%REJECTED%': formatRejectedForPrompt(rejected),
   });
@@ -768,59 +774,6 @@ export async function nameTemplate(
   return null;
 }
 
-export function matchSkill(task: string, skills: SkillEntry[]): SkillMatch | null {
-  // Promoted playbooks are SKILL.md files the agent discovers on its own;
-  // suggesting them again would only repeat that procedure in the prompt.
-  const active = skills.filter(s => !s.archived && !s.promotedToSkill);
-  if (active.length === 0) return null;
-  // Dedupe both token lists so repeated words can't inflate the intersection
-  // count into a high match; this also makes the score true Jaccard.
-  const taskTokens = [...new Set(tokenizeLax(task))];
-  if (taskTokens.length === 0) return null;
-  let best: SkillMatch | null = null;
-  for (const skill of active) {
-    const skillTokens = [...new Set(tokenizeLax(`${skill.description} ${skill.whenToUse}`))];
-    if (skillTokens.length === 0) continue;
-    const intersection = skillTokens.filter(t => taskTokens.includes(t));
-    if (intersection.length < 1) continue;
-    const unionSize = new Set([...taskTokens, ...skillTokens]).size;
-    const score = intersection.length / unionSize;
-    // 'high' needs REAL overlap: 3+ shared keywords and a strong Jaccard.
-    // Two-token matches are too easy to hit by accident (e.g. "merged PRs"
-    // alone), so they stay borderline and are never suggested automatically.
-    const confidence: SkillMatch['confidence'] =
-      intersection.length >= 3 && score >= 0.25 ? 'high' : 'borderline';
-    if (!best || score > best.score) {
-      best = { skill, confidence, score };
-    }
-  }
-  return best;
-}
-
-/** Automatic suggestions only take strong matches: one or two shared words
- *  are too easy to hit by accident to spend prompt space on. */
-export function matchPlaybookSuggestion(task: string, skills: SkillEntry[]): SkillEntry | null {
-  const match = matchSkill(task, skills);
-  return match?.confidence === 'high' ? match.skill : null;
-}
-
-// Limitation: Latin/alphanumeric keywords only. CJK text produces no tokens,
-// so pure-CJK prompts never auto-match (they simply skip the skill fast-path);
-// mixed-script prompts still match via their Latin keywords. Bigram
-// tokenization for CJK is a possible v2.
-function tokenizeLax(text: string): string[] {
-  if (!text) return [];
-  const stopWords = new Set([
-    'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'can', 'do', 'for',
-    'from', 'has', 'have', 'in', 'is', 'it', 'its', 'of', 'on', 'or',
-    'that', 'the', 'to', 'was', 'were', 'will', 'with', 'you', 'i', 'me',
-    'my', 'we', 'our', 'this',
-  ]);
-  return text.toLowerCase()
-    .split(/[^a-z0-9_\-]+/i)
-    .filter(t => t.length > 1 && !stopWords.has(t));
-}
-
 /** Pull a value for one parameter out of the task text, or null.
  *
  *  Deliberately a cheap syntactic pass — no LLM. A wrong auto-bound value is
@@ -837,22 +790,6 @@ export function bindParameter(task: string, param: SkillParameter): string | nul
     return task.match(pattern)?.[0] ?? null;
   }
   return null;
-}
-
-/** Offer a learned playbook as an optional procedure, without claiming the
- *  agent used it. Only unpromoted playbooks reach here; promoted ones are
- *  SKILL.md files the agent discovers itself. */
-export function suggestPlaybook(task: string, skill: SkillEntry): string {
-  return `Optional playbook from earlier runs: ${skill.name} (v${skill.version})
-Description: ${skill.description}
-When to use: ${skill.whenToUse}
-Decide whether this playbook fits the requested action. Use it only if relevant; otherwise ignore it. Do not ask the user to confirm the choice. The user's request takes precedence.
-Playbook steps:
-${skill.steps}
-
----
-User task:
-${task}`;
 }
 
 /** Prefix a task with the skill's procedure. Parameters the task plainly

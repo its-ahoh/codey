@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { InducedTemplate } from './playbook-induction';
-import { SkillStore, RECENT_TRACES_MAX, TRACES_FILE_VERSION, HISTORY_MAX, REJECTED_MAX, EVOLUTION_MAX, distillCandidate, RunTrace, DistillDeps, DistillResult, matchSkill, SkillEntry, SkillEvolutionEvent, applySkill, bindParameter, nameTemplate, evolveSkill, isLowSignalTrace } from './skill-crystallizer';
+import { SkillStore, RECENT_TRACES_MAX, TRACES_FILE_VERSION, HISTORY_MAX, REJECTED_MAX, EVOLUTION_MAX, distillCandidate, RunTrace, DistillDeps, DistillResult, SkillEntry, SkillEvolutionEvent, applySkill, bindParameter, nameTemplate, evolveSkill, isLowSignalTrace } from './skill-crystallizer';
 
 describe('SkillStore', () => {
   let tmp: string;
@@ -539,81 +539,6 @@ function makeSkill(over: Partial<SkillEntry>): SkillEntry {
   };
 }
 
-describe('matchSkill', () => {
-  const skills: SkillEntry[] = [
-    makeSkill({ name: 'release-notes', description: 'Generate release notes', whenToUse: 'user asks for release notes or changelog' }),
-    makeSkill({ name: 'fix-lint', description: 'Fix lint errors', whenToUse: 'user reports lint errors or ESLint failures' }),
-    makeSkill({ name: 'archived-x', description: 'Hidden', whenToUse: 'anything', archived: true }),
-  ];
-
-  it('high-confidence match for multi-keyword overlap', () => {
-    const m = matchSkill('generate release notes from merged PRs', skills);
-    expect(m?.skill.name).toBe('release-notes');
-    expect(m?.confidence).toBe('high');
-  });
-
-  it('borderline match for single-keyword overlap', () => {
-    const m = matchSkill('write a changelog for v2.1', skills);
-    expect(m?.skill.name).toBe('release-notes');
-    expect(m?.confidence).toBe('borderline');
-  });
-
-  it('matches fix-lint for ESLint task', () => {
-    const m = matchSkill('eslint is failing on CI, can you fix?', skills);
-    expect(m?.skill.name).toBe('fix-lint');
-  });
-
-  it('returns null for unrelated task', () => {
-    expect(matchSkill('build a REST API for users', skills)).toBeNull();
-  });
-
-  it('never matches archived skills', () => {
-    expect(matchSkill('do anything at all please', skills)).toBeNull();
-  });
-
-  it('duplicated words in skill text do not inflate confidence past borderline', () => {
-    const dup = [makeSkill({ name: 'dup', description: 'changelog changelog changelog tool', whenToUse: '' })];
-    const m = matchSkill('write a changelog for v2.1', dup);
-    expect(m?.skill.name).toBe('dup');
-    expect(m?.confidence).toBe('borderline');
-  });
-
-  it('two overlapping tokens diluted by a long description stay borderline (score gate)', () => {
-    const verbose = [makeSkill({
-      name: 'verbose',
-      description: 'release notes alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma',
-      whenToUse: '',
-    })];
-    const m = matchSkill('generate release notes', verbose);
-    expect(m?.skill.name).toBe('verbose');
-    expect(m?.confidence).toBe('borderline');
-  });
-
-  it('a two-token overlap is never high confidence (must pass the confirm gate)', () => {
-    const changelog = [makeSkill({
-      name: 'generate-changelog',
-      description: 'Generates a changelog from merged PRs',
-      whenToUse: 'user asks for a changelog or release notes',
-    })];
-    // Shares only {merged, prs} with the skill — an incidental overlap that
-    // must NOT auto-apply the changelog procedure to an unrelated task.
-    const m = matchSkill('list merged PRs from last week', changelog);
-    expect(m?.skill.name).toBe('generate-changelog');
-    expect(m?.confidence).toBe('borderline');
-  });
-
-  it('three shared tokens with a diluted Jaccard score stay borderline', () => {
-    const verbose = [makeSkill({
-      name: 'verbose3',
-      description: 'generate release notes alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu',
-      whenToUse: '',
-    })];
-    const m = matchSkill('generate release notes covering the quarterly summary report deck', verbose);
-    expect(m?.skill.name).toBe('verbose3');
-    expect(m?.confidence).toBe('borderline');
-  });
-});
-
 describe('applySkill', () => {
   const skill = makeSkill({
     name: 'release-notes', description: 'Generate release notes',
@@ -708,6 +633,19 @@ describe('nameTemplate', () => {
     expect(prompt).toContain('2 runs');
     expect(prompt).toContain('browser_navigate(url=x.com)');
     expect(prompt).toContain('comment=«comment»');
+  });
+
+  it('shows the member requests so the result follows the user\'s language', async () => {
+    let prompt = '';
+    const deps = fakeDeps(async (req) => {
+      prompt = req.prompt;
+      return { success: true, output: JSON.stringify({
+        name: 'x-outreach', description: 'd', whenToUse: 'w', steps: '1. x',
+      }), error: null, tokens: { total: 10 } };
+    });
+    await nameTemplate(deps, template, [], [], ['comenta en las publicaciones', 'responde a los comentarios']);
+    expect(prompt).toContain('- comenta en las publicaciones');
+    expect(prompt).toContain('language the user wrote their requests in');
   });
 
   it('reports a duplicate distinctly from having nothing to offer', async () => {
