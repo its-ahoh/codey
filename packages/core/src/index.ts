@@ -42,3 +42,4 @@ export * from './member-avatars';
 export * from './chat-tasks';
 
 export * from "./co-memo";
+export * from './playbook-skills';

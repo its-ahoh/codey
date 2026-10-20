@@ -31,12 +31,14 @@ export interface SkillEntry {
   sourceRunIds: string[];
   createdAt: number;
   archived: boolean;
-  /** Promoted playbooks are backed by a durable agent SKILL.md and are never
-   *  archived by either garbage collection or the playbook UI. */
+  /** Legacy: promoted by hand to a SKILL.md before saved playbooks became
+   *  skills themselves. Codey no longer writes, evolves or archives these. */
   promotedToSkill?: boolean;
-  /** Set once the user has been told this playbook is ready to promote, so
-   *  the reminder never repeats. */
-  promotionHinted?: boolean;
+  /** Fingerprint of the SKILL.md Codey last wrote. A mismatch means the user
+   *  edited the file, which is absorbed as a new version (playbook-skills). */
+  skillHash?: string;
+  /** The user has edited the SKILL.md by hand; never archived automatically. */
+  editedByUser?: boolean;
   /** Inputs the procedure takes, discovered by diffing a cluster of runs.
    *  Absent on skills distilled from prose rather than induced. */
   parameters?: SkillParameter[];
@@ -61,6 +63,9 @@ export interface SkillIndex {
   entries: SkillEntry[];
   /** Suggestions the user said "no" to — fed to the distiller so it stops re-proposing them. */
   rejected: RejectedSuggestion[];
+  /** Working directories whose `.git/info/exclude` already received Codey's
+   *  block — recorded so a user who removes it is not overridden. */
+  localExcludeDirs?: string[];
 }
 
 export interface RunTrace {
@@ -105,13 +110,6 @@ export interface DistillResult {
    *  from prose distillation. */
   parameters?: SkillParameter[];
   inducedFrom?: string[];
-}
-
-export interface SkillMatch {
-  skill: SkillEntry;
-  /** Only high matches are suggested automatically; borderline ones are dropped. */
-  confidence: 'high' | 'borderline';
-  score: number;
 }
 
 export const RECENT_TRACES_MAX = 20;
@@ -182,6 +180,7 @@ export class SkillStore {
             version: 1,
             entries: parsed.entries.map(e => ({ ...e, history: e.history ?? [], evolution: e.evolution ?? [] })),
             rejected: Array.isArray(parsed.rejected) ? parsed.rejected : [],
+            localExcludeDirs: Array.isArray(parsed.localExcludeDirs) ? parsed.localExcludeDirs : [],
           };
         }
       } catch {
@@ -315,21 +314,48 @@ export class SkillStore {
     return true;
   }
 
+  /** Give a playbook a new name, keeping its history and counters. */
+  rename(name: string, newName: string): boolean {
+    const entry = this.index.entries.find(e => e.name === name);
+    if (!entry || this.index.entries.some(e => e.name === newName)) return false;
+    entry.name = newName;
+    this.markIndexDirty();
+    return true;
+  }
+
+  /** Record the fingerprint of the SKILL.md just written for a playbook. */
+  setSkillHash(name: string, hash: string | undefined): boolean {
+    const entry = this.index.entries.find(e => e.name === name);
+    if (!entry) return false;
+    entry.skillHash = hash;
+    this.markIndexDirty();
+    return true;
+  }
+
+  /** Take a hand-edited SKILL.md as the next version. */
+  absorbEdit(name: string, steps: string, description?: string): boolean {
+    const entry = this.index.entries.find(e => e.name === name);
+    if (!entry) return false;
+    if (description) entry.description = description;
+    entry.editedByUser = true;
+    return this.bumpVersion(name, steps, { runId: 'user-edit', promptSummary: 'Edited SKILL.md by hand' });
+  }
+
+  hasLocalExclude(workingDir: string): boolean {
+    return (this.index.localExcludeDirs ?? []).includes(workingDir);
+  }
+
+  recordLocalExclude(workingDir: string): void {
+    if (this.hasLocalExclude(workingDir)) return;
+    this.index.localExcludeDirs = [...(this.index.localExcludeDirs ?? []), workingDir];
+    this.markIndexDirty();
+  }
+
   recordUse(name: string): boolean {
     const entry = this.index.entries.find(e => e.name === name);
     if (!entry) return false;
     entry.useCount++;
     entry.lastUsedAt = Date.now();
-    this.markIndexDirty();
-    return true;
-  }
-
-  /** Record that the promotion reminder was shown. Returns false when it was
-   *  already shown, the playbook is promoted, or it does not exist. */
-  markPromotionHinted(name: string): boolean {
-    const entry = this.index.entries.find(e => e.name === name);
-    if (!entry || entry.promotedToSkill || entry.promotionHinted) return false;
-    entry.promotionHinted = true;
     this.markIndexDirty();
     return true;
   }
@@ -407,26 +433,31 @@ export class SkillStore {
 
   // ── GC ───────────────────────────────────────────────────────
 
-  runCollectGarbage(opts: { staleDays: number; weakSkillDays: number }): number {
+  /** Archive stale and weak playbooks and return their names, so the caller
+   *  can remove their SKILL.md files. `usageTracked` is false when the run's
+   *  agent reports no tool events: uses are invisible there, so "rarely used"
+   *  would really mean "unknown" and only staleness applies. */
+  runCollectGarbage(opts: { staleDays: number; weakSkillDays: number; usageTracked?: boolean }): string[] {
     const now = Date.now();
-    let archived = 0;
+    const archived: string[] = [];
     for (const entry of this.index.entries) {
-      if (entry.archived || entry.promotedToSkill) continue;
+      if (entry.archived || entry.promotedToSkill || entry.editedByUser) continue;
       if (now - entry.lastUsedAt > opts.staleDays * 86_400_000) {
         entry.archived = true;
-        archived++;
+        archived.push(entry.name);
         continue;
       }
       if (
+        opts.usageTracked !== false &&
         entry.useCount < 2 &&
         now - entry.createdAt > opts.weakSkillDays * 86_400_000 &&
         now - entry.lastUsedAt > opts.weakSkillDays * 86_400_000
       ) {
         entry.archived = true;
-        archived++;
+        archived.push(entry.name);
       }
     }
-    if (archived > 0) this.markIndexDirty();
+    if (archived.length > 0) this.markIndexDirty();
     return archived;
   }
 
@@ -560,6 +591,7 @@ Return ONE JSON object (no markdown, no prose) or the literal word "NONE":
 
 Rules:
 - name must match /^[a-z][a-z0-9-]*$/ and be 3-30 chars.
+- Write description, whenToUse and steps in the language the user wrote their requests in; keep name in English kebab-case.
 - Output ONLY the JSON or "NONE". No markdown fences, no prose.`;
 
 /** How much of each trace's output preview reaches the distill prompt. The
@@ -698,6 +730,9 @@ The procedure (tool calls in order; «name» marks an input that varied between 
 Inputs it takes:
 %PARAMS%
 
+What the user asked in those runs:
+%REQUESTS%
+
 Existing skills (don't duplicate):
 %SKILLS%
 
@@ -717,6 +752,7 @@ duplicates an existing skill:
 
 Rules:
 - name must match /^[a-z][a-z0-9-]*$/ and be 3-30 chars.
+- Write description, whenToUse and steps in the language the user wrote their requests in; keep name in English kebab-case.
 - Output ONLY the JSON or "NONE". No markdown fences, no prose.`;
 
 /** Name a template that clustering already established.
@@ -730,6 +766,8 @@ export async function nameTemplate(
   template: InducedTemplate,
   existing: SkillEntry[],
   rejected: RejectedSuggestion[],
+  /** The member runs' requests, so the name and steps follow the user's language. */
+  requests: string[] = [],
 ): Promise<DistillResult | 'duplicate' | null> {
   const params = template.parameters.length
     ? template.parameters.map(p => `- ${p.name}: ${p.ext ? `${p.kind} (.${p.ext})` : p.kind}`).join('\n')
@@ -739,6 +777,7 @@ export async function nameTemplate(
     '%COUNT%': String(template.memberRunIds.length),
     '%TEMPLATE%': renderTemplate(template),
     '%PARAMS%': params,
+    '%REQUESTS%': requests.length ? requests.map(r => `- ${r}`).join('\n') : '(not recorded)',
     '%SKILLS%': formatSkillsForPrompt(existing.filter(s => !s.archived)),
     '%REJECTED%': formatRejectedForPrompt(rejected),
   });
@@ -768,59 +807,6 @@ export async function nameTemplate(
   return null;
 }
 
-export function matchSkill(task: string, skills: SkillEntry[]): SkillMatch | null {
-  // Promoted playbooks are SKILL.md files the agent discovers on its own;
-  // suggesting them again would only repeat that procedure in the prompt.
-  const active = skills.filter(s => !s.archived && !s.promotedToSkill);
-  if (active.length === 0) return null;
-  // Dedupe both token lists so repeated words can't inflate the intersection
-  // count into a high match; this also makes the score true Jaccard.
-  const taskTokens = [...new Set(tokenizeLax(task))];
-  if (taskTokens.length === 0) return null;
-  let best: SkillMatch | null = null;
-  for (const skill of active) {
-    const skillTokens = [...new Set(tokenizeLax(`${skill.description} ${skill.whenToUse}`))];
-    if (skillTokens.length === 0) continue;
-    const intersection = skillTokens.filter(t => taskTokens.includes(t));
-    if (intersection.length < 1) continue;
-    const unionSize = new Set([...taskTokens, ...skillTokens]).size;
-    const score = intersection.length / unionSize;
-    // 'high' needs REAL overlap: 3+ shared keywords and a strong Jaccard.
-    // Two-token matches are too easy to hit by accident (e.g. "merged PRs"
-    // alone), so they stay borderline and are never suggested automatically.
-    const confidence: SkillMatch['confidence'] =
-      intersection.length >= 3 && score >= 0.25 ? 'high' : 'borderline';
-    if (!best || score > best.score) {
-      best = { skill, confidence, score };
-    }
-  }
-  return best;
-}
-
-/** Automatic suggestions only take strong matches: one or two shared words
- *  are too easy to hit by accident to spend prompt space on. */
-export function matchPlaybookSuggestion(task: string, skills: SkillEntry[]): SkillEntry | null {
-  const match = matchSkill(task, skills);
-  return match?.confidence === 'high' ? match.skill : null;
-}
-
-// Limitation: Latin/alphanumeric keywords only. CJK text produces no tokens,
-// so pure-CJK prompts never auto-match (they simply skip the skill fast-path);
-// mixed-script prompts still match via their Latin keywords. Bigram
-// tokenization for CJK is a possible v2.
-function tokenizeLax(text: string): string[] {
-  if (!text) return [];
-  const stopWords = new Set([
-    'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'can', 'do', 'for',
-    'from', 'has', 'have', 'in', 'is', 'it', 'its', 'of', 'on', 'or',
-    'that', 'the', 'to', 'was', 'were', 'will', 'with', 'you', 'i', 'me',
-    'my', 'we', 'our', 'this',
-  ]);
-  return text.toLowerCase()
-    .split(/[^a-z0-9_\-]+/i)
-    .filter(t => t.length > 1 && !stopWords.has(t));
-}
-
 /** Pull a value for one parameter out of the task text, or null.
  *
  *  Deliberately a cheap syntactic pass — no LLM. A wrong auto-bound value is
@@ -837,22 +823,6 @@ export function bindParameter(task: string, param: SkillParameter): string | nul
     return task.match(pattern)?.[0] ?? null;
   }
   return null;
-}
-
-/** Offer a learned playbook as an optional procedure, without claiming the
- *  agent used it. Only unpromoted playbooks reach here; promoted ones are
- *  SKILL.md files the agent discovers itself. */
-export function suggestPlaybook(task: string, skill: SkillEntry): string {
-  return `Optional playbook from earlier runs: ${skill.name} (v${skill.version})
-Description: ${skill.description}
-When to use: ${skill.whenToUse}
-Decide whether this playbook fits the requested action. Use it only if relevant; otherwise ignore it. Do not ask the user to confirm the choice. The user's request takes precedence.
-Playbook steps:
-${skill.steps}
-
----
-User task:
-${task}`;
 }
 
 /** Prefix a task with the skill's procedure. Parameters the task plainly
