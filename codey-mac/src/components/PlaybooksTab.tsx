@@ -9,6 +9,7 @@ interface Summary {
   /** Owning workspace — the list spans all of them, and names collide across
    *  workspaces, so every row and every action is keyed by (workspace, name). */
   workspace: string
+  scope: 'project' | 'global'
   name: string
   description: string
   version: number
@@ -112,6 +113,21 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
     }
   }, [reload, expanded])
 
+  const changeScope = useCallback(async (s: Summary) => {
+    const target = s.scope === 'global' ? 'project' : 'global'
+    const message = target === 'global'
+      ? `Make "${s.name}" global? It moves to ~/.codey/skills and every project's agent can use it.`
+      : `Make "${s.name}" project-only? It moves into the active workspace's .codey/skills.`
+    if (!confirm(message)) return
+    try {
+      unwrap(await window.codey.playbooks.setScope(s.workspace, s.name, target))
+      await reload()
+      setExpanded(null)
+    } catch (e: any) {
+      setError(e?.message ?? String(e))
+    }
+  }, [reload])
+
   const renderTimeline = () => (
     <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 14, paddingTop: 12 }}>
       <div style={{ color: C.fg, fontSize: 13, fontWeight: 650, marginBottom: 10 }}>Version history</div>
@@ -212,9 +228,15 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
             </button>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 7, marginTop: 13, marginLeft: 48 }}>
-            <span title="Workspace this playbook belongs to" style={metaChipStyle}>
-              <UIIcon name="folder" size={12} />{s.workspace}
-            </span>
+            {s.scope === 'global' ? (
+              <span title="Available in every project" style={metaChipStyle}>
+                <UIIcon name="globe" size={12} />Global
+              </span>
+            ) : (
+              <span title="Workspace this playbook belongs to" style={metaChipStyle}>
+                <UIIcon name="folder" size={12} />{s.workspace}
+              </span>
+            )}
             <span title="Times used" style={metaChipStyle}><UIIcon name="play" size={11} />{s.useCount} uses</span>
             <span title="Last used" style={metaChipStyle}><UIIcon name="clock" size={12} />{relativeTime(s.lastUsedAt, Date.now())}</span>
             <span title="Clean runs" style={{ ...metaChipStyle, color: C.green }}><UIIcon name="check" size={12} />{s.successSignals.cleanRuns} clean</span>
@@ -231,6 +253,11 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
         )}
         <div style={actionBarStyle}>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {actions.setScope && (
+              <button onClick={() => void changeScope(s)} style={{ ...pillButton('ghost'), display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <UIIcon name={s.scope === 'global' ? 'folder' : 'globe'} size={14} />{s.scope === 'global' ? 'Make project-only' : 'Make global'}
+              </button>
+            )}
             {actions.rollback && (
               <button onClick={() => void act('rollback', s)} style={{ ...pillButton('ghost'), display: 'inline-flex', alignItems: 'center', gap: 6 }}><UIIcon name="refresh" size={14} />Roll back</button>
             )}
