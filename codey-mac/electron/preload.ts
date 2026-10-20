@@ -171,7 +171,6 @@ contextBridge.exposeInMainWorld('codey', {
     restore: (workspace: string, name: string) => ipcRenderer.invoke('playbooks:restore', workspace, name),
     delete: (workspace: string, name: string) => ipcRenderer.invoke('playbooks:delete', workspace, name),
     rollback: (workspace: string, name: string) => ipcRenderer.invoke('playbooks:rollback', workspace, name),
-    promote: (workspace: string, name: string) => ipcRenderer.invoke('playbooks:promote', workspace, name),
   },
   agents: {
     get: () => ipcRenderer.invoke('agents:get'),

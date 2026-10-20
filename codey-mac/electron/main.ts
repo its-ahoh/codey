@@ -16,7 +16,7 @@ import { applyEvent, clearAttention, summarize } from './tray-state'
 import { AGENT_BINARIES, createInstalledAgentsCache, detectInstalledAgents } from './agent-detect'
 import { runAgentUpdate, updatePlanFor } from './agent-update'
 import { availability, createLatestVersionsCache, fetchAllLatestVersions } from './agent-latest'
-import { SKILL_FILE, markSkillManagedBy, removeLegacyManagedSkills, resolveUserPath, samePath, scanClaudePluginSkills, scanSkillsDir, setSkillEnabled, uniqueSkills } from './skills'
+import { SKILL_FILE, markCodeyBundledSkills, markSkillManagedBy, removeLegacyManagedSkills, resolveUserPath, samePath, scanClaudePluginSkills, scanSkillsDir, setSkillEnabled, uniqueSkills } from './skills'
 import { isKnownPlugin, listPlugins } from './plugins'
 import { CHOSEN_FOLDER_NAME, ensurePairingSecret, installedExtensionDir, refreshRememberedInstall, rememberInstallDir, stageChromeExtension, stagedVersion } from './chrome-extension-stage'
 import { validateExternalMcp, type ExternalMcpDraft } from './external-mcp'
@@ -46,8 +46,8 @@ import * as pty from 'node-pty'
 protocol.registerSchemesAsPrivileged([
   { scheme: 'codey-asset', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
 ])
-import { browserSkillStatus, checkBrowserSkillUpdate, checkSkillPackUpdate, chromeCompanionSkillStatus, checkChromeCompanionSkillUpdate, installSkillPack, readSkillPackManifest, setSkillPackEnabled, skillPackStatus, uninstallSkillPack, CODEY_GLOBAL_SKILLS_SUBDIR, CODEY_SKILL_DISCOVERY_SUBDIRS, CODEY_SKILLS_SUBDIR, installBrowserSkill, installChromeCompanionSkill, setChromeCompanionSkillEnabled, syncCodeyGlobalSkills, syncCodeyProjectSkills, uninstallBrowserSkill, uninstallChromeCompanionSkill, renameBotInTeams, BotManager, WorkspaceManager } from '@codey/core'
-import { listPlaybooks, playbookDetail, playbookHistory, archivePlaybook, deletePlaybook, restorePlaybook, rollbackPlaybook, promotePlaybook } from './playbooks'
+import { browserSkillStatus, checkBrowserSkillUpdate, checkSkillPackUpdate, chromeCompanionSkillStatus, checkChromeCompanionSkillUpdate, installSkillPack, readSkillPackManifest, setSkillPackEnabled, skillPackStatus, uninstallSkillPack, CODEY_GLOBAL_SKILLS_SUBDIR, CODEY_SKILL_DISCOVERY_SUBDIRS, CODEY_SKILLS_SUBDIR, installBrowserSkill, installChromeCompanionSkill, setChromeCompanionSkillEnabled, syncCodeyGlobalSkills, syncCodeyProjectSkills, uninstallBrowserSkill, absorbPlaybookEdit, reconcilePlaybookSkills, removePlaybookSkill, writePlaybookSkill, uninstallChromeCompanionSkill, renameBotInTeams, BotManager, WorkspaceManager } from '@codey/core'
+import { listPlaybooks, playbookDetail, playbookHistory, archivePlaybook, deletePlaybook, restorePlaybook, rollbackPlaybook } from './playbooks'
 import { Codey } from '@codey/gateway/dist/gateway'
 import { ConfigManager } from '@codey/gateway/dist/config'
 import { ApiServer } from '@codey/gateway/dist/health'
@@ -4764,10 +4764,7 @@ app.whenReady().then(async () => {
     }
 
     let listed = uniqueSkills(fsMod, pathMod, skills)
-    const browser = browserSkillStatus(home)
-    if (browser.origin === 'codey') {
-      listed = markSkillManagedBy(fsMod, pathMod, listed, browser.dir, 'codey')
-    }
+    listed = markCodeyBundledSkills(fsMod, pathMod, listed, [browserSkillStatus(home), chromeCompanionSkillStatus(home)])
     const packRoot = skillPackStatus(undefined, home).dir
     for (const name of readSkillPackManifest(undefined, home)?.skills ?? []) {
       listed = markSkillManagedBy(fsMod, pathMod, listed, pathMod.join(packRoot, name), 'codey')
@@ -5150,36 +5147,61 @@ app.whenReady().then(async () => {
   function playbookStore(workspace: string) {
     return playbookWorkspaces().getSkillStoreFor(workspace)
   }
+  // A saved playbook IS a SKILL.md in its workspace's checkout. Every action
+  // that changes the ledger brings the file in line afterwards.
+  function playbookWorkingDir(workspace: string): string {
+    const workingDir = playbookWorkspaces().getWorkingDirFor(workspace)
+    if (!workingDir) throw new Error(`Workspace "${workspace}" has no working directory.`)
+    return workingDir
+  }
+  async function syncPlaybookFile(workspace: string, name: string, removed = false): Promise<void> {
+    const store = await playbookStore(workspace)
+    const skill = store.get(name)
+    // Legacy hand-promoted skills belong to the user; leave their files alone.
+    if (skill?.promotedToSkill) return
+    const workingDir = playbookWorkingDir(workspace)
+    if (removed || !skill || skill.archived) await removePlaybookSkill(workingDir, name)
+    else await writePlaybookSkill(store, skill, workingDir)
+  }
   ipcMain.handle('playbooks:list', async () =>
-    wrap(async () => listPlaybooks(await playbookWorkspaces().getAllSkillStores())));
+    wrap(async () => {
+      const stores = await playbookWorkspaces().getAllSkillStores()
+      // Older saved playbooks get their prefix and SKILL.md before listing,
+      // so the tab shows the names agents actually see.
+      for (const { workspace, store } of stores) {
+        const workingDir = playbookWorkspaces().getWorkingDirFor(workspace)
+        if (workingDir) await reconcilePlaybookSkills(store, workingDir).catch(() => [])
+      }
+      return listPlaybooks(stores)
+    }));
   ipcMain.handle('playbooks:detail', async (_e, workspace: string, name: string) =>
     wrap(async () => playbookDetail(await playbookStore(workspace), name)));
   ipcMain.handle('playbooks:history', async (_e, workspace: string, name: string) =>
     wrap(async () => playbookHistory(await playbookStore(workspace), name)));
   ipcMain.handle('playbooks:archive', async (_e, workspace: string, name: string) =>
-    wrap(async () => archivePlaybook(await playbookStore(workspace), name)));
-  ipcMain.handle('playbooks:restore', async (_e, workspace: string, name: string) =>
-    wrap(async () => restorePlaybook(await playbookStore(workspace), name)));
-  ipcMain.handle('playbooks:delete', async (_e, workspace: string, name: string) =>
-    wrap(async () => deletePlaybook(await playbookStore(workspace), name)));
-  ipcMain.handle('playbooks:rollback', async (_e, workspace: string, name: string) =>
-    wrap(async () => rollbackPlaybook(await playbookStore(workspace), name)));
-  ipcMain.handle('playbooks:promote', async (_e, workspace: string, name: string) =>
     wrap(async () => {
-      const pathMod = await import('path')
-      // The skill belongs beside the code it describes: use the working dir of
-      // the playbook's OWN workspace, not whichever one is currently active.
-      const workingDir = playbookWorkspaces().getWorkingDirFor(workspace)
-      if (!workingDir) throw new Error(`Workspace "${workspace}" has no working directory.`)
-      // The durable copy lives once under `.codey/skills`; compatibility links
-      // expose it through every agent's native discovery convention.
-      const result = await promotePlaybook(
-        await playbookStore(workspace),
-        name,
-        [pathMod.join(workingDir, CODEY_SKILLS_SUBDIR)],
-      )
-      await syncCodeyProjectSkills(workingDir)
-      return result
+      archivePlaybook(await playbookStore(workspace), name)
+      await syncPlaybookFile(workspace, name)
+    }));
+  ipcMain.handle('playbooks:restore', async (_e, workspace: string, name: string) =>
+    wrap(async () => {
+      restorePlaybook(await playbookStore(workspace), name)
+      await syncPlaybookFile(workspace, name)
+    }));
+  ipcMain.handle('playbooks:delete', async (_e, workspace: string, name: string) =>
+    wrap(async () => {
+      const promoted = (await playbookStore(workspace)).get(name)?.promotedToSkill === true
+      deletePlaybook(await playbookStore(workspace), name)
+      if (!promoted) await removePlaybookSkill(playbookWorkingDir(workspace), name)
+    }));
+  ipcMain.handle('playbooks:rollback', async (_e, workspace: string, name: string) =>
+    wrap(async () => {
+      const store = await playbookStore(workspace)
+      // Keep a hand edit in the history before stepping back past it.
+      await absorbPlaybookEdit(store, name, playbookWorkingDir(workspace)).catch(() => false)
+      const version = rollbackPlaybook(store, name)
+      await syncPlaybookFile(workspace, name)
+      return version
     }));
 
   // ── Conversations IPC ─────────────────────────────────────────────

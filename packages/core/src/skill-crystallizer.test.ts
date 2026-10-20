@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { InducedTemplate } from './playbook-induction';
-import { SkillStore, RECENT_TRACES_MAX, TRACES_FILE_VERSION, HISTORY_MAX, REJECTED_MAX, EVOLUTION_MAX, distillCandidate, RunTrace, DistillDeps, DistillResult, matchSkill, SkillEntry, SkillEvolutionEvent, applySkill, bindParameter, nameTemplate, evolveSkill, isLowSignalTrace } from './skill-crystallizer';
+import { SkillStore, RECENT_TRACES_MAX, TRACES_FILE_VERSION, HISTORY_MAX, REJECTED_MAX, EVOLUTION_MAX, distillCandidate, RunTrace, DistillDeps, DistillResult, SkillEntry, SkillEvolutionEvent, applySkill, bindParameter, nameTemplate, evolveSkill, isLowSignalTrace } from './skill-crystallizer';
 
 describe('SkillStore', () => {
   let tmp: string;
@@ -272,12 +272,25 @@ describe('SkillStore', () => {
     s4.lastUsedAt = old;
     expect(store.promoteToSkill('promoted')).toBe(true);
     const archived = store.runCollectGarbage({ staleDays: 30, weakSkillDays: 7 });
-    expect(archived).toBe(2);
+    expect(archived).toEqual(['old', 'weak']);
     expect(store.get('old')!.archived).toBe(true);
     expect(store.get('weak')!.archived).toBe(true);
     expect(store.get('active')!.archived).toBe(false);
     expect(store.get('promoted')!.archived).toBe(false);
     expect(store.archive('promoted')).toBe(false);
+  });
+
+  it('runCollectGarbage spares hand-edited skills and, without usage tracking, rare use', () => {
+    const old = Date.now() - 31 * 86_400_000;
+    const weekOld = Date.now() - 8 * 86_400_000;
+    const edited = store.add({ name: 'edited', description: 'd', whenToUse: 'w', steps: 's' });
+    edited.lastUsedAt = old;
+    store.absorbEdit('edited', 'new steps');
+    const rare = store.add({ name: 'rare', description: 'd', whenToUse: 'w', steps: 's' });
+    rare.createdAt = weekOld;
+    rare.lastUsedAt = weekOld;
+    expect(store.runCollectGarbage({ staleDays: 30, weakSkillDays: 7, usageTracked: false })).toEqual([]);
+    expect(store.runCollectGarbage({ staleDays: 30, weakSkillDays: 7 })).toEqual(['rare']);
   });
 });
 
@@ -538,81 +551,6 @@ function makeSkill(over: Partial<SkillEntry>): SkillEntry {
     ...over,
   };
 }
-
-describe('matchSkill', () => {
-  const skills: SkillEntry[] = [
-    makeSkill({ name: 'release-notes', description: 'Generate release notes', whenToUse: 'user asks for release notes or changelog' }),
-    makeSkill({ name: 'fix-lint', description: 'Fix lint errors', whenToUse: 'user reports lint errors or ESLint failures' }),
-    makeSkill({ name: 'archived-x', description: 'Hidden', whenToUse: 'anything', archived: true }),
-  ];
-
-  it('high-confidence match for multi-keyword overlap', () => {
-    const m = matchSkill('generate release notes from merged PRs', skills);
-    expect(m?.skill.name).toBe('release-notes');
-    expect(m?.confidence).toBe('high');
-  });
-
-  it('borderline match for single-keyword overlap', () => {
-    const m = matchSkill('write a changelog for v2.1', skills);
-    expect(m?.skill.name).toBe('release-notes');
-    expect(m?.confidence).toBe('borderline');
-  });
-
-  it('matches fix-lint for ESLint task', () => {
-    const m = matchSkill('eslint is failing on CI, can you fix?', skills);
-    expect(m?.skill.name).toBe('fix-lint');
-  });
-
-  it('returns null for unrelated task', () => {
-    expect(matchSkill('build a REST API for users', skills)).toBeNull();
-  });
-
-  it('never matches archived skills', () => {
-    expect(matchSkill('do anything at all please', skills)).toBeNull();
-  });
-
-  it('duplicated words in skill text do not inflate confidence past borderline', () => {
-    const dup = [makeSkill({ name: 'dup', description: 'changelog changelog changelog tool', whenToUse: '' })];
-    const m = matchSkill('write a changelog for v2.1', dup);
-    expect(m?.skill.name).toBe('dup');
-    expect(m?.confidence).toBe('borderline');
-  });
-
-  it('two overlapping tokens diluted by a long description stay borderline (score gate)', () => {
-    const verbose = [makeSkill({
-      name: 'verbose',
-      description: 'release notes alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma',
-      whenToUse: '',
-    })];
-    const m = matchSkill('generate release notes', verbose);
-    expect(m?.skill.name).toBe('verbose');
-    expect(m?.confidence).toBe('borderline');
-  });
-
-  it('a two-token overlap is never high confidence (must pass the confirm gate)', () => {
-    const changelog = [makeSkill({
-      name: 'generate-changelog',
-      description: 'Generates a changelog from merged PRs',
-      whenToUse: 'user asks for a changelog or release notes',
-    })];
-    // Shares only {merged, prs} with the skill — an incidental overlap that
-    // must NOT auto-apply the changelog procedure to an unrelated task.
-    const m = matchSkill('list merged PRs from last week', changelog);
-    expect(m?.skill.name).toBe('generate-changelog');
-    expect(m?.confidence).toBe('borderline');
-  });
-
-  it('three shared tokens with a diluted Jaccard score stay borderline', () => {
-    const verbose = [makeSkill({
-      name: 'verbose3',
-      description: 'generate release notes alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu',
-      whenToUse: '',
-    })];
-    const m = matchSkill('generate release notes covering the quarterly summary report deck', verbose);
-    expect(m?.skill.name).toBe('verbose3');
-    expect(m?.confidence).toBe('borderline');
-  });
-});
 
 describe('applySkill', () => {
   const skill = makeSkill({

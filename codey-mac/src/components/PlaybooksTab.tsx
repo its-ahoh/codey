@@ -16,6 +16,7 @@ interface Summary {
   lastUsedAt: number
   archived: boolean
   promotedToSkill: boolean
+  editedByUser: boolean
   successSignals: { cleanRuns: number; corrections: number }
   canRollback: boolean
 }
@@ -92,9 +93,9 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
 
   const act = useCallback(async (kind: 'archive' | 'restore' | 'delete' | 'rollback', s: Summary) => {
     const messages = {
-      archive: `Archive playbook "${s.name}"? It will stop being applied but can be restored later.`,
-      restore: `Restore playbook "${s.name}"?`,
-      delete: `Permanently delete playbook "${s.name}"? This removes its full history and cannot be undone.`,
+      archive: `Archive "${s.name}"? Its SKILL.md is removed so agents stop seeing it. You can restore it later.`,
+      restore: `Restore "${s.name}"? Its SKILL.md is written again so agents can use it.`,
+      delete: `Permanently delete "${s.name}"? This removes its SKILL.md and full history and cannot be undone.`,
       rollback: `Roll back "${s.name}" to its previous version?`,
     } as const
     if (!confirm(messages[kind])) return
@@ -110,16 +111,6 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
       setError(e?.message ?? String(e))
     }
   }, [reload, expanded])
-
-  const promote = useCallback(async (s: Summary) => {
-    if (!confirm(`Turn "${s.name}" into a project skill? It becomes a coding skill every agent can discover, and the playbook will no longer be archived automatically.`)) return
-    try {
-      unwrap(await window.codey.playbooks.promote(s.workspace, s.name))
-      await reload()
-    } catch (e: any) {
-      setError(e?.message ?? String(e))
-    }
-  }, [reload])
 
   const renderTimeline = () => (
     <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 14, paddingTop: 12 }}>
@@ -195,7 +186,8 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
                 </span>
                 <span style={versionBadgeStyle}>v{s.version}</span>
                 {s.archived && <span style={neutralBadgeStyle}>Archived</span>}
-                {s.promotedToSkill && <span style={accentBadgeStyle}><UIIcon name="sparkle" size={10} />Skill</span>}
+                {s.promotedToSkill && <span title="Turned into a skill by hand before playbooks became skills; Codey no longer changes it" style={neutralBadgeStyle}>Legacy skill</span>}
+                {s.editedByUser && <span title="You edited its SKILL.md; the edit is kept as a version and never archived automatically" style={accentBadgeStyle}>Edited by you</span>}
               </div>
               {s.description && (
                 <div style={{
@@ -239,9 +231,6 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
         )}
         <div style={actionBarStyle}>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-            {actions.promote && (
-              <button onClick={() => void promote(s)} style={pillButton('primary')}>Turn into skill</button>
-            )}
             {actions.rollback && (
               <button onClick={() => void act('rollback', s)} style={{ ...pillButton('ghost'), display: 'inline-flex', alignItems: 'center', gap: 6 }}><UIIcon name="refresh" size={14} />Roll back</button>
             )}
