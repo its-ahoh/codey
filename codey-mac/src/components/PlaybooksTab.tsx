@@ -255,7 +255,7 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
             {actions.setScope && (
               <button onClick={() => void changeScope(s)} style={{ ...pillButton('ghost'), display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                <UIIcon name={s.scope === 'global' ? 'folder' : 'globe'} size={14} />{s.scope === 'global' ? 'Make project-only' : 'Make global'}
+                <UIIcon name={s.scope === 'global' ? 'folder' : 'globe'} size={14} />{s.scope === 'global' ? 'Make project-only' : 'Apply to all'}
               </button>
             )}
             {actions.rollback && (
