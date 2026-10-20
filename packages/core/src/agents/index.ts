@@ -4,7 +4,7 @@ import { ClaudeCodeAdapter } from './claude-code';
 import { OpenCodeAdapter } from './opencode';
 import { CodexAdapter } from './codex';
 import { PiAdapter } from './pi';
-import { linkPlaybookSkillsIntoWorktree, syncCodeyGlobalSkills, syncCodeyProjectSkills } from './codey-skills';
+import { syncCodeyGlobalSkills, syncCodeyProjectSkills } from './codey-skills';
 import { isBrowserSkillActive } from './browser-skill';
 import { isChromeCompanionSkillActive } from './chrome-companion-skill';
 
@@ -184,7 +184,6 @@ export class AgentFactory {
     }
     if (request.context?.workingDir) {
       try {
-        await linkPlaybookSkillsIntoWorktree(request.context.workingDir);
         await syncCodeyProjectSkills(request.context.workingDir);
       } catch {
         // Skill-link setup must never prevent the user's actual task from

@@ -1,32 +1,17 @@
-import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { describe, expect, it } from 'vitest';
 import { SkillStore } from './skill-crystallizer';
-import { linkPlaybookSkillsIntoWorktree } from './agents/codey-skills';
 import { WorkspaceManager } from './workspace';
 import { BotManager } from './bots';
 import {
-  absorbPlaybookEdit, ensureLocalExclude, moveProjectPlaybooksToGlobal, movePlaybookSkill, parsePlaybookSkill,
-  playbookNameTaken, playbookSkillDir, playbookSkillName, playbookSkillsUsed, reconcilePlaybookSkills,
-  removePlaybookSkill, writePlaybookSkill,
+  absorbPlaybookEdit, parsePlaybookSkill, playbookNameTaken, playbookSkillDir, playbookSkillName,
+  playbookSkillsUsed, reconcilePlaybookSkills, removePlaybookSkill, writePlaybookSkill,
 } from './playbook-skills';
-
-const git = (cwd: string, ...args: string[]) =>
-  execFileSync('git', ['-c', 'user.email=t@example.com', '-c', 'user.name=t', ...args], { cwd, encoding: 'utf-8' });
 
 function tmp(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-}
-
-function repo(): string {
-  const dir = tmp('playbook-repo-');
-  git(dir, 'init', '-q');
-  fs.writeFileSync(path.join(dir, 'README.md'), 'x');
-  git(dir, 'add', '.');
-  git(dir, 'commit', '-qm', 'init');
-  return dir;
 }
 
 async function storeWith(name = 'playbook-notes'): Promise<SkillStore> {
@@ -46,55 +31,31 @@ describe('playbookSkillName', () => {
 });
 
 describe('writePlaybookSkill', () => {
-  it('writes a SKILL.md every agent can discover and keeps it out of git status', async () => {
-    const dir = repo();
+  it('writes a SKILL.md under home and links it for every agent', async () => {
+    const home = tmp('playbook-home-');
     const store = await storeWith();
-    await writePlaybookSkill(store, store.get('playbook-notes')!, dir);
-    const md = fs.readFileSync(skillMd(dir), 'utf-8');
+    await writePlaybookSkill(store, store.get('playbook-notes')!, home);
+    const md = fs.readFileSync(path.join(home, '.codey', 'skills', 'playbook-notes', 'SKILL.md'), 'utf-8');
     expect(md).toContain('name: "playbook-notes"');
     expect(md).toContain('description: "Draft release notes. When a release is prepared."');
     expect(md).toContain('## Steps\n\n1. List the changes.');
-    expect(fs.existsSync(path.join(dir, '.claude', 'skills', 'playbook-notes', 'SKILL.md'))).toBe(true);
+    expect(fs.existsSync(path.join(home, '.claude', 'skills', 'playbook-notes', 'SKILL.md'))).toBe(true);
     expect(store.get('playbook-notes')!.skillHash).toMatch(/^[0-9a-f]{64}$/);
-    expect(git(dir, 'status', '--porcelain')).toBe('');
   });
 
   it('removes the file and the links that pointed at it', async () => {
-    const dir = repo();
+    const home = tmp('playbook-home-');
     const store = await storeWith();
-    await writePlaybookSkill(store, store.get('playbook-notes')!, dir);
-    await removePlaybookSkill(dir, 'playbook-notes');
-    expect(fs.existsSync(playbookSkillDir(dir, 'playbook-notes'))).toBe(false);
-    expect(fs.existsSync(path.join(dir, '.claude', 'skills', 'playbook-notes'))).toBe(false);
-  });
-});
-
-describe('ensureLocalExclude', () => {
-  it('adds the block once and never again after the user removes it', async () => {
-    const dir = repo();
-    const store = await storeWith();
-    const exclude = path.join(dir, '.git', 'info', 'exclude');
-    await ensureLocalExclude(store, dir);
-    await ensureLocalExclude(store, dir);
-    const text = fs.readFileSync(exclude, 'utf-8');
-    expect(text.match(/codey learned skills \(local only\)/g)).toHaveLength(1);
-    expect(text).toContain('/.codey/skills/playbook-*\n');
-    fs.writeFileSync(exclude, '');
-    await ensureLocalExclude(store, dir);
-    expect(fs.readFileSync(exclude, 'utf-8')).toBe('');
-  });
-
-  it('does nothing outside a git repository', async () => {
-    const dir = tmp('playbook-plain-');
-    const store = await storeWith();
-    await ensureLocalExclude(store, dir);
-    expect(store.hasLocalExclude(dir)).toBe(false);
+    await writePlaybookSkill(store, store.get('playbook-notes')!, home);
+    await removePlaybookSkill(home, 'playbook-notes');
+    expect(fs.existsSync(playbookSkillDir(home, 'playbook-notes'))).toBe(false);
+    expect(fs.existsSync(path.join(home, '.claude', 'skills', 'playbook-notes'))).toBe(false);
   });
 });
 
 describe('absorbPlaybookEdit', () => {
   it('keeps a hand edit as the next version', async () => {
-    const dir = repo();
+    const dir = tmp('playbook-home-');
     const store = await storeWith();
     await writePlaybookSkill(store, store.get('playbook-notes')!, dir);
     expect(await absorbPlaybookEdit(store, 'playbook-notes', dir)).toBe(false);
@@ -121,27 +82,22 @@ describe('absorbPlaybookEdit', () => {
 });
 
 describe('reconcilePlaybookSkills', () => {
-  it('prefixes and writes older playbooks, leaving legacy promoted ones alone', async () => {
-    const dir = repo();
-    const store = await storeWith('notes');
-    store.add({ name: 'deploy', description: 'd', whenToUse: 'w', steps: 's' });
-    store.promoteToSkill('deploy');
-    expect(await reconcilePlaybookSkills(store, dir)).toEqual(['playbook-notes']);
-    expect(store.get('notes')).toBeUndefined();
-    expect(fs.existsSync(skillMd(dir))).toBe(true);
-    expect(store.get('deploy')).toBeDefined();
-    expect(fs.existsSync(playbookSkillDir(dir, 'playbook-deploy'))).toBe(false);
+  it('writes again an active playbook whose file went missing', async () => {
+    const home = tmp('playbook-home-');
+    const store = await storeWith();
+    expect(await reconcilePlaybookSkills(store, home)).toEqual(['playbook-notes']);
+    expect(fs.existsSync(skillMd(home))).toBe(true);
     // Nothing left to do the second time.
-    expect(await reconcilePlaybookSkills(store, dir)).toEqual([]);
+    expect(await reconcilePlaybookSkills(store, home)).toEqual([]);
   });
+});
 
-  it('does not take a name the user already uses', async () => {
-    const dir = repo();
+describe('playbookNameTaken', () => {
+  it('sees a skill of that name the user already has', async () => {
+    const dir = tmp('playbook-project-');
+    expect(await playbookNameTaken(dir, 'playbook-notes')).toBe(false);
     fs.mkdirSync(path.join(dir, '.claude', 'skills', 'playbook-notes'), { recursive: true });
     expect(await playbookNameTaken(dir, 'playbook-notes')).toBe(true);
-    const store = await storeWith('notes');
-    expect(await reconcilePlaybookSkills(store, dir)).toEqual([]);
-    expect(store.get('notes')).toBeDefined();
   });
 });
 
@@ -155,83 +111,6 @@ describe('playbookSkillsUsed', () => {
     expect(names([{ input: { file_path: '/p/.claude/skills/playbook-notes-long/SKILL.md' } }])).toEqual(['playbook-notes-long']);
     expect(names([{ type: 'tool_end', input: { skill: 'playbook-notes' } }])).toEqual([]);
     expect(names([])).toEqual([]);
-  });
-});
-
-describe('linkPlaybookSkillsIntoWorktree', () => {
-  it('exposes the main checkout\'s playbook skills in a linked worktree', async () => {
-    const main = repo();
-    const store = await storeWith();
-    await writePlaybookSkill(store, store.get('playbook-notes')!, main);
-    const worktree = path.join(tmp('playbook-wt-'), 'wt');
-    git(main, 'worktree', 'add', '-q', worktree);
-
-    await linkPlaybookSkillsIntoWorktree(worktree);
-    expect(fs.readFileSync(skillMd(worktree), 'utf-8')).toContain('playbook-notes');
-    expect(git(worktree, 'status', '--porcelain')).toBe('');
-
-    await removePlaybookSkill(main, 'playbook-notes');
-    await linkPlaybookSkillsIntoWorktree(worktree);
-    expect(fs.existsSync(playbookSkillDir(worktree, 'playbook-notes'))).toBe(false);
-  });
-
-  it('does nothing in the main checkout', async () => {
-    const main = repo();
-    await linkPlaybookSkillsIntoWorktree(main);
-    expect(fs.existsSync(path.join(main, '.codey'))).toBe(false);
-  });
-});
-
-describe('global playbook skills', () => {
-  it('writes into the home directory and links it for every agent, with no git exclude', async () => {
-    const home = tmp('playbook-home-');
-    const store = await storeWith();
-    await writePlaybookSkill(store, store.get('playbook-notes')!, home, 'global');
-    expect(fs.existsSync(path.join(home, '.codey', 'skills', 'playbook-notes', 'SKILL.md'))).toBe(true);
-    expect(fs.existsSync(path.join(home, '.claude', 'skills', 'playbook-notes', 'SKILL.md'))).toBe(true);
-    expect(store.hasLocalExclude(home)).toBe(false);
-    await removePlaybookSkill(home, 'playbook-notes', 'global');
-    expect(fs.existsSync(path.join(home, '.claude', 'skills', 'playbook-notes'))).toBe(false);
-  });
-
-  it('moves between scopes with history and counters, and refuses a clash', async () => {
-    const dir = repo();
-    const home = tmp('playbook-home-');
-    const project = { scope: 'project' as const, store: await storeWith(), root: dir };
-    const global = { scope: 'global' as const, store: await storeWith('playbook-other'), root: home };
-    project.store.recordUse('playbook-notes');
-    project.store.bumpVersion('playbook-notes', '1. New steps.');
-    await writePlaybookSkill(project.store, project.store.get('playbook-notes')!, dir);
-
-    await movePlaybookSkill(project, global, 'playbook-notes');
-    expect(project.store.get('playbook-notes')).toBeUndefined();
-    expect(global.store.get('playbook-notes')).toMatchObject({ useCount: 1, version: 2 });
-    expect(fs.existsSync(skillMd(dir))).toBe(false);
-    expect(fs.existsSync(skillMd(home))).toBe(true);
-
-    project.store.add({ name: 'playbook-other', description: 'd', whenToUse: 'w', steps: 's' });
-    await expect(movePlaybookSkill(project, global, 'playbook-other')).rejects.toThrow(/already exists/);
-    expect(project.store.get('playbook-other')).toBeDefined();
-  });
-});
-
-describe('moveProjectPlaybooksToGlobal', () => {
-  it('moves saved project playbooks to global, leaving clashes and hand-promoted skills', async () => {
-    const dir = repo();
-    const home = tmp('playbook-home-');
-    const project = { scope: 'project' as const, store: await storeWith(), root: dir };
-    const global = { scope: 'global' as const, store: await storeWith('playbook-other'), root: home };
-    await writePlaybookSkill(project.store, project.store.get('playbook-notes')!, dir);
-    project.store.add({ name: 'playbook-other', description: 'd', whenToUse: 'w', steps: 's' });
-    // An older entry without the prefix is renamed first, then moved.
-    project.store.add({ name: 'deploy', description: 'd', whenToUse: 'w', steps: 's' });
-
-    expect((await moveProjectPlaybooksToGlobal(project, global)).sort()).toEqual(['playbook-deploy', 'playbook-notes']);
-    expect(global.store.get('playbook-notes')).toBeDefined();
-    expect(fs.existsSync(skillMd(home))).toBe(true);
-    expect(fs.existsSync(skillMd(dir))).toBe(false);
-    expect(project.store.get('playbook-other')).toBeDefined();
-    expect(await moveProjectPlaybooksToGlobal(project, global)).toEqual([]);
   });
 });
 

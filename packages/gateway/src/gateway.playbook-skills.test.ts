@@ -19,7 +19,7 @@ async function setup() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-playbook-home-'));
   const globalStore = new SkillStore(fs.mkdtempSync(path.join(os.tmpdir(), 'gw-playbook-global-')));
   await globalStore.load();
-  const globalHome = { scope: 'global' as const, store: globalStore, root: home };
+  const playbooks = { store: globalStore, root: home };
   const notices: string[] = [];
   const gateway = Object.assign(Object.create(Codey.prototype), {
     workspaceManager: {
@@ -38,7 +38,7 @@ async function setup() {
   const pass = (opts: Record<string, unknown>) => gateway.afterRunSkillPass({
     trace: { runId: 'r', promptSummary: 'draft notes', outputPreview: '', timestamp: Date.now(), mode: 'solo',
       steps: [{ tool: 'Read', args: {} }], toolSequence: ['Read'] },
-    appliedSkill: null, clean: true, store, workingDir, globalHome,
+    appliedSkill: null, clean: true, store, playbooks,
     notify: (text: string) => { notices.push(text); }, setPending: () => {},
     ...opts,
   });
@@ -63,12 +63,6 @@ describe('saving a playbook as a skill', () => {
     expect(globalStore.get('playbook-notes')).toBeUndefined();
     expect(await gateway.savePlaybookSkill('ws', suggestion, 'notes-two')).toEqual({ name: 'playbook-notes-two' });
   });
-
-  it('refuses a name an older project playbook still uses', async () => {
-    const { gateway, store, suggestion } = await setup();
-    store.add({ name: 'playbook-notes', description: 'd', whenToUse: 'w', steps: 's' });
-    expect(await gateway.savePlaybookSkill('ws', suggestion)).toMatchObject({ error: expect.stringContaining('already exists') });
-  });
 });
 
 describe('after a run', () => {
@@ -79,15 +73,6 @@ describe('after a run', () => {
     expect(globalStore.get('playbook-notes')).toMatchObject({ useCount: 1, successSignals: { cleanRuns: 1, corrections: 0 } });
     await pass({ toolCalls: [{ type: 'tool_start', tool: 'Bash', input: { command: 'ls' } }] });
     expect(globalStore.get('playbook-notes')!.useCount).toBe(1);
-  });
-
-  it('moves an older project playbook to global', async () => {
-    const { store, globalStore, home, pass } = await setup();
-    store.add({ name: 'playbook-deploy', description: 'd', whenToUse: 'w', steps: 's' });
-    await pass({});
-    expect(store.get('playbook-deploy')).toBeUndefined();
-    expect(globalStore.get('playbook-deploy')).toBeDefined();
-    expect(fs.existsSync(path.join(playbookSkillDir(home, 'playbook-deploy'), 'SKILL.md'))).toBe(true);
   });
 
   it('removes the SKILL.md of a playbook that cleanup archives', async () => {

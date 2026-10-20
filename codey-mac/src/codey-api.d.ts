@@ -452,22 +452,21 @@ declare global {
         }
       }
       playbooks: {
-        /** Aggregated across ALL workspaces — entries are keyed by (workspace, name). */
+        /** Every saved playbook; all of them apply to every project. */
         list: () => Promise<IpcResult<Array<{
-          workspace: string;
           name: string; description: string; version: number; useCount: number;
-          lastUsedAt: number; archived: boolean; promotedToSkill: boolean; editedByUser: boolean; scope: 'project' | 'global';
+          lastUsedAt: number; archived: boolean; editedByUser: boolean;
           successSignals: { cleanRuns: number; corrections: number };
           canRollback: boolean;
         }>>>
-        detail: (workspace: string, name: string) => Promise<IpcResult<{
+        detail: (name: string) => Promise<IpcResult<{
           name: string;
           description: string;
           whenToUse: string;
           steps: string;
           version: number;
         }>>
-        history: (workspace: string, name: string) => Promise<IpcResult<Array<{
+        history: (name: string) => Promise<IpcResult<Array<{
           at: number;
           kind: 'created' | 'evolved' | 'rolled-back';
           fromVersion?: number;
@@ -475,12 +474,10 @@ declare global {
           trigger?: { runId: string; promptSummary: string };
           steps: string;
         }>>>
-        archive: (workspace: string, name: string) => Promise<IpcResult<void>>
-        restore: (workspace: string, name: string) => Promise<IpcResult<void>>
-        delete: (workspace: string, name: string) => Promise<IpcResult<void>>
-        rollback: (workspace: string, name: string) => Promise<IpcResult<number>>
-        /** Writes one durable SKILL.md under the project's `.codey/skills`.
-         *  Codey exposes it to agents through compatibility links. */
+        archive: (name: string) => Promise<IpcResult<void>>
+        restore: (name: string) => Promise<IpcResult<void>>
+        delete: (name: string) => Promise<IpcResult<void>>
+        rollback: (name: string) => Promise<IpcResult<number>>
       }
       agents: {
         get: () => Promise<IpcResult<Record<string, { enabled?: boolean; defaultModel?: string; defaultEffort?: string; env?: Record<string, string> }>>>

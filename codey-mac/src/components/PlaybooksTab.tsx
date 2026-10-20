@@ -6,17 +6,12 @@ import { UIIcon } from './UIIcons'
 import { matchesToolSearch } from './tools-search'
 
 interface Summary {
-  /** Owning workspace — the list spans all of them, and names collide across
-   *  workspaces, so every row and every action is keyed by (workspace, name). */
-  workspace: string
-  scope: 'project' | 'global'
   name: string
   description: string
   version: number
   useCount: number
   lastUsedAt: number
   archived: boolean
-  promotedToSkill: boolean
   editedByUser: boolean
   successSignals: { cleanRuns: number; corrections: number }
   canRollback: boolean
@@ -30,8 +25,6 @@ interface Detail {
   version: number
 }
 
-const rowKey = (s: { workspace: string; name: string }) => `${s.workspace}/${s.name}`
-
 export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '' }) => {
   const [playbooks, setPlaybooks] = useState<Summary[]>([])
   const [expanded, setExpanded] = useState<string | null>(null)
@@ -42,7 +35,7 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const filteredPlaybooks = useMemo(
-    () => playbooks.filter(playbook => matchesToolSearch(searchQuery, playbook.name, playbook.description, playbook.workspace)),
+    () => playbooks.filter(playbook => matchesToolSearch(searchQuery, playbook.name, playbook.description)),
     [playbooks, searchQuery],
   )
 
@@ -61,16 +54,16 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
   useEffect(() => { void reload() }, [reload])
 
   const toggleExpand = useCallback(async (s: Summary) => {
-    if (expanded === rowKey(s)) { setExpanded(null); setDetail(null); return }
+    if (expanded === s.name) { setExpanded(null); setDetail(null); return }
     try {
       const [current, events] = await Promise.all([
-        window.codey.playbooks.detail(s.workspace, s.name).then(unwrap),
-        window.codey.playbooks.history(s.workspace, s.name).then(unwrap),
+        window.codey.playbooks.detail(s.name).then(unwrap),
+        window.codey.playbooks.history(s.name).then(unwrap),
       ])
       setDetail(current)
       setTrail(timelineRows(events, Date.now()))
       setOpenSteps(null)
-      setExpanded(rowKey(s))
+      setExpanded(s.name)
     } catch (e: any) {
       setError(e?.message ?? String(e))
     }
@@ -104,10 +97,10 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
       // Widen: rollback returns data: number, other mutations return void — the
       // raw union collapses unwrap's generic to void and rejects number.
       const res: { ok: true; data: unknown } | { ok: false; error: string } =
-        await window.codey.playbooks[kind](s.workspace, s.name)
+        await window.codey.playbooks[kind](s.name)
       unwrap(res)
       await reload()
-      if (expanded === rowKey(s)) setExpanded(null) // trail is stale after a mutation
+      if (expanded === s.name) setExpanded(null) // trail is stale after a mutation
     } catch (e: any) {
       setError(e?.message ?? String(e))
     }
@@ -154,12 +147,12 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
 
   const renderCard = (s: Summary) => {
     const actions = playbookActions(s)
-    const isExpanded = expanded === rowKey(s)
-    const isHovered = hovered === rowKey(s)
+    const isExpanded = expanded === s.name
+    const isHovered = hovered === s.name
     return (
       <div
-        key={rowKey(s)}
-        onMouseEnter={() => setHovered(rowKey(s))}
+        key={s.name}
+        onMouseEnter={() => setHovered(s.name)}
         onMouseLeave={() => setHovered(null)}
         style={{
           ...cardStyle,
@@ -178,7 +171,7 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
         >
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
             <span style={playbookIconStyle}>
-              <UIIcon name={s.promotedToSkill ? 'sparkle' : 'book'} size={17} strokeWidth={2} />
+              <UIIcon name="book" size={17} strokeWidth={2} />
             </span>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 7, minHeight: 24 }}>
@@ -187,7 +180,6 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
                 </span>
                 <span style={versionBadgeStyle}>v{s.version}</span>
                 {s.archived && <span style={neutralBadgeStyle}>Archived</span>}
-                {s.promotedToSkill && <span title="Turned into a skill by hand before playbooks became skills; Codey no longer changes it" style={neutralBadgeStyle}>Legacy skill</span>}
                 {s.editedByUser && <span title="You edited its SKILL.md; the edit is kept as a version and never archived automatically" style={accentBadgeStyle}>Edited by you</span>}
               </div>
               {s.description && (
@@ -213,11 +205,6 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
             </button>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 7, marginTop: 13, marginLeft: 48 }}>
-            {s.scope === 'project' && (
-              <span title="Older playbook kept in this workspace" style={metaChipStyle}>
-                <UIIcon name="folder" size={12} />{s.workspace}
-              </span>
-            )}
             <span title="Times used" style={metaChipStyle}><UIIcon name="play" size={11} />{s.useCount} uses</span>
             <span title="Last used" style={metaChipStyle}><UIIcon name="clock" size={12} />{relativeTime(s.lastUsedAt, Date.now())}</span>
             <span title="Clean runs" style={{ ...metaChipStyle, color: C.green }}><UIIcon name="check" size={12} />{s.successSignals.cleanRuns} clean</span>

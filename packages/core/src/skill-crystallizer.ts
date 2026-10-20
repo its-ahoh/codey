@@ -31,9 +31,6 @@ export interface SkillEntry {
   sourceRunIds: string[];
   createdAt: number;
   archived: boolean;
-  /** Legacy: promoted by hand to a SKILL.md before saved playbooks became
-   *  skills themselves. Codey no longer writes, evolves or archives these. */
-  promotedToSkill?: boolean;
   /** Fingerprint of the SKILL.md Codey last wrote. A mismatch means the user
    *  edited the file, which is absorbed as a new version (playbook-skills). */
   skillHash?: string;
@@ -63,9 +60,6 @@ export interface SkillIndex {
   entries: SkillEntry[];
   /** Suggestions the user said "no" to — fed to the distiller so it stops re-proposing them. */
   rejected: RejectedSuggestion[];
-  /** Working directories whose `.git/info/exclude` already received Codey's
-   *  block — recorded so a user who removes it is not overridden. */
-  localExcludeDirs?: string[];
 }
 
 export interface RunTrace {
@@ -180,7 +174,6 @@ export class SkillStore {
             version: 1,
             entries: parsed.entries.map(e => ({ ...e, history: e.history ?? [], evolution: e.evolution ?? [] })),
             rejected: Array.isArray(parsed.rejected) ? parsed.rejected : [],
-            localExcludeDirs: Array.isArray(parsed.localExcludeDirs) ? parsed.localExcludeDirs : [],
           };
         }
       } catch {
@@ -280,7 +273,7 @@ export class SkillStore {
 
   archive(name: string): boolean {
     const entry = this.index.entries.find(e => e.name === name);
-    if (!entry || entry.promotedToSkill) return false;
+    if (!entry) return false;
     entry.archived = true;
     this.markIndexDirty();
     return true;
@@ -303,32 +296,6 @@ export class SkillStore {
     return true;
   }
 
-  /** Mark a playbook as a durable agent skill. Promotion also restores a
-   *  previously archived playbook so it can continue to be matched/evolved. */
-  promoteToSkill(name: string): boolean {
-    const entry = this.index.entries.find(e => e.name === name);
-    if (!entry) return false;
-    entry.promotedToSkill = true;
-    entry.archived = false;
-    this.markIndexDirty();
-    return true;
-  }
-
-  /** Take over a playbook moved here from another ledger, history intact. */
-  adopt(entry: SkillEntry): void {
-    this.index.entries.push(JSON.parse(JSON.stringify(entry)));
-    this.markIndexDirty();
-  }
-
-  /** Give a playbook a new name, keeping its history and counters. */
-  rename(name: string, newName: string): boolean {
-    const entry = this.index.entries.find(e => e.name === name);
-    if (!entry || this.index.entries.some(e => e.name === newName)) return false;
-    entry.name = newName;
-    this.markIndexDirty();
-    return true;
-  }
-
   /** Record the fingerprint of the SKILL.md just written for a playbook. */
   setSkillHash(name: string, hash: string | undefined): boolean {
     const entry = this.index.entries.find(e => e.name === name);
@@ -345,16 +312,6 @@ export class SkillStore {
     if (description) entry.description = description;
     entry.editedByUser = true;
     return this.bumpVersion(name, steps, { runId: 'user-edit', promptSummary: 'Edited SKILL.md by hand' });
-  }
-
-  hasLocalExclude(workingDir: string): boolean {
-    return (this.index.localExcludeDirs ?? []).includes(workingDir);
-  }
-
-  recordLocalExclude(workingDir: string): void {
-    if (this.hasLocalExclude(workingDir)) return;
-    this.index.localExcludeDirs = [...(this.index.localExcludeDirs ?? []), workingDir];
-    this.markIndexDirty();
   }
 
   recordUse(name: string): boolean {
@@ -447,7 +404,7 @@ export class SkillStore {
     const now = Date.now();
     const archived: string[] = [];
     for (const entry of this.index.entries) {
-      if (entry.archived || entry.promotedToSkill || entry.editedByUser) continue;
+      if (entry.archived || entry.editedByUser) continue;
       if (now - entry.lastUsedAt > opts.staleDays * 86_400_000) {
         entry.archived = true;
         archived.push(entry.name);
