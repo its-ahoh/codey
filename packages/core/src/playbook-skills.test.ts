@@ -5,13 +5,12 @@ import * as path from 'path';
 import { describe, expect, it } from 'vitest';
 import { SkillStore } from './skill-crystallizer';
 import { linkPlaybookSkillsIntoWorktree } from './agents/codey-skills';
-import { shapeOf } from './playbook-induction';
 import { WorkspaceManager } from './workspace';
 import { BotManager } from './bots';
 import {
-  absorbPlaybookEdit, ensureLocalExclude, movePlaybookSkill, parsePlaybookSkill, playbookNameTaken, playbookSkillDir,
-  playbookSkillName, playbookSkillsUsed, reconcilePlaybookSkills, recursInOtherWorkspaces, removePlaybookSkill,
-  suggestPlaybookScope, writePlaybookSkill,
+  absorbPlaybookEdit, ensureLocalExclude, moveProjectPlaybooksToGlobal, movePlaybookSkill, parsePlaybookSkill,
+  playbookNameTaken, playbookSkillDir, playbookSkillName, playbookSkillsUsed, reconcilePlaybookSkills,
+  removePlaybookSkill, writePlaybookSkill,
 } from './playbook-skills';
 
 const git = (cwd: string, ...args: string[]) =>
@@ -216,39 +215,23 @@ describe('global playbook skills', () => {
   });
 });
 
-describe('suggestPlaybookScope', () => {
-  const path_ = (inProject: boolean) => ({ kind: 'path' as const, ext: 'md', depth: 2, inProject });
-  const step = (tool: string, args: Record<string, any> = {}) => ({ tool, args });
+describe('moveProjectPlaybooksToGlobal', () => {
+  it('moves saved project playbooks to global, leaving clashes and hand-promoted skills', async () => {
+    const dir = repo();
+    const home = tmp('playbook-home-');
+    const project = { scope: 'project' as const, store: await storeWith(), root: dir };
+    const global = { scope: 'global' as const, store: await storeWith('playbook-other'), root: home };
+    await writePlaybookSkill(project.store, project.store.get('playbook-notes')!, dir);
+    project.store.add({ name: 'playbook-other', description: 'd', whenToUse: 'w', steps: 's' });
+    // An older entry without the prefix is renamed first, then moved.
+    project.store.add({ name: 'deploy', description: 'd', whenToUse: 'w', steps: 's' });
 
-  it('applies the code rules before the namer\'s guess', () => {
-    const projectFiles = [{ steps: [step('Edit', { file_path: path_(true) })] }];
-    const webOnly = [{ steps: [step('browser_navigate', { url: { kind: 'url', host: 'x.com' } }), step('mcp__codey__browser_click')] }];
-    const unclear = [{ steps: [step('Bash', { command: { kind: 'text', len: 32 } })] }];
-    expect(suggestPlaybookScope({ members: projectFiles, crossWorkspace: true })).toBe('global');
-    expect(suggestPlaybookScope({ members: projectFiles, crossWorkspace: false, aiScope: 'global' })).toBe('project');
-    expect(suggestPlaybookScope({ members: webOnly, crossWorkspace: false, aiScope: 'project' })).toBe('global');
-    expect(suggestPlaybookScope({ members: unclear, crossWorkspace: false, aiScope: 'global' })).toBe('global');
-    expect(suggestPlaybookScope({ members: unclear, crossWorkspace: false })).toBe('project');
-  });
-
-  it('sees a procedure that also recurs in another workspace', () => {
-    const procedure = ['browser_navigate', 'browser_type', 'browser_click', 'browser_snapshot']
-      .map(tool => step(tool));
-    const here = [{ runId: 'a1', steps: procedure }, { runId: 'a2', steps: procedure }];
-    // Ordinary coding runs around it, so the browser tools read as distinctive.
-    const ordinary = ['a3', 'a4', 'a5', 'a6'].map(runId => ({ runId, steps: [step('Read'), step('Edit'), step('Bash')] }));
-    expect(recursInOtherWorkspaces(here, ordinary, [[{ runId: 'b1', steps: procedure }]])).toBe(true);
-    expect(recursInOtherWorkspaces(here, ordinary, [[{ runId: 'b1', steps: [step('Read'), step('Edit')] }], []])).toBe(false);
-  });
-});
-
-describe('path shapes', () => {
-  it('record only whether a path is inside the project', () => {
-    expect(shapeOf('src/a.ts', '/p')).toMatchObject({ kind: 'path', inProject: true });
-    expect(shapeOf('/p/src/a.ts', '/p')).toMatchObject({ kind: 'path', inProject: true });
-    expect(shapeOf('/elsewhere/a.ts', '/p')).toMatchObject({ kind: 'path', inProject: false });
-    expect(shapeOf('/p/src/a.ts')).not.toHaveProperty('inProject');
-    expect(JSON.stringify(shapeOf('/p/src/a.ts', '/p'))).not.toContain('/p');
+    expect((await moveProjectPlaybooksToGlobal(project, global)).sort()).toEqual(['playbook-deploy', 'playbook-notes']);
+    expect(global.store.get('playbook-notes')).toBeDefined();
+    expect(fs.existsSync(skillMd(home))).toBe(true);
+    expect(fs.existsSync(skillMd(dir))).toBe(false);
+    expect(project.store.get('playbook-other')).toBeDefined();
+    expect(await moveProjectPlaybooksToGlobal(project, global)).toEqual([]);
   });
 });
 

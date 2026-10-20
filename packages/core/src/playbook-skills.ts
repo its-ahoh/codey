@@ -14,7 +14,6 @@ import * as path from 'path';
 import { promisify } from 'util';
 import { atomicWrite } from './utils/fs';
 import { SkillEntry, SkillStore } from './skill-crystallizer';
-import { ProcedureInput, TraceStep, clusterProcedures } from './playbook-induction';
 import { CODEY_SKILLS_SUBDIR, CODEY_SKILL_DISCOVERY_SUBDIRS, PLAYBOOK_PREFIX, syncCodeyGlobalSkills, syncCodeyProjectSkills } from './agents/codey-skills';
 
 const execFileAsync = promisify(execFile);
@@ -251,38 +250,21 @@ export function playbookSkillsUsed(
   });
 }
 
-/** Code-side evidence for a playbook's scope, checked in order before the
- *  namer's own guess. `crossWorkspace` is true when the same procedure also
- *  recurs in another workspace's runs. */
-export function suggestPlaybookScope(input: {
-  members: { steps?: TraceStep[] }[];
-  crossWorkspace: boolean;
-  aiScope?: PlaybookScope;
-}): PlaybookScope {
-  if (input.crossWorkspace) return 'global';
-  const steps = input.members.flatMap(m => m.steps ?? []);
-  const shapes = steps.flatMap(step => Object.values(step.args));
-  if (shapes.some(shape => shape.kind === 'path' && shape.inProject === true)) return 'project';
-  const browserOnly = steps.length > 0 && steps.every(step => /(^|__)browser/i.test(step.tool));
-  const webOnly = shapes.some(shape => shape.kind === 'url') && !shapes.some(shape => shape.kind === 'path');
-  if (browserOnly || webOnly) return 'global';
-  return input.aiScope ?? 'project';
-}
-
-/** True when the procedure of `members` also recurs among another
- *  workspace's recent runs — the strongest sign it is not project-bound.
- *  `ownRecent` (this workspace's recent runs) is clustered alongside, so a
- *  tool's rarity is judged against ordinary activity rather than against
- *  the procedure's own runs alone. */
-export function recursInOtherWorkspaces(
-  members: ProcedureInput[], ownRecent: ProcedureInput[], others: ProcedureInput[][],
-): boolean {
-  const own = new Set(members.map(m => m.runId));
-  const context = [...members, ...ownRecent.filter(t => !own.has(t.runId))];
-  return others.some(other => {
-    if (other.length === 0) return false;
-    const foreign = new Set(other.map(o => o.runId));
-    return clusterProcedures([...context, ...other], { minMembers: 2 }).clusters
-      .some(c => c.runIds.some(id => own.has(id)) && c.runIds.some(id => foreign.has(id)));
-  });
+/** Every playbook applies to all projects. Move a workspace's own playbooks
+ *  (saved before that) into the global home, keeping history and counters.
+ *  One whose name the global side already uses stays where it is. Legacy
+ *  hand-promoted skills are left alone. Returns the names moved. */
+export async function moveProjectPlaybooksToGlobal(project: PlaybookHome, global: PlaybookHome): Promise<string[]> {
+  await reconcilePlaybookSkills(project.store, project.root, 'project');
+  const moved: string[] = [];
+  for (const skill of project.store.getAll()) {
+    if (skill.promotedToSkill || !skill.name.startsWith(PLAYBOOK_PREFIX)) continue;
+    try {
+      await movePlaybookSkill(project, global, skill.name);
+      moved.push(skill.name);
+    } catch {
+      // Name clash with a global skill: leave this one in the project.
+    }
+  }
+  return moved;
 }

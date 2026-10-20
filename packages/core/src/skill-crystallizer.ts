@@ -110,8 +110,6 @@ export interface DistillResult {
    *  from prose distillation. */
   parameters?: SkillParameter[];
   inducedFrom?: string[];
-  /** Where it should apply, suggested before the user confirms the save. */
-  scope?: 'project' | 'global';
 }
 
 export const RECENT_TRACES_MAX = 20;
@@ -594,14 +592,12 @@ Return ONE JSON object (no markdown, no prose) or the literal word "NONE":
   "name": "kebab-case",
   "description": "one line describing what this skill does",
   "whenToUse": "when the user asks to...",
-  "steps": "1. ...\\n2. ...\\n3. ...",
-  "scope": "project | global"
+  "steps": "1. ...\\n2. ...\\n3. ..."
 }
 
 Rules:
 - name must match /^[a-z][a-z0-9-]*$/ and be 3-30 chars.
 - Write description, whenToUse and steps in the language the user wrote their requests in; keep name in English kebab-case.
-- scope is "global" when the procedure does not depend on this repository (posting to a website, updating a tool); otherwise "project".
 - Output ONLY the JSON or "NONE". No markdown fences, no prose.`;
 
 /** How much of each trace's output preview reaches the distill prompt. The
@@ -647,8 +643,7 @@ function tryParseDistill(raw: string): DistillResult | null {
     if (typeof p[field] !== 'string' || !(p[field] as string).trim()) return null;
   }
   return { name: p.name as string, description: p.description as string,
-           whenToUse: p.whenToUse as string, steps: p.steps as string,
-           ...(p.scope === 'global' || p.scope === 'project' ? { scope: p.scope } : {}) };
+           whenToUse: p.whenToUse as string, steps: p.steps as string };
 }
 
 /** Bare acknowledgements, matched after trailing punctuation is stripped. */
@@ -758,14 +753,12 @@ duplicates an existing skill:
   "name": "kebab-case",
   "description": "one line describing what this skill does",
   "whenToUse": "when the user asks to...",
-  "steps": "1. ...\\n2. ...\\n3. ...",
-  "scope": "project | global"
+  "steps": "1. ...\\n2. ...\\n3. ..."
 }
 
 Rules:
 - name must match /^[a-z][a-z0-9-]*$/ and be 3-30 chars.
 - Write description, whenToUse and steps in the language the user wrote their requests in; keep name in English kebab-case.
-- scope is "global" when the procedure does not depend on this repository (posting to a website, updating a tool); otherwise "project".
 - Output ONLY the JSON or "NONE". No markdown fences, no prose.`;
 
 /** Name a template that clustering already established.

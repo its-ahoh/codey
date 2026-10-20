@@ -46,7 +46,7 @@ import * as pty from 'node-pty'
 protocol.registerSchemesAsPrivileged([
   { scheme: 'codey-asset', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
 ])
-import { browserSkillStatus, checkBrowserSkillUpdate, checkSkillPackUpdate, chromeCompanionSkillStatus, checkChromeCompanionSkillUpdate, installSkillPack, readSkillPackManifest, setSkillPackEnabled, skillPackStatus, uninstallSkillPack, CODEY_GLOBAL_SKILLS_SUBDIR, CODEY_SKILL_DISCOVERY_SUBDIRS, CODEY_SKILLS_SUBDIR, installBrowserSkill, installChromeCompanionSkill, setChromeCompanionSkillEnabled, syncCodeyGlobalSkills, syncCodeyProjectSkills, uninstallBrowserSkill, absorbPlaybookEdit, movePlaybookSkill, reconcilePlaybookSkills, removePlaybookSkill, writePlaybookSkill, uninstallChromeCompanionSkill, renameBotInTeams, BotManager, WorkspaceManager } from '@codey/core'
+import { browserSkillStatus, checkBrowserSkillUpdate, checkSkillPackUpdate, chromeCompanionSkillStatus, checkChromeCompanionSkillUpdate, installSkillPack, readSkillPackManifest, setSkillPackEnabled, skillPackStatus, uninstallSkillPack, CODEY_GLOBAL_SKILLS_SUBDIR, CODEY_SKILL_DISCOVERY_SUBDIRS, CODEY_SKILLS_SUBDIR, installBrowserSkill, installChromeCompanionSkill, setChromeCompanionSkillEnabled, syncCodeyGlobalSkills, syncCodeyProjectSkills, uninstallBrowserSkill, absorbPlaybookEdit, moveProjectPlaybooksToGlobal, reconcilePlaybookSkills, removePlaybookSkill, writePlaybookSkill, uninstallChromeCompanionSkill, renameBotInTeams, BotManager, WorkspaceManager } from '@codey/core'
 import { listPlaybooks, playbookDetail, playbookHistory, archivePlaybook, deletePlaybook, restorePlaybook, rollbackPlaybook, GLOBAL_PLAYBOOKS } from './playbooks'
 import type { WorkspaceStore } from './playbooks'
 import type { PlaybookHome } from '@codey/core'
@@ -5173,9 +5173,16 @@ app.whenReady().then(async () => {
   ipcMain.handle('playbooks:list', async () =>
     wrap(async () => {
       const workspaces = playbookWorkspaces()
+      // Every playbook is global. Ones a workspace saved before that move to
+      // the global ledger first, so the tab shows where agents find them.
+      const global = await playbookHome(GLOBAL_PLAYBOOKS)
+      for (const { workspace } of await workspaces.getAllSkillStores()) {
+        const home = await playbookHome(workspace).catch(() => null)
+        if (home) await moveProjectPlaybooksToGlobal(home, global).catch(() => [])
+      }
       const stores: WorkspaceStore[] = [
         ...await workspaces.getAllSkillStores(),
-        { workspace: GLOBAL_PLAYBOOKS, store: await workspaces.getGlobalSkillStore(), scope: 'global' },
+        { workspace: GLOBAL_PLAYBOOKS, store: global.store, scope: 'global' },
       ]
       // Older saved playbooks get their prefix and SKILL.md before listing,
       // so the tab shows the names agents actually see.
@@ -5214,16 +5221,6 @@ app.whenReady().then(async () => {
       const version = rollbackPlaybook(home.store, name)
       await syncPlaybookFile(workspace, name)
       return version
-    }));
-  // Move a playbook between its workspace and the global ledger. A global
-  // playbook made project-only goes to the active workspace.
-  ipcMain.handle('playbooks:setScope', async (_e, workspace: string, name: string, scope: 'project' | 'global') =>
-    wrap(async () => {
-      const from = await playbookHome(workspace)
-      if (from.scope === scope) return { workspace }
-      const target = scope === 'global' ? GLOBAL_PLAYBOOKS : playbookWorkspaces().getCurrentWorkspace()
-      await movePlaybookSkill(from, await playbookHome(target), name)
-      return { workspace: target }
     }));
 
   // ── Conversations IPC ─────────────────────────────────────────────

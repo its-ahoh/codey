@@ -648,14 +648,6 @@ describe('nameTemplate', () => {
     expect(prompt).toContain('comment=«comment»');
   });
 
-  it('carries the namer\'s scope guess and ignores an invalid one', async () => {
-    const reply = (scope: string) => fakeDeps(async () => ({ success: true, output: JSON.stringify({
-      name: 'x-outreach', description: 'd', whenToUse: 'w', steps: '1. x', scope,
-    }), error: null, tokens: { total: 10 } }));
-    expect((await nameTemplate(reply('global'), template, [], []) as DistillResult).scope).toBe('global');
-    expect(await nameTemplate(reply('everywhere'), template, [], [])).not.toHaveProperty('scope');
-  });
-
   it('reports a duplicate distinctly from having nothing to offer', async () => {
     // 'duplicate' must not read as "induction failed" — the caller uses it to
     // stay quiet rather than fall back to prose distillation.
