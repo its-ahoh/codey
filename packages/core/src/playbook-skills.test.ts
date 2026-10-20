@@ -5,9 +5,13 @@ import * as path from 'path';
 import { describe, expect, it } from 'vitest';
 import { SkillStore } from './skill-crystallizer';
 import { linkPlaybookSkillsIntoWorktree } from './agents/codey-skills';
+import { shapeOf } from './playbook-induction';
+import { WorkspaceManager } from './workspace';
+import { BotManager } from './bots';
 import {
-  absorbPlaybookEdit, ensureLocalExclude, parsePlaybookSkill, playbookNameTaken, playbookSkillDir,
-  playbookSkillName, playbookSkillsUsed, reconcilePlaybookSkills, removePlaybookSkill, writePlaybookSkill,
+  absorbPlaybookEdit, ensureLocalExclude, movePlaybookSkill, parsePlaybookSkill, playbookNameTaken, playbookSkillDir,
+  playbookSkillName, playbookSkillsUsed, reconcilePlaybookSkills, recursInOtherWorkspaces, removePlaybookSkill,
+  suggestPlaybookScope, writePlaybookSkill,
 } from './playbook-skills';
 
 const git = (cwd: string, ...args: string[]) =>
@@ -176,5 +180,91 @@ describe('linkPlaybookSkillsIntoWorktree', () => {
     const main = repo();
     await linkPlaybookSkillsIntoWorktree(main);
     expect(fs.existsSync(path.join(main, '.codey'))).toBe(false);
+  });
+});
+
+describe('global playbook skills', () => {
+  it('writes into the home directory and links it for every agent, with no git exclude', async () => {
+    const home = tmp('playbook-home-');
+    const store = await storeWith();
+    await writePlaybookSkill(store, store.get('playbook-notes')!, home, 'global');
+    expect(fs.existsSync(path.join(home, '.codey', 'skills', 'playbook-notes', 'SKILL.md'))).toBe(true);
+    expect(fs.existsSync(path.join(home, '.claude', 'skills', 'playbook-notes', 'SKILL.md'))).toBe(true);
+    expect(store.hasLocalExclude(home)).toBe(false);
+    await removePlaybookSkill(home, 'playbook-notes', 'global');
+    expect(fs.existsSync(path.join(home, '.claude', 'skills', 'playbook-notes'))).toBe(false);
+  });
+
+  it('moves between scopes with history and counters, and refuses a clash', async () => {
+    const dir = repo();
+    const home = tmp('playbook-home-');
+    const project = { scope: 'project' as const, store: await storeWith(), root: dir };
+    const global = { scope: 'global' as const, store: await storeWith('playbook-other'), root: home };
+    project.store.recordUse('playbook-notes');
+    project.store.bumpVersion('playbook-notes', '1. New steps.');
+    await writePlaybookSkill(project.store, project.store.get('playbook-notes')!, dir);
+
+    await movePlaybookSkill(project, global, 'playbook-notes');
+    expect(project.store.get('playbook-notes')).toBeUndefined();
+    expect(global.store.get('playbook-notes')).toMatchObject({ useCount: 1, version: 2 });
+    expect(fs.existsSync(skillMd(dir))).toBe(false);
+    expect(fs.existsSync(skillMd(home))).toBe(true);
+
+    project.store.add({ name: 'playbook-other', description: 'd', whenToUse: 'w', steps: 's' });
+    await expect(movePlaybookSkill(project, global, 'playbook-other')).rejects.toThrow(/already exists/);
+    expect(project.store.get('playbook-other')).toBeDefined();
+  });
+});
+
+describe('suggestPlaybookScope', () => {
+  const path_ = (inProject: boolean) => ({ kind: 'path' as const, ext: 'md', depth: 2, inProject });
+  const step = (tool: string, args: Record<string, any> = {}) => ({ tool, args });
+
+  it('applies the code rules before the namer\'s guess', () => {
+    const projectFiles = [{ steps: [step('Edit', { file_path: path_(true) })] }];
+    const webOnly = [{ steps: [step('browser_navigate', { url: { kind: 'url', host: 'x.com' } }), step('mcp__codey__browser_click')] }];
+    const unclear = [{ steps: [step('Bash', { command: { kind: 'text', len: 32 } })] }];
+    expect(suggestPlaybookScope({ members: projectFiles, crossWorkspace: true })).toBe('global');
+    expect(suggestPlaybookScope({ members: projectFiles, crossWorkspace: false, aiScope: 'global' })).toBe('project');
+    expect(suggestPlaybookScope({ members: webOnly, crossWorkspace: false, aiScope: 'project' })).toBe('global');
+    expect(suggestPlaybookScope({ members: unclear, crossWorkspace: false, aiScope: 'global' })).toBe('global');
+    expect(suggestPlaybookScope({ members: unclear, crossWorkspace: false })).toBe('project');
+  });
+
+  it('sees a procedure that also recurs in another workspace', () => {
+    const procedure = ['browser_navigate', 'browser_type', 'browser_click', 'browser_snapshot']
+      .map(tool => step(tool));
+    const here = [{ runId: 'a1', steps: procedure }, { runId: 'a2', steps: procedure }];
+    // Ordinary coding runs around it, so the browser tools read as distinctive.
+    const ordinary = ['a3', 'a4', 'a5', 'a6'].map(runId => ({ runId, steps: [step('Read'), step('Edit'), step('Bash')] }));
+    expect(recursInOtherWorkspaces(here, ordinary, [[{ runId: 'b1', steps: procedure }]])).toBe(true);
+    expect(recursInOtherWorkspaces(here, ordinary, [[{ runId: 'b1', steps: [step('Read'), step('Edit')] }], []])).toBe(false);
+  });
+});
+
+describe('path shapes', () => {
+  it('record only whether a path is inside the project', () => {
+    expect(shapeOf('src/a.ts', '/p')).toMatchObject({ kind: 'path', inProject: true });
+    expect(shapeOf('/p/src/a.ts', '/p')).toMatchObject({ kind: 'path', inProject: true });
+    expect(shapeOf('/elsewhere/a.ts', '/p')).toMatchObject({ kind: 'path', inProject: false });
+    expect(shapeOf('/p/src/a.ts')).not.toHaveProperty('inProject');
+    expect(JSON.stringify(shapeOf('/p/src/a.ts', '/p'))).not.toContain('/p');
+  });
+});
+
+describe('WorkspaceManager global ledger', () => {
+  it('lives under CODEY_HOME, outside the skills directory agents scan', async () => {
+    const before = process.env.CODEY_HOME;
+    process.env.CODEY_HOME = tmp('playbook-codey-home-');
+    try {
+      const manager = new WorkspaceManager(new BotManager(), tmp('playbook-workspaces-'));
+      const store = await manager.getGlobalSkillStore();
+      expect(await manager.getGlobalSkillStore()).toBe(store);
+      store.add({ name: 'playbook-x', description: 'd', whenToUse: 'w', steps: 's' });
+      await store.flush();
+      expect(fs.existsSync(path.join(process.env.CODEY_HOME, 'skills-ledger', 'skills', 'index.json'))).toBe(true);
+    } finally {
+      process.env.CODEY_HOME = before;
+    }
   });
 });

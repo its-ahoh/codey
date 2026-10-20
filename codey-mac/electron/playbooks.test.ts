@@ -5,7 +5,7 @@ import * as os from 'os';
 import { SkillStore } from '@codey/core';
 import {
   listPlaybooks, playbookDetail, playbookHistory,
-  archivePlaybook, deletePlaybook, restorePlaybook, rollbackPlaybook,
+  archivePlaybook, deletePlaybook, restorePlaybook, rollbackPlaybook, GLOBAL_PLAYBOOKS,
 } from './playbooks';
 
 describe('playbooks IPC module', () => {
@@ -54,6 +54,11 @@ describe('playbooks IPC module', () => {
 
     await other.flush();
     fs.rmSync(otherDir, { recursive: true, force: true });
+  });
+
+  it('tags global playbooks with their scope and the global key', () => {
+    const list = listPlaybooks([{ workspace: 'alpha', store }, { workspace: GLOBAL_PLAYBOOKS, store, scope: 'global' }]);
+    expect(list.map(p => [p.workspace, p.scope])).toEqual([['alpha', 'project'], [GLOBAL_PLAYBOOKS, 'global']]);
   });
 
   it('lists nothing when no workspace has playbooks', () => {

@@ -1,5 +1,7 @@
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
+import { codeyHome } from './codey-paths';
 import { CoreLogger } from './types';
 import { BotManager } from './bots';
 import { SkillStore } from './skill-crystallizer';
@@ -316,6 +318,25 @@ export class WorkspaceManager {
       this.extraSkillStores.set(workspaceName, store);
     }
     return store;
+  }
+
+  private globalSkillStore?: Promise<SkillStore>;
+
+  /** Ledger of global playbooks, which belong to no workspace. Kept under
+   *  `~/.codey/skills-ledger`, never inside `~/.codey/skills`, where every
+   *  directory is read as a skill. */
+  getGlobalSkillStore(): Promise<SkillStore> {
+    this.globalSkillStore ??= (async () => {
+      const store = new SkillStore(path.join(codeyHome(), 'skills-ledger'), this.logger);
+      await store.load();
+      return store;
+    })();
+    return this.globalSkillStore;
+  }
+
+  /** The home directory whose `.codey/skills` holds global playbook skills. */
+  getGlobalSkillsRoot(): string {
+    return os.homedir();
   }
 
   /** Every workspace's SkillStore, keyed by workspace name. Skills are stored

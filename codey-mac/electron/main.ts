@@ -46,8 +46,10 @@ import * as pty from 'node-pty'
 protocol.registerSchemesAsPrivileged([
   { scheme: 'codey-asset', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
 ])
-import { browserSkillStatus, checkBrowserSkillUpdate, checkSkillPackUpdate, chromeCompanionSkillStatus, checkChromeCompanionSkillUpdate, installSkillPack, readSkillPackManifest, setSkillPackEnabled, skillPackStatus, uninstallSkillPack, CODEY_GLOBAL_SKILLS_SUBDIR, CODEY_SKILL_DISCOVERY_SUBDIRS, CODEY_SKILLS_SUBDIR, installBrowserSkill, installChromeCompanionSkill, setChromeCompanionSkillEnabled, syncCodeyGlobalSkills, syncCodeyProjectSkills, uninstallBrowserSkill, absorbPlaybookEdit, reconcilePlaybookSkills, removePlaybookSkill, writePlaybookSkill, uninstallChromeCompanionSkill, renameBotInTeams, BotManager, WorkspaceManager } from '@codey/core'
-import { listPlaybooks, playbookDetail, playbookHistory, archivePlaybook, deletePlaybook, restorePlaybook, rollbackPlaybook } from './playbooks'
+import { browserSkillStatus, checkBrowserSkillUpdate, checkSkillPackUpdate, chromeCompanionSkillStatus, checkChromeCompanionSkillUpdate, installSkillPack, readSkillPackManifest, setSkillPackEnabled, skillPackStatus, uninstallSkillPack, CODEY_GLOBAL_SKILLS_SUBDIR, CODEY_SKILL_DISCOVERY_SUBDIRS, CODEY_SKILLS_SUBDIR, installBrowserSkill, installChromeCompanionSkill, setChromeCompanionSkillEnabled, syncCodeyGlobalSkills, syncCodeyProjectSkills, uninstallBrowserSkill, absorbPlaybookEdit, movePlaybookSkill, reconcilePlaybookSkills, removePlaybookSkill, writePlaybookSkill, uninstallChromeCompanionSkill, renameBotInTeams, BotManager, WorkspaceManager } from '@codey/core'
+import { listPlaybooks, playbookDetail, playbookHistory, archivePlaybook, deletePlaybook, restorePlaybook, rollbackPlaybook, GLOBAL_PLAYBOOKS } from './playbooks'
+import type { WorkspaceStore } from './playbooks'
+import type { PlaybookHome } from '@codey/core'
 import { Codey } from '@codey/gateway/dist/gateway'
 import { ConfigManager } from '@codey/gateway/dist/config'
 import { ApiServer } from '@codey/gateway/dist/health'
@@ -5141,36 +5143,45 @@ app.whenReady().then(async () => {
     if (!inProcessGateway) throw new Error('Gateway not initialized');
     return inProcessGateway.getWorkspaceManager();
   }
-  // Playbooks are per-workspace state shown in a global tab, so every action
-  // resolves the store of the workspace the renderer named. An empty name
-  // falls back to the active workspace (getSkillStoreFor's own behaviour).
-  function playbookStore(workspace: string) {
-    return playbookWorkspaces().getSkillStoreFor(workspace)
+  // Playbooks are per-workspace state (plus one global ledger) shown in one
+  // tab, so every action resolves the store the renderer named. An empty name
+  // falls back to the active workspace (getSkillStoreFor's own behaviour);
+  // GLOBAL_PLAYBOOKS names the global ledger.
+  // A saved playbook IS a SKILL.md — in its workspace's checkout, or in the
+  // home directory when global. Every change to the ledger brings the file
+  // in line afterwards.
+  async function playbookHome(workspace: string): Promise<PlaybookHome> {
+    const workspaces = playbookWorkspaces()
+    if (workspace === GLOBAL_PLAYBOOKS) {
+      return { scope: 'global', store: await workspaces.getGlobalSkillStore(), root: workspaces.getGlobalSkillsRoot() }
+    }
+    const root = workspaces.getWorkingDirFor(workspace)
+    if (!root) throw new Error(`Workspace "${workspace}" has no working directory.`)
+    return { scope: 'project', store: await workspaces.getSkillStoreFor(workspace), root }
   }
-  // A saved playbook IS a SKILL.md in its workspace's checkout. Every action
-  // that changes the ledger brings the file in line afterwards.
-  function playbookWorkingDir(workspace: string): string {
-    const workingDir = playbookWorkspaces().getWorkingDirFor(workspace)
-    if (!workingDir) throw new Error(`Workspace "${workspace}" has no working directory.`)
-    return workingDir
+  async function playbookStore(workspace: string) {
+    return (await playbookHome(workspace)).store
   }
-  async function syncPlaybookFile(workspace: string, name: string, removed = false): Promise<void> {
-    const store = await playbookStore(workspace)
-    const skill = store.get(name)
+  async function syncPlaybookFile(workspace: string, name: string): Promise<void> {
+    const home = await playbookHome(workspace)
+    const skill = home.store.get(name)
     // Legacy hand-promoted skills belong to the user; leave their files alone.
     if (skill?.promotedToSkill) return
-    const workingDir = playbookWorkingDir(workspace)
-    if (removed || !skill || skill.archived) await removePlaybookSkill(workingDir, name)
-    else await writePlaybookSkill(store, skill, workingDir)
+    if (!skill || skill.archived) await removePlaybookSkill(home.root, name, home.scope)
+    else await writePlaybookSkill(home.store, skill, home.root, home.scope)
   }
   ipcMain.handle('playbooks:list', async () =>
     wrap(async () => {
-      const stores = await playbookWorkspaces().getAllSkillStores()
+      const workspaces = playbookWorkspaces()
+      const stores: WorkspaceStore[] = [
+        ...await workspaces.getAllSkillStores(),
+        { workspace: GLOBAL_PLAYBOOKS, store: await workspaces.getGlobalSkillStore(), scope: 'global' },
+      ]
       // Older saved playbooks get their prefix and SKILL.md before listing,
       // so the tab shows the names agents actually see.
-      for (const { workspace, store } of stores) {
-        const workingDir = playbookWorkspaces().getWorkingDirFor(workspace)
-        if (workingDir) await reconcilePlaybookSkills(store, workingDir).catch(() => [])
+      for (const { workspace } of stores) {
+        const home = await playbookHome(workspace).catch(() => null)
+        if (home) await reconcilePlaybookSkills(home.store, home.root, home.scope).catch(() => [])
       }
       return listPlaybooks(stores)
     }));
@@ -5190,18 +5201,29 @@ app.whenReady().then(async () => {
     }));
   ipcMain.handle('playbooks:delete', async (_e, workspace: string, name: string) =>
     wrap(async () => {
-      const promoted = (await playbookStore(workspace)).get(name)?.promotedToSkill === true
-      deletePlaybook(await playbookStore(workspace), name)
-      if (!promoted) await removePlaybookSkill(playbookWorkingDir(workspace), name)
+      const home = await playbookHome(workspace)
+      const promoted = home.store.get(name)?.promotedToSkill === true
+      deletePlaybook(home.store, name)
+      if (!promoted) await removePlaybookSkill(home.root, name, home.scope)
     }));
   ipcMain.handle('playbooks:rollback', async (_e, workspace: string, name: string) =>
     wrap(async () => {
-      const store = await playbookStore(workspace)
+      const home = await playbookHome(workspace)
       // Keep a hand edit in the history before stepping back past it.
-      await absorbPlaybookEdit(store, name, playbookWorkingDir(workspace)).catch(() => false)
-      const version = rollbackPlaybook(store, name)
+      await absorbPlaybookEdit(home.store, name, home.root).catch(() => false)
+      const version = rollbackPlaybook(home.store, name)
       await syncPlaybookFile(workspace, name)
       return version
+    }));
+  // Move a playbook between its workspace and the global ledger. A global
+  // playbook made project-only goes to the active workspace.
+  ipcMain.handle('playbooks:setScope', async (_e, workspace: string, name: string, scope: 'project' | 'global') =>
+    wrap(async () => {
+      const from = await playbookHome(workspace)
+      if (from.scope === scope) return { workspace }
+      const target = scope === 'global' ? GLOBAL_PLAYBOOKS : playbookWorkspaces().getCurrentWorkspace()
+      await movePlaybookSkill(from, await playbookHome(target), name)
+      return { workspace: target }
     }));
 
   // ── Conversations IPC ─────────────────────────────────────────────
