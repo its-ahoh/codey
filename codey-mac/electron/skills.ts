@@ -214,6 +214,20 @@ export function markSkillManagedBy(
   ))
 }
 
+/** Tag every skill Codey bundles and installed itself (browser,
+ *  chrome-companion, …) as Codey-managed. A copy the user replaced by hand
+ *  reports origin 'user' and keeps its own label. */
+export function markCodeyBundledSkills(
+  fsMod: typeof Fs,
+  pathMod: typeof Path,
+  skills: ScannedSkill[],
+  bundled: { origin?: string; dir: string }[],
+): ScannedSkill[] {
+  return bundled
+    .filter(status => status.origin === 'codey')
+    .reduce((listed, status) => markSkillManagedBy(fsMod, pathMod, listed, status.dir, 'codey'), skills)
+}
+
 /**
  * Delete the short-lived `~/.codey/managed-skills` root and the discovery links
  * pointing into it. Skills Codey owned on the user's behalf lived there for one

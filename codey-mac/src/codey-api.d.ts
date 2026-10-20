@@ -456,7 +456,7 @@ declare global {
         list: () => Promise<IpcResult<Array<{
           workspace: string;
           name: string; description: string; version: number; useCount: number;
-          lastUsedAt: number; archived: boolean; promotedToSkill: boolean;
+          lastUsedAt: number; archived: boolean; promotedToSkill: boolean; editedByUser: boolean; scope: 'project' | 'global';
           successSignals: { cleanRuns: number; corrections: number };
           canRollback: boolean;
         }>>>
@@ -479,9 +479,9 @@ declare global {
         restore: (workspace: string, name: string) => Promise<IpcResult<void>>
         delete: (workspace: string, name: string) => Promise<IpcResult<void>>
         rollback: (workspace: string, name: string) => Promise<IpcResult<number>>
+        setScope: (workspace: string, name: string, scope: 'project' | 'global') => Promise<IpcResult<{ workspace: string }>>
         /** Writes one durable SKILL.md under the project's `.codey/skills`.
          *  Codey exposes it to agents through compatibility links. */
-        promote: (workspace: string, name: string) => Promise<IpcResult<{ name: string; dirs: string[] }>>
       }
       agents: {
         get: () => Promise<IpcResult<Record<string, { enabled?: boolean; defaultModel?: string; defaultEffort?: string; env?: Record<string, string> }>>>

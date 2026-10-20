@@ -18,7 +18,7 @@
 
 export type ArgShape =
   | { kind: 'url'; host: string }
-  | { kind: 'path'; ext: string; depth: number }
+  | { kind: 'path'; ext: string; depth: number; inProject?: boolean }
   | { kind: 'enum'; value: string }
   | { kind: 'text'; len: number }
   | { kind: 'number' }
@@ -55,7 +55,16 @@ function bucketLen(len: number): number {
 
 /** Abstract one argument value. Pure and synchronous — no value it is given
  *  is retained anywhere. */
-export function shapeOf(value: unknown): ArgShape {
+/** Relative paths are taken as project paths: agents run in the checkout. */
+function isInside(target: string, workingDir: string): boolean {
+  if (!target.startsWith('/') && !target.startsWith('~')) return true;
+  const root = workingDir.endsWith('/') ? workingDir : `${workingDir}/`;
+  return target === workingDir || target.startsWith(root);
+}
+
+/** `workingDir` lets a path record whether it is inside the project — only
+ *  that bit, never the path — so a playbook's scope can be suggested. */
+export function shapeOf(value: unknown, workingDir?: string): ArgShape {
   if (typeof value === 'boolean') return { kind: 'bool' };
   if (typeof value === 'number') return { kind: 'number' };
   if (typeof value !== 'string') return { kind: 'other' };
@@ -80,6 +89,7 @@ export function shapeOf(value: unknown): ArgShape {
       kind: 'path',
       ext: dot > 0 ? base.slice(dot + 1).toLowerCase() : '',
       depth: text.split('/').filter(Boolean).length,
+      ...(workingDir ? { inProject: isInside(text, workingDir) } : {}),
     };
   }
 
@@ -116,6 +126,7 @@ export const MAX_STEPS = 12;
  *  Only the start half of a pair is counted so calls aren't doubled. */
 export function stepsFrom(
   entries: { tool?: string; type?: string; input?: unknown }[] | undefined,
+  workingDir?: string,
 ): TraceStep[] {
   if (!entries || entries.length === 0) return [];
   const steps: TraceStep[] = [];
@@ -130,7 +141,7 @@ export function stepsFrom(
     if (input && typeof input === 'object' && !Array.isArray(input)) {
       for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
         if (Object.keys(args).length >= MAX_ARGS_PER_STEP) break;
-        args[key] = shapeOf(value);
+        args[key] = shapeOf(value, workingDir);
       }
     }
     steps.push({ tool: entry.tool, args });

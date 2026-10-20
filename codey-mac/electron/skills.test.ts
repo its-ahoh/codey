@@ -2,7 +2,7 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { markSkillManagedBy, qualifySkillName, removeLegacyManagedSkills, resolveUserPath, samePath, scanClaudePluginSkills, scanSkillsDir, setSkillEnabled, uniqueSkills } from './skills'
+import { markCodeyBundledSkills, markSkillManagedBy, qualifySkillName, removeLegacyManagedSkills, resolveUserPath, samePath, scanClaudePluginSkills, scanSkillsDir, setSkillEnabled, uniqueSkills } from './skills'
 
 const roots: string[] = []
 const temp = () => {
@@ -110,6 +110,27 @@ describe('agent skill discovery', () => {
       name: 'browser',
       qualifiedName: 'browser',
       managedBy: 'codey',
+    })
+  })
+
+  it('marks every Codey-installed bundled skill, not just the browser', () => {
+    const root = temp()
+    const skill = (name: string) => {
+      const dir = path.join(root, name)
+      fs.mkdirSync(dir)
+      fs.writeFileSync(path.join(dir, 'SKILL.md'), `---\nname: ${name}\n---\n`)
+      return dir
+    }
+    const browser = skill('browser')
+    const companion = skill('chrome-companion')
+    const replaced = skill('replaced')
+    const marked = markCodeyBundledSkills(fs, path, scanSkillsDir(fs, path, root, 'user'), [
+      { origin: 'codey', dir: browser },
+      { origin: 'codey', dir: companion },
+      { origin: 'user', dir: replaced },
+    ])
+    expect(Object.fromEntries(marked.map(s => [s.name, s.managedBy]))).toEqual({
+      browser: 'codey', 'chrome-companion': 'codey', replaced: undefined,
     })
   })
 

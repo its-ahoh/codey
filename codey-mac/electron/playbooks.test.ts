@@ -5,7 +5,7 @@ import * as os from 'os';
 import { SkillStore } from '@codey/core';
 import {
   listPlaybooks, playbookDetail, playbookHistory,
-  archivePlaybook, deletePlaybook, restorePlaybook, rollbackPlaybook, promotePlaybook,
+  archivePlaybook, deletePlaybook, restorePlaybook, rollbackPlaybook, GLOBAL_PLAYBOOKS,
 } from './playbooks';
 
 describe('playbooks IPC module', () => {
@@ -54,6 +54,11 @@ describe('playbooks IPC module', () => {
 
     await other.flush();
     fs.rmSync(otherDir, { recursive: true, force: true });
+  });
+
+  it('tags global playbooks with their scope and the global key', () => {
+    const list = listPlaybooks([{ workspace: 'alpha', store }, { workspace: GLOBAL_PLAYBOOKS, store, scope: 'global' }]);
+    expect(list.map(p => [p.workspace, p.scope])).toEqual([['alpha', 'project'], [GLOBAL_PLAYBOOKS, 'global']]);
   });
 
   it('lists nothing when no workspace has playbooks', () => {
@@ -113,38 +118,4 @@ describe('playbooks IPC module', () => {
     expect(() => rollbackPlaybook(store, 'rel')).toThrow(/no prior version/i);
   });
 
-  // Promotion writes one durable copy. Core's Codey-skill synchronizer exposes
-  // that source through each agent's native discovery directory.
-  const agentRoots = (base: string) => [path.join(base, '.codey', 'skills')];
-
-  it('promotes a playbook to a durable SKILL.md and pins it', async () => {
-    const roots = agentRoots(tmp);
-    const result = await promotePlaybook(store, 'rel', roots);
-    expect(result.dirs.length).toBe(1);
-    for (const dir of result.dirs) {
-      const md = fs.readFileSync(path.join(dir, 'SKILL.md'), 'utf-8');
-      expect(md).toContain('name: "rel"');
-      expect(md).toContain('description: "Release notes"');
-      expect(md).toContain('## When to use\n\nw');
-      expect(md).toContain('## Procedure\n\ns2');
-    }
-    // There is exactly one source copy under Codey's project directory.
-    expect(result.dirs).toEqual(roots.map(r => path.join(r, 'rel')));
-    expect(listed()[0].promotedToSkill).toBe(true);
-    expect(store.archive('rel')).toBe(false);
-  });
-
-  it('does not overwrite an existing skill during promotion', async () => {
-    const roots = agentRoots(tmp);
-    fs.mkdirSync(path.join(roots[0], 'rel'), { recursive: true });
-    fs.writeFileSync(path.join(roots[0], 'rel', 'SKILL.md'), 'existing');
-    await expect(promotePlaybook(store, 'rel', roots)).rejects.toThrow(/already exists/i);
-    expect(fs.readFileSync(path.join(roots[0], 'rel', 'SKILL.md'), 'utf-8')).toBe('existing');
-    expect(listed()[0].promotedToSkill).toBe(false);
-  });
-
-  it('refuses to promote with no target directories', async () => {
-    await expect(promotePlaybook(store, 'rel', [])).rejects.toThrow(/no skill directory/i);
-    expect(listed()[0].promotedToSkill).toBe(false);
-  });
 });

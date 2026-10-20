@@ -9,6 +9,7 @@ interface Summary {
   /** Owning workspace — the list spans all of them, and names collide across
    *  workspaces, so every row and every action is keyed by (workspace, name). */
   workspace: string
+  scope: 'project' | 'global'
   name: string
   description: string
   version: number
@@ -16,6 +17,7 @@ interface Summary {
   lastUsedAt: number
   archived: boolean
   promotedToSkill: boolean
+  editedByUser: boolean
   successSignals: { cleanRuns: number; corrections: number }
   canRollback: boolean
 }
@@ -92,9 +94,9 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
 
   const act = useCallback(async (kind: 'archive' | 'restore' | 'delete' | 'rollback', s: Summary) => {
     const messages = {
-      archive: `Archive playbook "${s.name}"? It will stop being applied but can be restored later.`,
-      restore: `Restore playbook "${s.name}"?`,
-      delete: `Permanently delete playbook "${s.name}"? This removes its full history and cannot be undone.`,
+      archive: `Archive "${s.name}"? Its SKILL.md is removed so agents stop seeing it. You can restore it later.`,
+      restore: `Restore "${s.name}"? Its SKILL.md is written again so agents can use it.`,
+      delete: `Permanently delete "${s.name}"? This removes its SKILL.md and full history and cannot be undone.`,
       rollback: `Roll back "${s.name}" to its previous version?`,
     } as const
     if (!confirm(messages[kind])) return
@@ -111,11 +113,16 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
     }
   }, [reload, expanded])
 
-  const promote = useCallback(async (s: Summary) => {
-    if (!confirm(`Turn "${s.name}" into a project skill? It becomes a coding skill every agent can discover, and the playbook will no longer be archived automatically.`)) return
+  const changeScope = useCallback(async (s: Summary) => {
+    const target = s.scope === 'global' ? 'project' : 'global'
+    const message = target === 'global'
+      ? `Make "${s.name}" global? It moves to ~/.codey/skills and every project's agent can use it.`
+      : `Make "${s.name}" project-only? It moves into the active workspace's .codey/skills.`
+    if (!confirm(message)) return
     try {
-      unwrap(await window.codey.playbooks.promote(s.workspace, s.name))
+      unwrap(await window.codey.playbooks.setScope(s.workspace, s.name, target))
       await reload()
+      setExpanded(null)
     } catch (e: any) {
       setError(e?.message ?? String(e))
     }
@@ -195,7 +202,8 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
                 </span>
                 <span style={versionBadgeStyle}>v{s.version}</span>
                 {s.archived && <span style={neutralBadgeStyle}>Archived</span>}
-                {s.promotedToSkill && <span style={accentBadgeStyle}><UIIcon name="sparkle" size={10} />Skill</span>}
+                {s.promotedToSkill && <span title="Turned into a skill by hand before playbooks became skills; Codey no longer changes it" style={neutralBadgeStyle}>Legacy skill</span>}
+                {s.editedByUser && <span title="You edited its SKILL.md; the edit is kept as a version and never archived automatically" style={accentBadgeStyle}>Edited by you</span>}
               </div>
               {s.description && (
                 <div style={{
@@ -220,9 +228,15 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
             </button>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 7, marginTop: 13, marginLeft: 48 }}>
-            <span title="Workspace this playbook belongs to" style={metaChipStyle}>
-              <UIIcon name="folder" size={12} />{s.workspace}
-            </span>
+            {s.scope === 'global' ? (
+              <span title="Available in every project" style={metaChipStyle}>
+                <UIIcon name="globe" size={12} />Global
+              </span>
+            ) : (
+              <span title="Workspace this playbook belongs to" style={metaChipStyle}>
+                <UIIcon name="folder" size={12} />{s.workspace}
+              </span>
+            )}
             <span title="Times used" style={metaChipStyle}><UIIcon name="play" size={11} />{s.useCount} uses</span>
             <span title="Last used" style={metaChipStyle}><UIIcon name="clock" size={12} />{relativeTime(s.lastUsedAt, Date.now())}</span>
             <span title="Clean runs" style={{ ...metaChipStyle, color: C.green }}><UIIcon name="check" size={12} />{s.successSignals.cleanRuns} clean</span>
@@ -239,8 +253,10 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
         )}
         <div style={actionBarStyle}>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-            {actions.promote && (
-              <button onClick={() => void promote(s)} style={pillButton('primary')}>Turn into skill</button>
+            {actions.setScope && (
+              <button onClick={() => void changeScope(s)} style={{ ...pillButton('ghost'), display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <UIIcon name={s.scope === 'global' ? 'folder' : 'globe'} size={14} />{s.scope === 'global' ? 'Make project-only' : 'Make global'}
+              </button>
             )}
             {actions.rollback && (
               <button onClick={() => void act('rollback', s)} style={{ ...pillButton('ghost'), display: 'inline-flex', alignItems: 'center', gap: 6 }}><UIIcon name="refresh" size={14} />Roll back</button>

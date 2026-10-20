@@ -12,7 +12,7 @@ import { publishTeamFinal, composeTeamFinal, planTeamFooter, isSoloMentionRun, p
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { writeTranscriptSlice, TranscriptSlice, AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, runAide, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, parseBotMentions, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, BlackboardSnapshot, BotAnchor, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, matchPlaybookSuggestion, suggestPlaybook, applySkill, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, AutomationCheck, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, pickVoiceAck, needsDigest, buildSpeechDigestPrompt, stripForSpeech, needsPolish, buildVoicePolishPrompt, sanitizePolished, DEFAULT_POLISH_TIMEOUT_MS, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort, DEFAULT_THINKING_EFFORT, ApiType, unwiredAllProtocols } from '@codey/core';
+import { writeTranscriptSlice, TranscriptSlice, AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, runAide, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, parseBotMentions, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, BlackboardSnapshot, BotAnchor, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, applySkill, playbookSkillName, playbookNameTaken, writePlaybookSkill, removePlaybookSkill, absorbPlaybookEdit, reconcilePlaybookSkills, playbookSkillsUsed, suggestPlaybookScope, recursInOtherWorkspaces, PlaybookHome, PlaybookScope, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, AutomationCheck, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, pickVoiceAck, needsDigest, buildSpeechDigestPrompt, stripForSpeech, needsPolish, buildVoicePolishPrompt, sanitizePolished, DEFAULT_POLISH_TIMEOUT_MS, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort, DEFAULT_THINKING_EFFORT, ApiType, unwiredAllProtocols } from '@codey/core';
 import { randomUUID, createHash } from 'crypto';
 import { AutomationStore } from './automations/store';
 import { AutomationEngine, TargetResult } from './automations/engine';
@@ -337,7 +337,11 @@ export class Codey {
   private static SKILL_DISTILL_COOLDOWN_MS = 300_000; // 5 min
   private static SKILL_GC_EVERY_N_RUNS = 20;
   private static SKILL_EVOLVE_EVERY_N_USES = 3;
-  private static PLAYBOOK_PROMOTE_HINT_USES = 5;
+
+  /** opencode and codex report no tool events, so a skill use is invisible. */
+  private static reportsToolUse(agent: CodingAgent): boolean {
+    return agent !== 'opencode' && agent !== 'codex';
+  }
 
   // Pre-compiled regex for /team command parsing
   private static readonly REGEX_TEAM = /\/team\s+(\w+)(?:\s+(--all))?\s+(?!--all\s*$)(.+)/i;
@@ -2328,39 +2332,22 @@ export class Codey {
       if (pendingSkillEntry && !pending && !isSlash) {
         const pendingSkill = pendingSkillEntry.suggestion;
         const reply = message.text.trim().toLowerCase();
-        const renameMatch = reply.match(/^rename\s+([a-z][a-z0-9-]{2,29})$/);
-        if (reply === 'yes' || renameMatch) {
+        const renameMatch = reply.match(/^rename\s+([a-z][a-z0-9-]{2,38})$/);
+        const scopeReply = reply === 'global' || reply === 'project' ? reply : undefined;
+        if (reply === 'yes' || renameMatch || scopeReply) {
           // Save into the workspace the suggestion was distilled in — the
           // active workspace may have changed since it was surfaced.
-          const store = await this.resolveSkillStore(pendingSkillEntry.workspaceName);
-          const name = renameMatch ? renameMatch[1] : pendingSkill.name;
-          if (renameMatch && store.get(name)) {
+          const saved = await this.savePlaybookSkill(pendingSkillEntry.workspaceName, pendingSkill, renameMatch?.[1], scopeReply);
+          if ('error' in saved) {
             // Keep the suggestion pending so the user can pick another name.
-            await this.sendResponse({
-              chatId: message.chatId,
-              channel: message.channel,
-              text: `A skill named "${name}" already exists. Reply "rename <different-name>", "yes", or "no".`,
-            });
+            await this.sendResponse({ chatId: message.chatId, channel: message.channel, text: saved.error });
             return;
           }
-          store.add({
-            name,
-            description: pendingSkill.description,
-            whenToUse: pendingSkill.whenToUse,
-            steps: pendingSkill.steps,
-            sourceRunId: 'user-confirmed',
-            // If this upserts an existing skill (evolving its steps), record
-            // what the user confirmed as the evolution's trigger.
-            trigger: { runId: 'user-confirmed', promptSummary: pendingSkill.description },
-            // Present only when the suggestion came from an induced template.
-            parameters: pendingSkill.parameters,
-            inducedFrom: pendingSkill.inducedFrom,
-          });
           this.pendingSkillSuggestions.delete(pendingSkillKey);
           await this.sendResponse({
             chatId: message.chatId,
             channel: message.channel,
-            text: `✅ Skill **${name}** saved! Use \`/skills\` to see all.`,
+            text: `✅ ${saved.scope === 'global' ? 'Global' : 'Project'} skill **${saved.name}** saved. Your coding agent will use it when it fits. See all with \`/skills\`.`,
           });
           return;
         }
@@ -2408,8 +2395,7 @@ export class Codey {
         const name = invokeMatch[1].toLowerCase();
         // Skills are per-workspace: for a channel linked to a Codey chat, look
         // up the CHAT's workspace, not whichever workspace is loaded.
-        const store = await this.resolveSkillStore(this.linkedChatWorkspaceName(message));
-        const skill = store.getActive().find(s => s.name === name);
+        const skill = await this.findActiveSkill(this.linkedChatWorkspaceName(message), name);
         if (!skill) {
           await this.sendResponse({
             chatId: message.chatId,
@@ -2620,25 +2606,17 @@ export class Codey {
     const onStream = handler?.streamText ? (text: string) => handler.streamText!(text) : undefined;
     const streamed = { active: false };
 
-    // ── Skill matching (pre-run) ──────────────────────────
-    // Explicit `/skill <name> <task>` invoke (carried on this turn's queue
-    // payload by handleMessage — works even with autoApply off) takes
-    // precedence; automatic matches are optional playbook suggestions for the agent.
+    // ── Explicit skill invocation (pre-run) ───────────────
+    // `/skill <name> <task>` (carried on this turn's queue payload by
+    // handleMessage) puts the procedure in the prompt. Otherwise saved
+    // playbooks are SKILL.md files the agent discovers on its own.
     let appliedSkill: SkillEntry | null = null;
-    let suggestedPlaybook: SkillEntry | null = null;
     const skillsCfg = this.configManager?.getSkillsConfig();
     let runPrompt = parsed.prompt;
     if (skillsCfg?.enabled && skillInvoke) {
       appliedSkill = skillInvoke.skill;
       runPrompt = applySkill(skillInvoke.task, skillInvoke.skill);
       this.logger.info(`[skills] explicit invoke: ${skillInvoke.skill.name} v${skillInvoke.skill.version}`);
-    } else if (skillsCfg?.enabled && skillsCfg.autoApply) {
-      // runPrompt is non-empty here: empty prompts already returned above.
-      suggestedPlaybook = matchPlaybookSuggestion(runPrompt, this.workspaceManager.getSkillStore().getActive());
-      if (suggestedPlaybook) {
-        runPrompt = suggestPlaybook(runPrompt, suggestedPlaybook);
-        this.logger.info(`[skills] playbook suggested: ${suggestedPlaybook.name} v${suggestedPlaybook.version}`);
-      }
     }
 
     let prep = this.prepareAgentTurn(ctxWindow, agent, runPrompt, memoryContext);
@@ -2702,7 +2680,7 @@ export class Codey {
     if (skillsCfg?.enabled) {
       // What the run DID — the procedure clustering and the distiller work on.
       // Argument VALUES stay here; only their shapes reach the trace file.
-      const steps = stepsFrom(meta.toolCalls);
+      const steps = stepsFrom(meta.toolCalls, this.workspaceManager.getWorkingDir());
       const trace: RunTrace = {
         runId: `solo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         promptSummary: parsed.prompt.slice(0, 200),
@@ -2719,9 +2697,12 @@ export class Codey {
       void this.afterRunSkillPass({
         trace,
         appliedSkill,
-        suggestedPlaybook,
+        toolCalls: meta.toolCalls,
+        usageTracked: Codey.reportsToolUse(agent),
         clean: response.success,
         store: this.workspaceManager.getSkillStore(),
+        workingDir: this.workspaceManager.getWorkingDir(),
+        globalHome: await this.globalPlaybookHome(),
         // Mirror the chat surface: a turn that ended with the agent asking the
         // user a question must not get a suggestion stacked on top — the
         // user's "yes" would resolve the suggestion instead of the question.
@@ -2966,25 +2947,30 @@ export class Codey {
         break;
       }
       case 'skill-forget': {
-        const store = await this.resolveSkillStore(this.linkedChatWorkspaceName(message));
-        const ok = store.archive(args[0]);
+        const { home, name } = await this.playbookTarget(message, args[0]);
+        const ok = home.store.archive(name);
+        if (ok) await this.syncPlaybookFile(home, name);
         await this.sendResponse({ chatId, channel,
-          text: ok ? `🗑️ Skill **${args[0]}** archived. Restore with /skill restore ${args[0]}` : `Skill "${args[0]}" not found.` });
+          text: ok ? `🗑️ Skill **${name}** archived. Restore with /skill restore ${name}` : `Skill "${args[0]}" not found.` });
         break;
       }
       case 'skill-restore': {
-        const store = await this.resolveSkillStore(this.linkedChatWorkspaceName(message));
-        const ok = store.restore(args[0]);
+        const { home, name } = await this.playbookTarget(message, args[0]);
+        const ok = home.store.restore(name);
+        if (ok) await this.syncPlaybookFile(home, name);
         await this.sendResponse({ chatId, channel,
-          text: ok ? `🔄 Skill **${args[0]}** restored.` : `Skill "${args[0]}" not found.` });
+          text: ok ? `🔄 Skill **${name}** restored.` : `Skill "${args[0]}" not found.` });
         break;
       }
       case 'skill-rollback': {
-        const store = await this.resolveSkillStore(this.linkedChatWorkspaceName(message));
-        const ok = store.rollback(args[0]);
-        const v = store.get(args[0])?.version;
+        const { home, name } = await this.playbookTarget(message, args[0]);
+        // Keep a hand edit in the history before stepping back past it.
+        if (home.store.get(name)) await absorbPlaybookEdit(home.store, name, home.root).catch(() => false);
+        const ok = home.store.rollback(name);
+        if (ok) await this.syncPlaybookFile(home, name);
+        const v = home.store.get(name)?.version;
         await this.sendResponse({ chatId, channel,
-          text: ok ? `⏪ Skill **${args[0]}** rolled back to v${v}.` : `Skill "${args[0]}" has no prior version (or was not found).` });
+          text: ok ? `⏪ Skill **${name}** rolled back to v${v}.` : `Skill "${args[0]}" has no prior version (or was not found).` });
         break;
       }
       case 'skill-history': {
@@ -3230,14 +3216,14 @@ export class Codey {
   }
 
   private async cmdSkills(chatId: string, channel: ChannelType, workspaceName?: string): Promise<void> {
-    const store = await this.resolveSkillStore(workspaceName);
-    const active = store.getActive();
+    const homes = await this.playbookHomes(workspaceName);
+    const active = homes.flatMap(home => home.store.getActive().map(skill => ({ skill, scope: home.scope })));
     if (active.length === 0) {
       await this.sendResponse({ chatId, channel, text: 'No active skills. Skills crystallize from repeated work patterns.' });
       return;
     }
-    const lines = active.map(s =>
-      `- **${s.name}** (v${s.version}): ${s.description} — used ${s.useCount}×, last ${Codey.relativeTime(s.lastUsedAt)}`
+    const lines = active.map(({ skill: s, scope }) =>
+      `- **${s.name}** [${scope}] (v${s.version}): ${s.description} — used ${s.useCount}×, last ${Codey.relativeTime(s.lastUsedAt)}`
     );
     await this.sendResponse({ chatId, channel, text: `📋 **Skills** (${active.length})\n\n${lines.join('\n')}` });
   }
@@ -3283,6 +3269,112 @@ export class Codey {
       }
     }
     return this.workspaceManager.getSkillStore();
+  }
+
+  /** The global playbook ledger and where its SKILL.md files live. */
+  private async globalPlaybookHome(): Promise<PlaybookHome> {
+    return {
+      scope: 'global',
+      store: await this.workspaceManager.getGlobalSkillStore(),
+      root: this.workspaceManager.getGlobalSkillsRoot(),
+    };
+  }
+
+  /** A workspace's own playbooks first, then the global ones. */
+  private async playbookHomes(workspaceName?: string): Promise<PlaybookHome[]> {
+    const project: PlaybookHome = {
+      scope: 'project',
+      store: await this.resolveSkillStore(workspaceName),
+      root: workspaceName ? this.resolveWorkspaceWorkingDir(workspaceName) : this.workspaceManager.getWorkingDir(),
+    };
+    return [project, await this.globalPlaybookHome()];
+  }
+
+  /** The home and stored name a `/skill <name>` command refers to, looking
+   *  in the workspace before the global ledger. The prefix may be left off. */
+  private async playbookTarget(message: UserMessage, requested = ''): Promise<{ home: PlaybookHome; name: string }> {
+    const homes = await this.playbookHomes(this.linkedChatWorkspaceName(message));
+    for (const name of [requested, playbookSkillName(requested)]) {
+      const home = homes.find(h => h.store.get(name));
+      if (home) return { home, name };
+    }
+    return { home: homes[0], name: playbookSkillName(requested) };
+  }
+
+  /** An active skill by name, from the workspace or the global ledger. */
+  private async findActiveSkill(workspaceName: string | undefined, requested: string): Promise<SkillEntry | undefined> {
+    for (const home of await this.playbookHomes(workspaceName)) {
+      const skill = home.store.getActive().find(s => s.name === requested || s.name === playbookSkillName(requested));
+      if (skill) return skill;
+    }
+    return undefined;
+  }
+
+  /** Make a playbook's SKILL.md match the ledger: written while active,
+   *  removed while archived. Legacy hand-promoted skills are left alone. */
+  private async syncPlaybookFile(home: PlaybookHome, name: string): Promise<void> {
+    const skill = home.store.get(name);
+    if (!skill || skill.promotedToSkill) return;
+    try {
+      if (skill.archived) await removePlaybookSkill(home.root, name, home.scope);
+      else await writePlaybookSkill(home.store, skill, home.root, home.scope);
+    } catch (err) {
+      this.logger.warn(`[skills] could not update SKILL.md for ${name}: ${err}`);
+    }
+  }
+
+  /** Suggest where a new playbook should apply. Pure code evidence first
+   *  (another workspace repeats it, it touched project files, it only used
+   *  the web); the namer's guess only when that says nothing. */
+  private async suggestScope(store: SkillStore, members: RunTrace[], aiScope?: PlaybookScope): Promise<PlaybookScope> {
+    let crossWorkspace = false;
+    try {
+      const others = (await this.workspaceManager.getAllSkillStores())
+        .filter(other => other.store !== store)
+        .map(other => other.store.getRecentTraces(RECENT_TRACES_MAX));
+      crossWorkspace = recursInOtherWorkspaces(members, store.getRecentTraces(RECENT_TRACES_MAX), others);
+    } catch (err) {
+      this.logger.debug(`[skills] cross-workspace check skipped: ${err}`);
+    }
+    return suggestPlaybookScope({ members, crossWorkspace, aiScope });
+  }
+
+  /** Save a confirmed suggestion as a playbook skill, in the scope the user
+   *  chose (or the suggested one). Refuses a name already used by another
+   *  skill — the user's own, or a playbook in the other scope — so nothing is
+   *  shadowed or overwritten. */
+  private async savePlaybookSkill(
+    workspaceName: string | undefined,
+    suggestion: DistillResult,
+    requestedName?: string,
+    scope: PlaybookScope = suggestion.scope ?? 'project',
+  ): Promise<{ name: string; scope: PlaybookScope } | { error: string }> {
+    const homes = await this.playbookHomes(workspaceName);
+    const home = homes.find(h => h.scope === scope) ?? homes[0];
+    const name = playbookSkillName(requestedName ?? suggestion.name);
+    const existing = home.store.get(name);
+    let taken = !!requestedName && !!existing;
+    for (const other of homes) {
+      if (taken) break;
+      const ownedHere = other === home && existing;
+      taken = (other !== home && !!other.store.get(name)) || (!ownedHere && await playbookNameTaken(other.root, name));
+    }
+    if (taken) return { error: `A skill named "${name}" already exists. Reply "rename <different-name>" or "no".` };
+    home.store.add({
+      name,
+      description: suggestion.description,
+      whenToUse: suggestion.whenToUse,
+      steps: suggestion.steps,
+      sourceRunId: 'user-confirmed',
+      // If this upserts an existing skill (evolving its steps), record
+      // what the user confirmed as the evolution's trigger.
+      trigger: { runId: 'user-confirmed', promptSummary: suggestion.description },
+      // Present only when the suggestion came from an induced template.
+      parameters: suggestion.parameters,
+      inducedFrom: suggestion.inducedFrom,
+    });
+    await this.syncPlaybookFile(home, name);
+    return { name, scope: home.scope };
   }
 
   /** Workspace of the Codey chat linked to a channel message, if any. */
@@ -3334,7 +3426,8 @@ export class Codey {
       this.logger.debug('[skills] induction: cluster produced no template');
       return null;
     }
-    return nameTemplate(this.getSkillDistillDeps(), template, store.getAll(), store.getRejected());
+    return nameTemplate(this.getSkillDistillDeps(), template, store.getAll(), store.getRejected(),
+      members.map(t => t.promptSummary));
   }
 
   /** Shared post-run skill pass for both surfaces. Never rejects — every LLM
@@ -3343,13 +3436,20 @@ export class Codey {
   private async afterRunSkillPass(opts: {
     trace: RunTrace;
     appliedSkill: SkillEntry | null;
-    /** Offered to the agent as optional; it may have been ignored, so it
-     *  counts as a use for cleanup but feeds no success signal or evolution. */
-    suggestedPlaybook?: SkillEntry | null;
+    /** The run's tool calls, to see which playbook skills the agent used. */
+    toolCalls?: { type?: string; message?: string; input?: unknown }[];
+    /** False for agents that report no tool events: their uses are invisible,
+     *  so cleanup must not read "unused" as "useless". */
+    usageTracked?: boolean;
     clean: boolean;
     /** The run's workspace-scoped skill store, resolved by the caller (the
      *  chat's workspace when the run had a chat binding, else the active one). */
     store: SkillStore;
+    /** The workspace's checkout, where its playbook SKILL.md files live. */
+    workingDir: string;
+    /** Global playbooks: tracked, evolved and cleaned up alongside the
+     *  workspace's own. New suggestions are still learned per workspace. */
+    globalHome?: PlaybookHome;
     /** Deliver a one-liner to the user on whatever surface ran the turn. */
     notify: (text: string) => void | Promise<void>;
     /** Stash a suggestion so the user's next reply can resolve it. */
@@ -3364,23 +3464,57 @@ export class Codey {
       if (!cfg || !cfg.enabled) return;
       const store = opts.store;
 
-      if (opts.appliedSkill) {
+      const homes: PlaybookHome[] = [
+        { scope: 'project', store, root: opts.workingDir },
+        ...(opts.globalHome ? [opts.globalHome] : []),
+      ];
+
+      // Older saved playbooks get their prefix and SKILL.md; a file that went
+      // missing is written again. Cheap when everything is already in place.
+      for (const home of homes) {
+        try {
+          const written = await reconcilePlaybookSkills(home.store, home.root, home.scope);
+          if (written.length) this.logger.info(`[skills] wrote ${home.scope} playbook skill(s): ${written.join(', ')}`);
+        } catch (err) {
+          this.logger.warn(`[skills] ${home.scope} playbook skill sync failed: ${err}`);
+        }
+      }
+
+      // An explicit /skill and a playbook skill the agent chose to use are
+      // both real uses: they feed success signals and evolution alike.
+      const used: { home: PlaybookHome; skill: SkillEntry }[] = [];
+      for (const home of homes) {
+        const active = home.store.getActive();
+        const applied = opts.appliedSkill && active.find(s => s.name === opts.appliedSkill!.name);
+        for (const skill of [applied, ...playbookSkillsUsed(opts.toolCalls, active)]) {
+          if (skill && !used.some(u => u.skill.name === skill.name)) used.push({ home, skill });
+        }
+      }
+      for (const { home, skill } of used) {
+        const ledger = home.store;
         // Bookkeeping stays outside the LLM try block so it always happens.
-        store.recordUse(opts.appliedSkill.name);
-        store.recordSuccessSignal(opts.appliedSkill.name, opts.clean);
-        const entry = store.get(opts.appliedSkill.name);
+        ledger.recordUse(skill.name);
+        ledger.recordSuccessSignal(skill.name, opts.clean);
+        const entry = ledger.get(skill.name);
+        if (!entry) continue;
+        if (skill.name !== opts.appliedSkill?.name) this.logger.info(`[skills] playbook used: ${entry.name} v${entry.version} (${home.scope})`);
         // Gate evolution to every Nth use — one weak trace is not enough signal
         // to rewrite steps on, and per-run LLM calls would be pure cost.
-        if (opts.clean && entry && entry.useCount % Codey.SKILL_EVOLVE_EVERY_N_USES === 0) {
+        if (opts.clean && entry.useCount % Codey.SKILL_EVOLVE_EVERY_N_USES === 0 && !entry.promotedToSkill) {
           try {
+            // A hand edit becomes the version evolution builds on.
+            if (await absorbPlaybookEdit(ledger, entry.name, home.root)) {
+              this.logger.info(`[skills] kept hand edit of ${entry.name} as v${entry.version}`);
+            }
             const evolved = await evolveSkill(this.getSkillDistillDeps(), entry, opts.trace);
             if (evolved) {
               // Known v1 window: a concurrent /skill rollback (or another evolve)
               // between evolveSkill and bumpVersion can be silently overwritten.
-              store.bumpVersion(entry.name, evolved, {
+              ledger.bumpVersion(entry.name, evolved, {
                 runId: opts.trace.runId,
                 promptSummary: opts.trace.promptSummary,
               });
+              await writePlaybookSkill(ledger, entry, home.root, home.scope);
               this.logger.info(`[skills] evolved ${entry.name} → v${entry.version}`);
               await opts.notify(`⚙︎ evolved skill ${entry.name} → v${entry.version} (rollback with /skill rollback ${entry.name})`);
             }
@@ -3388,16 +3522,6 @@ export class Codey {
             this.logger.warn(`[skills] evolve stage failed: ${err}`);
           }
         }
-      }
-
-      if (opts.suggestedPlaybook) store.recordUse(opts.suggestedPlaybook.name);
-      const used = opts.appliedSkill ?? opts.suggestedPlaybook;
-      const usedEntry = used ? store.get(used.name) : undefined;
-      if (usedEntry && usedEntry.useCount >= Codey.PLAYBOOK_PROMOTE_HINT_USES
-          && store.markPromotionHinted(usedEntry.name)) {
-        await opts.notify(
-          `📘 Playbook **${usedEntry.name}** has been used ${usedEntry.useCount} times. ` +
-          `Promote it to a Skill in the Codey app (Tools → Playbooks) so the agent can find it on its own.`);
       }
 
       if (!opts.clean) return; // failed runs contribute a correction signal, not a trace
@@ -3415,8 +3539,17 @@ export class Codey {
 
       this.skillRunCounter++;
       if (this.skillRunCounter % Codey.SKILL_GC_EVERY_N_RUNS === 1) {
-        const n = store.runCollectGarbage({ staleDays: cfg.staleDays, weakSkillDays: cfg.weakSkillDays });
-        if (n > 0) this.logger.info(`[skills] GC archived ${n} skill(s)`);
+        for (const home of homes) {
+          const archived = home.store.runCollectGarbage({
+            staleDays: cfg.staleDays, weakSkillDays: cfg.weakSkillDays, usageTracked: opts.usageTracked,
+          });
+          for (const name of archived) {
+            try { await removePlaybookSkill(home.root, name, home.scope); } catch (err) {
+              this.logger.warn(`[skills] could not remove archived skill ${name}: ${err}`);
+            }
+          }
+          if (archived.length > 0) this.logger.info(`[skills] GC archived ${home.scope}: ${archived.join(', ')}`);
+        }
       }
 
       // Distill/suggest is the last stage, so suppressing it is an early
@@ -3442,10 +3575,13 @@ export class Codey {
           // or "I couldn't name it", both of which mean stay quiet and retry
           // on the next window rather than propose something unrelated.
           let candidate: DistillResult | null = null;
+          let members: RunTrace[] = recent;
           if (cfg.induction && clusterReport?.clusters.length) {
-            const induced = await this.induceSuggestion(store, clusterReport.clusters[0]);
+            const cluster = clusterReport.clusters[0];
+            const induced = await this.induceSuggestion(store, cluster);
             if (induced === 'duplicate' || induced === null) return;
             candidate = induced;
+            members = store.getRecentTraces(RECENT_TRACES_MAX).filter(t => cluster.runIds.includes(t.runId));
           } else {
             // Prose distillation is for runs induction CANNOT see: no tool
             // activity anywhere in the window. When procedures were observed
@@ -3462,10 +3598,14 @@ export class Codey {
             );
           }
           if (candidate) {
+            candidate = { ...candidate, scope: await this.suggestScope(store, members, candidate.scope) };
             opts.setPending(candidate);
+            const other: PlaybookScope = candidate.scope === 'global' ? 'project' : 'global';
             await opts.notify(
               `🧩 I've done something like this repeatedly ("${candidate.description}"). ` +
-              `Save it as a reusable skill **${candidate.name}**? (reply "yes", "no", or "rename <new-name>")`
+              `Save it as a reusable **${candidate.scope === 'global' ? 'global' : 'project'}** skill ` +
+              `**${playbookSkillName(candidate.name)}**? (reply "yes", "no", ` +
+              `"${other}" to save it ${other === 'global' ? 'for every project' : 'for this project only'}, or "rename <new-name>")`
             );
           }
         }
@@ -6425,28 +6565,20 @@ Example: /model gpt-4.1 write a Python script`;
     if (!chat.tasks?.length && chat.pendingSkillSuggestion && !isSlashTurn && !pendingTeam && chat.kind !== 'automation') {
       const s = chat.pendingSkillSuggestion;
       const reply = userText.trim().toLowerCase();
-      const renameMatch = reply.match(/^rename\s+([a-z][a-z0-9-]{2,29})$/);
-      if (reply === 'yes' || reply === 'no' || renameMatch) {
-        // Skills are per-workspace: use the CHAT's workspace store.
-        const store = await this.resolveSkillStore(chat.workspaceName);
+      const renameMatch = reply.match(/^rename\s+([a-z][a-z0-9-]{2,38})$/);
+      const scopeReply = reply === 'global' || reply === 'project' ? reply : undefined;
+      if (reply === 'yes' || reply === 'no' || renameMatch || scopeReply) {
         let responseText: string;
         if (reply === 'no') {
+          // Skills are per-workspace: use the CHAT's workspace store.
+          const store = await this.resolveSkillStore(chat.workspaceName);
           store.rejectSuggestion(s.name, s.description);
           responseText = `Got it — I won't suggest "${s.name}" again.`;
         } else {
-          const name = renameMatch ? renameMatch[1] : s.name;
-          if (renameMatch && store.get(name)) {
-            // Keep the suggestion pending so the user can pick another name.
-            return finishSkillReply(`A skill named "${name}" already exists. Reply "rename <different-name>", "yes", or "no".`);
-          }
-          store.add({ name, description: s.description, whenToUse: s.whenToUse,
-                      steps: s.steps, sourceRunId: 'user-confirmed',
-                      // If this upserts an existing skill (evolving its steps),
-                      // record what the user confirmed as the trigger.
-                      trigger: { runId: 'user-confirmed', promptSummary: s.description },
-                      // Present only when the suggestion came from an induced template.
-                      parameters: s.parameters, inducedFrom: s.inducedFrom });
-          responseText = `✅ Skill **${name}** saved. It will be suggested to the agent on matching tasks.`;
+          const saved = await this.savePlaybookSkill(chat.workspaceName, s, renameMatch?.[1], scopeReply);
+          // Keep the suggestion pending so the user can pick another name.
+          if ('error' in saved) return finishSkillReply(saved.error);
+          responseText = `✅ ${saved.scope === 'global' ? 'Global' : 'Project'} skill **${saved.name}** saved. Your coding agent will use it when it fits.`;
         }
         this.chatManager.setPendingSkillSuggestion(chatId, null);
         return finishSkillReply(responseText);
@@ -6462,7 +6594,6 @@ Example: /model gpt-4.1 write a Python script`;
     // persisted user message and downstream bootstrap see the clean text —
     // the banner is applied exactly once at prompt build (see below).
     let appliedChatSkill: SkillEntry | null = null;
-    let suggestedChatPlaybook: SkillEntry | null = null;
     let chatSkillTask: string | null = null;
     if (origin?.skillInvoke) {
       appliedChatSkill = origin.skillInvoke.skill;
@@ -6474,9 +6605,8 @@ Example: /model gpt-4.1 write a Python script`;
           return finishSkillReply('Skills are disabled.');
         }
         const name = invokeMatch[1].toLowerCase();
-        // Skills are per-workspace: use the CHAT's workspace store.
-        const store = await this.resolveSkillStore(chat.workspaceName);
-        const skill = store.getActive().find(sk => sk.name === name);
+        // The CHAT's workspace first, then global playbooks.
+        const skill = await this.findActiveSkill(chat.workspaceName, name);
         if (!skill) {
           return finishSkillReply(`Skill "${name}" not found. Ask me to /skills to see active skills.`);
         }
@@ -6626,25 +6756,13 @@ Example: /model gpt-4.1 write a Python script`;
       prompt = prompt + '\n\n' + SOLO_ADVISOR_INSTRUCTION;
     }
 
-    // ── Skill application (pre-run) ─────────────────────────────────
-    // Explicit invoke wins outright (banner applied once, no matching);
-    // otherwise suggest a matching playbook to the agent — solo chats only.
+    // ── Explicit skill invocation (pre-run) ─────────────────────────
+    // The banner is applied once. Saved playbooks otherwise need nothing
+    // here: they are SKILL.md files the agent discovers on its own.
     const skillsCfg = this.configManager?.getSkillsConfig();
     if (appliedChatSkill) {
       prompt = applySkill(prompt, appliedChatSkill);
       this.logger.info(`[skills] explicit invoke (chat): ${appliedChatSkill.name} v${appliedChatSkill.version}`);
-    } else if (skillsCfg?.enabled && skillsCfg.autoApply
-        // Unattended automation runs execute a frozen brief — never suggest playbooks.
-        && chat.kind !== 'automation'
-        && !isTeamTurn && !isSlashTurn) {
-      // Skills are per-workspace: match against the CHAT's workspace store
-      // (mirrors how workingDir/teams above come from chat.workspaceName).
-      const chatSkillStore = await this.resolveSkillStore(chat.workspaceName);
-      suggestedChatPlaybook = matchPlaybookSuggestion(userText, chatSkillStore.getActive());
-      if (suggestedChatPlaybook) {
-        prompt = suggestPlaybook(prompt, suggestedChatPlaybook);
-        this.logger.info(`[skills] playbook suggested (chat): ${suggestedChatPlaybook.name} v${suggestedChatPlaybook.version}`);
-      }
     }
 
     const userMessage: ChatMessage = {
@@ -6889,7 +7007,6 @@ Example: /model gpt-4.1 write a Python script`;
           // Re-apply the skill banner: the rebuilt bootstrap prompt replaced
           // the one that carried it (still exactly once per prompt build).
           if (appliedChatSkill) prompt = applySkill(prompt, appliedChatSkill);
-          else if (suggestedChatPlaybook) prompt = suggestPlaybook(prompt, suggestedChatPlaybook);
           response = await this.runWithFallback(agent, {
             prompt,
             agent,
@@ -7163,7 +7280,7 @@ Example: /model gpt-4.1 write a Python script`;
           : undefined;
         // What the run DID — the procedure clustering and the distiller work
         // on. Argument VALUES stay here; only their shapes reach the trace file.
-        const steps = stepsFrom(toolCalls);
+        const steps = stepsFrom(toolCalls, workingDir);
         const chatTrace: RunTrace = {
           runId: `chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           promptSummary: userText.slice(0, 200),
@@ -7178,10 +7295,15 @@ Example: /model gpt-4.1 write a Python script`;
         void this.afterRunSkillPass({
           trace: chatTrace,
           appliedSkill: appliedChatSkill,
-          suggestedPlaybook: suggestedChatPlaybook,
+          toolCalls,
+          usageTracked: Codey.reportsToolUse(agent),
           clean: runSucceeded,
           // Per-workspace store, resolved from the CHAT's workspace binding.
           store: await this.resolveSkillStore(chat.workspaceName),
+          // The workspace's own checkout, not a per-chat worktree: playbook
+          // skills live there and are linked into worktrees at launch.
+          workingDir: this.resolveWorkspaceWorkingDir(chat.workspaceName),
+          globalHome: await this.globalPlaybookHome(),
           // A turn that ended by asking the user something (choice buttons or
           // a structured AskUserQuestion) must not get a skill suggestion
           // stacked on top — the user's "yes" would resolve the suggestion

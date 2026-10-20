@@ -45,7 +45,7 @@ export function timelineRows(events: EvolutionEventLike[], now: number): Timelin
 }
 
 export function playbookActions(s: { archived: boolean; canRollback: boolean; promotedToSkill: boolean }): {
-  archive: boolean; restore: boolean; delete: boolean; rollback: boolean; promote: boolean
+  archive: boolean; restore: boolean; delete: boolean; rollback: boolean; setScope: boolean
 } {
   // Rollback is gated only on available history — archived skills can roll
   // back too, matching the gateway's /skill rollback behavior.
@@ -54,6 +54,7 @@ export function playbookActions(s: { archived: boolean; canRollback: boolean; pr
     restore: s.archived,
     delete: true,
     rollback: s.canRollback,
-    promote: !s.promotedToSkill,
+    // A legacy hand-promoted skill's file belongs to the user; don't move it.
+    setScope: !s.promotedToSkill,
   }
 }
