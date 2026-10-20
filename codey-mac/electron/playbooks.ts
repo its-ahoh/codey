@@ -3,16 +3,24 @@
 // NOT the same thing as the agent-skill directories behind the skills:* IPC.
 import type { SkillStore, SkillEvolutionEvent } from '@codey/core';
 
+/** Stands in for a workspace name for the global playbook ledger. Not a
+ *  valid directory name on every platform, so no real workspace can clash. */
+export const GLOBAL_PLAYBOOKS = '*';
+
 /** A store paired with the workspace it belongs to. The Playbooks tab is a
  *  global view, so every summary and every action carries its workspace. */
 export interface WorkspaceStore {
   workspace: string;
   store: SkillStore;
+  /** 'global' for the ledger keyed GLOBAL_PLAYBOOKS; workspaces are 'project'. */
+  scope?: 'project' | 'global';
 }
 
 export interface PlaybookSummary {
-  /** Owning workspace — names are only unique within one. */
+  /** Owning workspace — names are only unique within one. GLOBAL_PLAYBOOKS
+   *  for a global playbook. */
   workspace: string;
+  scope: 'project' | 'global';
   name: string;
   description: string;
   version: number;
@@ -37,8 +45,9 @@ export interface PlaybookDetail {
  *  in the order given. Two workspaces may hold same-named playbooks — they are
  *  distinct entries, so consumers must key on (workspace, name). */
 export function listPlaybooks(stores: WorkspaceStore[]): PlaybookSummary[] {
-  return stores.flatMap(({ workspace, store }) => store.getAll().map(s => ({
+  return stores.flatMap(({ workspace, store, scope }) => store.getAll().map(s => ({
     workspace,
+    scope: scope ?? 'project',
     name: s.name,
     description: s.description,
     version: s.version,

@@ -16,8 +16,18 @@ async function setup() {
   const workingDir = repo();
   const store = new SkillStore(fs.mkdtempSync(path.join(os.tmpdir(), 'gw-playbook-ledger-')));
   await store.load();
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-playbook-home-'));
+  const globalStore = new SkillStore(fs.mkdtempSync(path.join(os.tmpdir(), 'gw-playbook-global-')));
+  await globalStore.load();
+  const globalHome = { scope: 'global' as const, store: globalStore, root: home };
   const notices: string[] = [];
   const gateway = Object.assign(Object.create(Codey.prototype), {
+    workspaceManager: {
+      getGlobalSkillStore: async () => globalStore,
+      getGlobalSkillsRoot: () => home,
+      getAllSkillStores: async () => [{ workspace: 'ws', store }],
+      getWorkingDir: () => workingDir,
+    },
     configManager: { getSkillsConfig: () => ({ enabled: true, suggestOnRepeat: 2, autoApply: true, staleDays: 30, weakSkillDays: 7, induction: true }) },
     logger: { info() {}, warn() {}, debug() {} },
     skillRunCounter: 0,
@@ -28,17 +38,17 @@ async function setup() {
   const pass = (opts: Record<string, unknown>) => gateway.afterRunSkillPass({
     trace: { runId: 'r', promptSummary: 'draft notes', outputPreview: '', timestamp: Date.now(), mode: 'solo',
       steps: [{ tool: 'Read', args: {} }], toolSequence: ['Read'] },
-    appliedSkill: null, clean: true, store, workingDir,
+    appliedSkill: null, clean: true, store, workingDir, globalHome,
     notify: (text: string) => { notices.push(text); }, setPending: () => {},
     ...opts,
   });
-  return { gateway, store, workingDir, suggestion, pass, notices };
+  return { gateway, store, globalStore, home, workingDir, suggestion, pass, notices };
 }
 
 describe('saving a playbook as a skill', () => {
   it('writes playbook-<name>/SKILL.md on yes', async () => {
     const { gateway, store, workingDir, suggestion } = await setup();
-    expect(await gateway.savePlaybookSkill('ws', suggestion)).toEqual({ name: 'playbook-notes' });
+    expect(await gateway.savePlaybookSkill('ws', suggestion)).toEqual({ name: 'playbook-notes', scope: 'project' });
     expect(store.get('playbook-notes')).toBeDefined();
     expect(fs.existsSync(path.join(playbookSkillDir(workingDir, 'playbook-notes'), 'SKILL.md'))).toBe(true);
   });
@@ -49,7 +59,35 @@ describe('saving a playbook as a skill', () => {
     const result = await gateway.savePlaybookSkill('ws', suggestion);
     expect(result).toMatchObject({ error: expect.stringContaining('already exists') });
     expect(store.get('playbook-notes')).toBeUndefined();
-    expect(await gateway.savePlaybookSkill('ws', suggestion, 'notes-two')).toEqual({ name: 'playbook-notes-two' });
+    expect(await gateway.savePlaybookSkill('ws', suggestion, 'notes-two')).toEqual({ name: 'playbook-notes-two', scope: 'project' });
+  });
+});
+
+describe('saving with a scope', () => {
+  it('saves a global suggestion into the home directory, or where the user says', async () => {
+    const { gateway, store, globalStore, home, workingDir, suggestion } = await setup();
+    expect(await gateway.savePlaybookSkill('ws', { ...suggestion, scope: 'global' })).toEqual({ name: 'playbook-notes', scope: 'global' });
+    expect(globalStore.get('playbook-notes')).toBeDefined();
+    expect(fs.existsSync(path.join(playbookSkillDir(home, 'playbook-notes'), 'SKILL.md'))).toBe(true);
+    // The user's "project" reply overrides a global suggestion.
+    expect(await gateway.savePlaybookSkill('ws', { ...suggestion, name: 'deploy', scope: 'global' }, undefined, 'project'))
+      .toEqual({ name: 'playbook-deploy', scope: 'project' });
+    expect(store.get('playbook-deploy')).toBeDefined();
+    expect(fs.existsSync(playbookSkillDir(workingDir, 'playbook-deploy'))).toBe(true);
+  });
+
+  it('refuses a name already used in the other scope', async () => {
+    const { gateway, suggestion } = await setup();
+    await gateway.savePlaybookSkill('ws', { ...suggestion, scope: 'global' });
+    expect(await gateway.savePlaybookSkill('ws', suggestion, undefined, 'project'))
+      .toMatchObject({ error: expect.stringContaining('already exists') });
+  });
+
+  it('suggests global for a web-only procedure even when the namer says project', async () => {
+    const { gateway, store } = await setup();
+    const members = [{ runId: 'r', promptSummary: 'p', outputPreview: '', timestamp: 0, mode: 'solo',
+      steps: [{ tool: 'browser_navigate', args: { url: { kind: 'url', host: 'x.com' } } }] }];
+    expect(await gateway.suggestScope(store, members, 'project')).toBe('global');
   });
 });
 
@@ -61,6 +99,13 @@ describe('after a run', () => {
     expect(store.get('playbook-notes')).toMatchObject({ useCount: 1, successSignals: { cleanRuns: 1, corrections: 0 } });
     await pass({ toolCalls: [{ type: 'tool_start', tool: 'Bash', input: { command: 'ls' } }] });
     expect(store.get('playbook-notes')!.useCount).toBe(1);
+  });
+
+  it('counts a global playbook skill the agent used', async () => {
+    const { gateway, globalStore, suggestion, pass } = await setup();
+    await gateway.savePlaybookSkill('ws', { ...suggestion, scope: 'global' });
+    await pass({ toolCalls: [{ type: 'tool_start', tool: 'Skill', input: { skill: 'playbook-notes' } }] });
+    expect(globalStore.get('playbook-notes')!.useCount).toBe(1);
   });
 
   it('removes the SKILL.md of a playbook that cleanup archives', async () => {

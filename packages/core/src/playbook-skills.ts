@@ -1,8 +1,10 @@
 // packages/core/src/playbook-skills.ts
 //
 // A saved playbook IS an agent skill: Codey writes it as
-// `<project>/.codey/skills/playbook-<name>/SKILL.md` and links it into every
-// agent's discovery directory. The agent decides when to use it, in whatever
+// `<root>/.codey/skills/playbook-<name>/SKILL.md` and links it into every
+// agent's discovery directory. `root` is the workspace checkout for a project
+// playbook and the user's home directory for a global one — the layout below
+// it is the same, only the sync differs. The agent decides when to use it, in whatever
 // language the user writes. The SkillStore stays the ledger (versions,
 // counters); the SKILL.md is what agents read.
 import { execFile } from 'child_process';
@@ -12,7 +14,8 @@ import * as path from 'path';
 import { promisify } from 'util';
 import { atomicWrite } from './utils/fs';
 import { SkillEntry, SkillStore } from './skill-crystallizer';
-import { CODEY_SKILLS_SUBDIR, CODEY_SKILL_DISCOVERY_SUBDIRS, PLAYBOOK_PREFIX, syncCodeyProjectSkills } from './agents/codey-skills';
+import { ProcedureInput, TraceStep, clusterProcedures } from './playbook-induction';
+import { CODEY_SKILLS_SUBDIR, CODEY_SKILL_DISCOVERY_SUBDIRS, PLAYBOOK_PREFIX, syncCodeyGlobalSkills, syncCodeyProjectSkills } from './agents/codey-skills';
 
 const execFileAsync = promisify(execFile);
 
@@ -25,6 +28,21 @@ const EXCLUDE_BLOCK = `${EXCLUDE_BEGIN}
 ${CODEY_SKILL_DISCOVERY_SUBDIRS.map(d => `/${d}/${PLAYBOOK_PREFIX}*`).join('\n')}
 # <<< codey learned skills
 `;
+
+/** Where a playbook applies: its own workspace, or every project. */
+export type PlaybookScope = 'project' | 'global';
+
+/** A ledger paired with where its SKILL.md files live. */
+export interface PlaybookHome {
+  scope: PlaybookScope;
+  store: SkillStore;
+  /** Workspace checkout (project) or the user's home directory (global). */
+  root: string;
+}
+
+function syncScope(root: string, scope: PlaybookScope) {
+  return scope === 'global' ? syncCodeyGlobalSkills(root) : syncCodeyProjectSkills(root);
+}
 
 export function playbookSkillName(name: string): string {
   return name.startsWith(PLAYBOOK_PREFIX) ? name : `${PLAYBOOK_PREFIX}${name}`;
@@ -136,21 +154,41 @@ export async function ensureLocalExclude(store: SkillStore, workingDir: string):
   store.recordLocalExclude(workingDir);
 }
 
-/** Write (or rewrite) a playbook's SKILL.md and expose it to every agent. */
-export async function writePlaybookSkill(store: SkillStore, skill: SkillEntry, workingDir: string): Promise<void> {
-  const file = skillFile(workingDir, skill.name);
+/** Write (or rewrite) a playbook's SKILL.md and expose it to every agent.
+ *  Only a project skill needs the git exclude; a global one lives in home. */
+export async function writePlaybookSkill(
+  store: SkillStore, skill: SkillEntry, root: string, scope: PlaybookScope = 'project',
+): Promise<void> {
+  const file = skillFile(root, skill.name);
   const body = renderPlaybookSkill(skill);
-  await ensureLocalExclude(store, workingDir);
+  if (scope === 'project') await ensureLocalExclude(store, root);
   await fsp.mkdir(path.dirname(file), { recursive: true });
   await atomicWrite(file, body);
   store.setSkillHash(skill.name, hashOf(body));
-  await syncCodeyProjectSkills(workingDir);
+  await syncScope(root, scope);
 }
 
 /** Remove a playbook's SKILL.md; the sync drops the links that pointed at it. */
-export async function removePlaybookSkill(workingDir: string, name: string): Promise<void> {
-  await fsp.rm(playbookSkillDir(workingDir, name), { recursive: true, force: true });
-  await syncCodeyProjectSkills(workingDir);
+export async function removePlaybookSkill(root: string, name: string, scope: PlaybookScope = 'project'): Promise<void> {
+  await fsp.rm(playbookSkillDir(root, name), { recursive: true, force: true });
+  await syncScope(root, scope);
+}
+
+/** Move a playbook between scopes, keeping its history and counters. Refuses
+ *  when the target already has that name, in its ledger or on disk. */
+export async function movePlaybookSkill(from: PlaybookHome, to: PlaybookHome, name: string): Promise<void> {
+  const skill = from.store.get(name);
+  if (!skill) throw new Error(`Playbook not found: ${name}`);
+  if (to.store.get(name) || await playbookNameTaken(to.root, name)) {
+    throw new Error(`A skill named "${name}" already exists there. Rename one of them first.`);
+  }
+  // Fold a pending hand edit into the history before the file moves.
+  await absorbPlaybookEdit(from.store, name, from.root);
+  to.store.adopt({ ...skill, skillHash: undefined });
+  from.store.remove(name);
+  await removePlaybookSkill(from.root, name, from.scope);
+  const moved = to.store.get(name)!;
+  if (!moved.archived) await writePlaybookSkill(to.store, moved, to.root, to.scope);
 }
 
 /** If the user edited the SKILL.md since Codey last wrote it, keep that edit
@@ -173,7 +211,9 @@ export async function absorbPlaybookEdit(store: SkillStore, name: string, workin
 /** Bring the ledger and the files in line: older saved playbooks get the
  *  prefix and a SKILL.md, and an active playbook whose file went missing is
  *  written again. Legacy hand-promoted playbooks are left alone. */
-export async function reconcilePlaybookSkills(store: SkillStore, workingDir: string): Promise<string[]> {
+export async function reconcilePlaybookSkills(
+  store: SkillStore, workingDir: string, scope: PlaybookScope = 'project',
+): Promise<string[]> {
   const written: string[] = [];
   for (const skill of store.getActive()) {
     if (skill.promotedToSkill) continue;
@@ -185,7 +225,7 @@ export async function reconcilePlaybookSkills(store: SkillStore, workingDir: str
     try {
       await fsp.access(skillFile(workingDir, skill.name));
     } catch {
-      await writePlaybookSkill(store, skill, workingDir);
+      await writePlaybookSkill(store, skill, workingDir, scope);
       written.push(skill.name);
     }
   }
@@ -208,5 +248,41 @@ export function playbookSkillsUsed(
     if (!skill.name.startsWith(PLAYBOOK_PREFIX)) return false;
     const whole = new RegExp(`(^|[^a-z0-9-])${skill.name}([^a-z0-9-]|$)`);
     return calls.some(text => whole.test(text));
+  });
+}
+
+/** Code-side evidence for a playbook's scope, checked in order before the
+ *  namer's own guess. `crossWorkspace` is true when the same procedure also
+ *  recurs in another workspace's runs. */
+export function suggestPlaybookScope(input: {
+  members: { steps?: TraceStep[] }[];
+  crossWorkspace: boolean;
+  aiScope?: PlaybookScope;
+}): PlaybookScope {
+  if (input.crossWorkspace) return 'global';
+  const steps = input.members.flatMap(m => m.steps ?? []);
+  const shapes = steps.flatMap(step => Object.values(step.args));
+  if (shapes.some(shape => shape.kind === 'path' && shape.inProject === true)) return 'project';
+  const browserOnly = steps.length > 0 && steps.every(step => /(^|__)browser/i.test(step.tool));
+  const webOnly = shapes.some(shape => shape.kind === 'url') && !shapes.some(shape => shape.kind === 'path');
+  if (browserOnly || webOnly) return 'global';
+  return input.aiScope ?? 'project';
+}
+
+/** True when the procedure of `members` also recurs among another
+ *  workspace's recent runs — the strongest sign it is not project-bound.
+ *  `ownRecent` (this workspace's recent runs) is clustered alongside, so a
+ *  tool's rarity is judged against ordinary activity rather than against
+ *  the procedure's own runs alone. */
+export function recursInOtherWorkspaces(
+  members: ProcedureInput[], ownRecent: ProcedureInput[], others: ProcedureInput[][],
+): boolean {
+  const own = new Set(members.map(m => m.runId));
+  const context = [...members, ...ownRecent.filter(t => !own.has(t.runId))];
+  return others.some(other => {
+    if (other.length === 0) return false;
+    const foreign = new Set(other.map(o => o.runId));
+    return clusterProcedures([...context, ...other], { minMembers: 2 }).clusters
+      .some(c => c.runIds.some(id => own.has(id)) && c.runIds.some(id => foreign.has(id)));
   });
 }

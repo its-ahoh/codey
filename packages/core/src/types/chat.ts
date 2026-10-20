@@ -294,6 +294,8 @@ export interface Chat {
       ext?: string;
     }[];
     inducedFrom?: string[];
+    /** Suggested scope; the user's "global"/"project" reply overrides it. */
+    scope?: 'project' | 'global';
   };
   /** Warm CLI sessions retained independently for each agent. `model` records
    *  the most recently used model but is not part of the session identity. */

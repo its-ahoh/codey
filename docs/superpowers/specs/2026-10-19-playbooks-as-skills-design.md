@@ -58,7 +58,7 @@ Playbooks 页面变成"Codey 学出来的 Skill"的管理页：看有哪些、�
 > 🧩 我好像反复在做这件事（"在 X 上发帖"）。要存成**通用** Skill **playbook-post-to-x** 吗？
 > 回 `yes` 保存 · `no` 不要 · `project` 改成只给这个项目 · `rename <新名字>` 换个名字
 
-如果建议的是项目，选项就换成 `global`。Mac 聊天和频道两条路都要支持。之后在 Playbooks 页面也能切换：把目录挪过去，两边各重新同步一次。
+如果建议的是项目，选项就换成 `global`。Mac 聊天和频道两条路都要支持。之后在 Playbooks 页面也能切换：把目录挪过去，两边各重新同步一次。从通用改回项目时，挪到**当前打开的 workspace**。版本历史、使用次数都跟着走；目标那边已经有同名的就拒绝。
 
 ## 5. 项目 Skill 只留在本机
 
@@ -84,7 +84,7 @@ Playbooks 页面变成"Codey 学出来的 Skill"的管理页：看有哪些、�
 
 `workspaces/<名字>/skills/index.json`（`SkillStore`）继续保留，但角色变了：它只是**账本**，记每个 Skill 的版本历史、使用次数、成功次数、范围、`SKILL.md` 的位置。真正给 agent 用的是 `SKILL.md`。
 
-- 通用 Skill 的账本放在 `~/.codey/skills-ledger/index.json`（PR B）。它不属于任何一个 workspace，所以不能放在 workspace 里；也不能放进 `~/.codey/skills/`，那里的每个目录都会被当成一个 Skill。
+- 通用 Skill 的账本放在 `~/.codey/skills-ledger/skills/index.json`（PR B，跟着 `CODEY_HOME` 走）。它不属于任何一个 workspace，所以不能放在 workspace 里；也不能放进 `~/.codey/skills/`，那里的每个目录都会被当成一个 Skill。
 - **你手动改了 `SKILL.md`**：Codey 每次写文件都会记下内容的指纹。下次要动这个文件之前（进化、回滚、恢复），先比一下指纹。对不上就说明你改过，Codey 会**把你改的内容存成一个新版本**，以后在这一版的基础上继续进化。你的改动永远留在版本历史里，随时能回滚到你那一版。手动改过的 Skill 不会被自动清理。
 
 ## 7. 怎么知道用过
