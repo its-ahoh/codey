@@ -89,10 +89,18 @@ export function addExternalMcpServers(
   };
 }
 
+/** Optional desktop-owned capabilities live exactly as long as one adapter run. */
+export interface AgentRunLease {
+  request: AgentRequest;
+  dispose(): Promise<void>;
+}
+export type AgentRunLeaseProvider = (agent: CodingAgent, request: AgentRequest) => Promise<AgentRunLease | undefined>;
+
 // Agent factory
 export class AgentFactory {
   private agents: Map<CodingAgent, CodingAgentAdapter> = new Map();
   private envProvider?: (agent: CodingAgent) => Record<string, string> | undefined;
+  private runLeaseProvider?: AgentRunLeaseProvider;
   private externalMcpProvider?: () => Record<string, McpServerSpec> | undefined;
 
   constructor() {
@@ -125,6 +133,10 @@ export class AgentFactory {
    */
   setExternalMcpProvider(provider: () => Record<string, McpServerSpec> | undefined): void {
     this.externalMcpProvider = provider;
+  }
+
+  setRunLeaseProvider(provider: AgentRunLeaseProvider): void {
+    this.runLeaseProvider = provider;
   }
 
   resetSessions(): void {
@@ -191,6 +203,14 @@ export class AgentFactory {
       }
     }
 
-    return adapter.run(request);
+    let lease: AgentRunLease | undefined;
+    try {
+      lease = await this.runLeaseProvider?.(agent, request);
+      return await adapter.run(lease?.request ?? request);
+    } catch (error) {
+      return { success: false, output: '', error: error instanceof Error ? error.message : String(error) };
+    } finally {
+      await lease?.dispose();
+    }
   }
 }

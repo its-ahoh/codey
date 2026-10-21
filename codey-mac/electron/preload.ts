@@ -2,6 +2,24 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { CoreState } from './core-state'
 
 contextBridge.exposeInMainWorld('codey', {
+  computer: {
+    status: () => ipcRenderer.invoke('computer:status'),
+    armStream: (sessionId: string, window: string) => ipcRenderer.invoke('computer:armStream', sessionId, window),
+    streamStopped: (streamId: string) => ipcRenderer.invoke('computer:streamStopped', streamId),
+    handoff: (sessionId: string, window: string, human: boolean, streamId: string) => ipcRenderer.invoke('computer:handoff', sessionId, window, human, streamId),
+    input: (sessionId: string, window: string, args: unknown, streamId: string, controlVersion: number) => ipcRenderer.invoke('computer:input', sessionId, window, args, streamId, controlVersion),
+    preview: () => ipcRenderer.invoke('computer:preview'),
+    view: (command: unknown) => ipcRenderer.invoke('computer:view', command),
+    configure: (enabled: boolean, apps: unknown) => ipcRenderer.invoke('computer:configure', enabled, apps),
+    permissions: () => ipcRenderer.invoke('computer:permissions'),
+    pickApp: () => ipcRenderer.invoke('computer:pickApp'),
+    stop: () => ipcRenderer.invoke('computer:stop'),
+    onChanged: (handler: (state: unknown) => void) => {
+      const listener = (_event: unknown, state: unknown) => handler(state)
+      ipcRenderer.on('computer:changed', listener)
+      return () => ipcRenderer.removeListener('computer:changed', listener)
+    },
+  },
   bots: {
     list: () => ipcRenderer.invoke('bots:list'),
     get: (name: string) => ipcRenderer.invoke('bots:get', name),

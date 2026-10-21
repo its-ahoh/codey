@@ -1,3 +1,5 @@
+import { ComputerDesktopPanel } from './components/ComputerDesktopPanel'
+import { ComputerControlIndicator } from './components/ComputerTab'
 import React, { useEffect, useState } from 'react'
 import { ChatTab } from './components/ChatTab'
 import { BotListPanel } from './components/BotListPanel'
@@ -384,6 +386,7 @@ const Shell: React.FC = () => {
             </div>
           )}
         </div>
+        <ComputerDesktopPanel />
         {settingsOpen && <SettingsOverlay initialTab={settingsTab} onClose={() => { setSettingsOpen(false); setSettingsTab(undefined); refreshWorkspaces(); refreshChats(); window.dispatchEvent(new Event('codey:bots-changed')) }} />}
         {automationsOpen && (
           <AutomationsView
@@ -438,6 +441,7 @@ const Shell: React.FC = () => {
 
 const App: React.FC = () => (
   <ChatsProvider>
+    <ComputerControlIndicator />
     <QuickQuestionProvider>
       {/* Above the chat-keyed subtree: a spoken turn outlives the chat view it
           started in, so switching chats can't cut off its reply. */}

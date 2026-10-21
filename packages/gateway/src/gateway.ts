@@ -1,6 +1,7 @@
 import { canUseAideForFirstRoute, routeAutomaticFirst } from './automatic-first-route';
 import { TaskBriefCache } from './task-brief-cache';
 import { openingChatTitle } from './chat-title';
+import type { AgentRunLeaseProvider } from "@codey/core";
 import { botOutputStream } from './bot-output';
 import { teamInteractionResponse } from './team-interaction';
 import { inheritWorktreeMemory } from './worktree-memory';
@@ -806,6 +807,10 @@ export class Codey {
   }
 
   /** Apply runtime config changes (e.g. from the API). */
+  setAgentRunLeaseProvider(provider: AgentRunLeaseProvider): void {
+    this.agentFactory.setRunLeaseProvider(provider);
+  }
+
   async applyConfig(config: GatewayConfig): Promise<void> {
     const prevChannels = this.config.channels;
     this.config = config;
