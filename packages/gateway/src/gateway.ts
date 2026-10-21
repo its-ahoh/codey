@@ -5353,7 +5353,9 @@ Example: /model gpt-4.1 write a Python script`;
           signal: req.signal,
         });
           outputStream.complete(response.output);
+          // A later round on the primary agent must not keep an earlier fallback.
           if (response.fallback) botFallback.set(botName, response.fallback);
+          else botFallback.delete(botName);
           return response;
         },
         advisorRunner: async req => {
