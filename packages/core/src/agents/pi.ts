@@ -5,6 +5,7 @@ import { AgentSpawnError } from '../errors';
 import { ObservedToolEvent, ToolCallCollector } from './tool-events';
 import { ChecklistTracker, checklistFromTodos, isChecklistTool } from './checklist';
 import { piEffortArgs } from './effort';
+import { piToolPolicyArgs } from './tool-policy';
 import { agentSpawnOptions, cleanupProcessTreeAfterClose, terminateProcessTree, withForegroundPolicy } from './process-tree';
 
 /**
@@ -82,7 +83,7 @@ export interface PiEvent {
 /** The argv for one pi run, minus the binary. Split out so the flag mapping is
  *  testable without spawning anything. */
 export function piArgs(
-  request: Pick<AgentRequest, 'prompt' | 'model' | 'effort' | 'skipPermissions' | 'resumeSessionId'>,
+  request: Pick<AgentRequest, 'prompt' | 'model' | 'effort' | 'skipPermissions' | 'resumeSessionId' | 'toolPolicy'>,
 ): string[] {
   const args = ['--mode', 'json'];
 
@@ -95,7 +96,10 @@ export function piArgs(
     args.push('--model', request.model.model);
   }
   args.push(...piEffortArgs(request.effort));
-  if (request.skipPermissions) {
+  // `-a` loads project-local extensions, which could add tools back.
+  if (request.toolPolicy) {
+    args.push(...piToolPolicyArgs(request.toolPolicy));
+  } else if (request.skipPermissions) {
     args.push('-a');
   }
   args.push(withForegroundPolicy(request.prompt));

@@ -598,8 +598,10 @@ export class Codey {
     return { agent, model };
   }
 
+  /** Coordination calls (Advisor, Judge, distiller) answer from the prompt
+   *  alone. Tools are removed at the CLI, not just forbidden in the prompt. */
   private advisorRunner = (req: AgentRequest): Promise<AgentResponse> => {
-    return this.runWithFallback(req.agent, req);
+    return this.runWithFallback(req.agent, { ...req, toolPolicy: 'none' });
   };
 
   /** Conservative gate for Sequential/Graph teams. Invalid, failed, or
@@ -639,6 +641,7 @@ export class Codey {
         agent,
         model,
         context: { workingDir },
+        toolPolicy: 'none',
         onStream: () => {},
         onThinking: () => {},
         onStatus: () => {},
@@ -5365,6 +5368,7 @@ Example: /model gpt-4.1 write a Python script`;
             agent: mAgent,
             model: mModel,
             context: { workingDir },
+            toolPolicy: 'none',
             onStream: () => {},
             onThinking: () => {},
             onStatus: () => {},
@@ -6146,6 +6150,7 @@ Example: /model gpt-4.1 write a Python script`;
         context: { workingDir },
         skipPermissions: true,
         allowedTools: READ_ONLY_TOOLS,
+        toolPolicy: 'read-only',
         onStream,
         onStatus,
         signal: abortController.signal,
