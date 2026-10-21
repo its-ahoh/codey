@@ -47,7 +47,7 @@ import { TurnQueue, QueuedMessage, Surface } from './turn-queue';
 import { renderQuestion, renderCancelNotice, stripAskMarker } from './team-pause';
 import { resolveChoiceDigit } from './digit-mapping';
 import { ParallelTeamRunner, ParallelFinalEvent } from './parallel-team';
-import { ChannelEmitter, ChatEmitter, TeamEmitter } from './team-emitter';
+import { ChannelEmitter, ChatEmitter, TeamEmitter, BotRunResult } from './team-emitter';
 import { BotMessageEmitter } from './bot-message-emitter';
 
 interface ParsedCommand {
@@ -4015,8 +4015,8 @@ Example: /model gpt-4.1 write a Python script`;
       | { kind: 'route'; step: number; bot: string; reason: string; isRevision: boolean }
       | { kind: 'blackboard'; step: number; bot: string; summary: string; blackboard: BlackboardSnapshot }
     ) => void | Promise<void>,
-    runBot: (bot: string, prompt: string, codingAgent: CodingAgent, modelConfig: ModelConfig | undefined, blackboard: TeamBlackboard) => Promise<{ success: boolean; output: string; error?: string; thinking?: string }>,
-    onStepDone?: (d: { step: number; bot: string; failed: boolean; error?: string }) => void,
+    runBot: (bot: string, prompt: string, codingAgent: CodingAgent, modelConfig: ModelConfig | undefined, blackboard: TeamBlackboard) => Promise<BotRunResult>,
+    onStepDone?: (d: { step: number; bot: string; failed: boolean; error?: string; fallback?: BotRunResult['fallback'] }) => void,
     coordinator?: { agent: CodingAgent; model?: ModelConfig },
     /** The user's own words, without composed chat context; gates the Aide first route. */
     firstRouteTask?: string,
@@ -4191,7 +4191,7 @@ Example: /model gpt-4.1 write a Python script`;
       if (deltaSummary) await perStep({ kind: 'blackboard', step, bot: turnNext, summary: deltaSummary, blackboard: blackboard.toJSON() });
 
       parts.push({ step, bot: turnNext, output: cleanOutput, isRevision });
-      onStepDone?.({ step, bot: turnNext, failed: false });
+      onStepDone?.({ step, bot: turnNext, failed: false, fallback: response.fallback });
       seenBots.add(turnNext);
       lastBot = turnNext;
       lastOutput = cleanOutput;
@@ -4339,7 +4339,7 @@ Example: /model gpt-4.1 write a Python script`;
       modelConfig: ModelConfig | undefined,
       blackboard: TeamBlackboard,
       onThinking?: (text: string) => void,
-    ): Promise<{ success: boolean; output: string; error?: string; thinking?: string }> => {
+    ): Promise<BotRunResult> => {
       const onStream = handler?.streamText ? (text: string) => handler.streamText!(text) : undefined;
       const { response } = await this.runBotStep({
         conversationId: teamConv,
@@ -4356,7 +4356,7 @@ Example: /model gpt-4.1 write a Python script`;
         skipPermissions: !this.tuiMode && this.getSkipPermissions(),
       });
       return response.success
-        ? { success: true, output: response.output, thinking: response.thinking || undefined }
+        ? { success: true, output: response.output, thinking: response.thinking || undefined, fallback: response.fallback }
         : { success: false, output: '', error: response.error };
     };
 
@@ -4554,7 +4554,7 @@ Example: /model gpt-4.1 write a Python script`;
       modelConfig: ModelConfig | undefined,
       blackboard: TeamBlackboard,
       onThinking?: (text: string) => void,
-    ): Promise<{ success: boolean; output: string; error?: string; thinking?: string }> => {
+    ): Promise<BotRunResult> => {
       const { response } = await this.runBotStep({
         conversationId: teamConv,
         botName,
@@ -4574,7 +4574,7 @@ Example: /model gpt-4.1 write a Python script`;
         skipPermissions: !this.tuiMode && this.getSkipPermissions(),
       });
       return response.success
-        ? { success: true, output: response.output, thinking: response.thinking || undefined }
+        ? { success: true, output: response.output, thinking: response.thinking || undefined, fallback: response.fallback }
         : { success: false, output: '', error: response.error };
     };
 
@@ -4626,10 +4626,10 @@ Example: /model gpt-4.1 write a Python script`;
         });
         const rendered2 = renderQuestion(memberName, ask.question, ask.options);
         await emitter.notify(rendered2.text, rendered2.choices);
-        emitter.endBot?.('askedUser', { nextUserAction: { text: ask.question, options: ask.options } });
+        emitter.endBot?.('askedUser', { nextUserAction: { text: ask.question, options: ask.options }, fallback: response.fallback });
         return emitter.transcript;
       }
-      emitter.endBot?.('done');
+      emitter.endBot?.('done', { fallback: response.fallback });
       const carryForNext = `Previous bot output:\n${response.output}\n\nYour task: ${pending.task}`;
       const priorResults: string[] = [`**${memberName}**: ${response.output}`];
       await this.runAllMembersInOrder(
@@ -4747,10 +4747,10 @@ Example: /model gpt-4.1 write a Python script`;
       });
       const rendered3 = renderQuestion(turn.next, ask.question, ask.options);
       await emitter.notify(rendered3.text, rendered3.choices);
-      emitter.endBot?.('askedUser', { nextUserAction: { text: ask.question, options: ask.options } });
+      emitter.endBot?.('askedUser', { nextUserAction: { text: ask.question, options: ask.options }, fallback: response.fallback });
       return emitter.transcript;
     }
-    emitter.endBot?.('done');
+    emitter.endBot?.('done', { fallback: response.fallback });
     await this.notifyTeamFinal(emitter, pending.teamName, pending.task, newParts, signal);
     return emitter.transcript;
   }
@@ -4769,7 +4769,7 @@ Example: /model gpt-4.1 write a Python script`;
       modelConfig: ModelConfig | undefined,
       blackboard: TeamBlackboard,
       onThinking?: (text: string) => void,
-    ) => Promise<{ success: boolean; output: string; error?: string; thinking?: string }>,
+    ) => Promise<BotRunResult>,
     opts: { startIndex?: number; startStep?: number; startCarry?: string; priorResults?: string[]; blackboard?: TeamBlackboard; conversationId?: string; signal?: AbortSignal; fallbackAgent?: CodingAgent; fallbackModel?: ModelConfig; teamTurnId?: string; firstReason?: string } = {},
   ): Promise<{ thinkingByStep: Record<number, string> }> {
     const botManager = this.workspaceManager.getBotManager();
@@ -4841,11 +4841,11 @@ Example: /model gpt-4.1 write a Python script`;
         this.persistPendingTeam(chatId, pending);
         const rendered4 = renderQuestion(bot.name, ask.question, ask.options);
         await emitter.notify(rendered4.text, rendered4.choices);
-        emitter.endBot?.('askedUser', { nextUserAction: { text: ask.question, options: ask.options } });
+        emitter.endBot?.('askedUser', { nextUserAction: { text: ask.question, options: ask.options }, fallback: response.fallback });
         return { thinkingByStep };
       }
       results.push(`**${bot.name}**: ${cleanOutput}`);
-      emitter.endBot?.('done');
+      emitter.endBot?.('done', { fallback: response.fallback });
       executionStep++;
       currentTask = `Previous bot output:\n${cleanOutput}\n\nYour task: ${task}`;
     }
@@ -4918,7 +4918,7 @@ Example: /model gpt-4.1 write a Python script`;
       codingAgent: CodingAgent,
       modelConfig: ModelConfig | undefined,
       blackboard: TeamBlackboard,
-    ) => Promise<{ success: boolean; output: string; error?: string }>,
+    ) => Promise<BotRunResult>,
     teamTurnId?: string,
     binding?: { chatId: string; baseConv: string },
   ): Promise<void> {
@@ -4965,7 +4965,7 @@ Example: /model gpt-4.1 write a Python script`;
       codingAgent: CodingAgent,
       modelConfig: ModelConfig | undefined,
       blackboard: TeamBlackboard,
-    ) => Promise<{ success: boolean; output: string; error?: string }>,
+    ) => Promise<BotRunResult>,
     opts?: {
       signal?: AbortSignal;
       fallbackAgent?: CodingAgent;
@@ -5059,11 +5059,11 @@ Example: /model gpt-4.1 write a Python script`;
         const askBotName = this.workspaceManager.getBotManager().getBot(botName)?.name ?? botName;
         const rendered = renderQuestion(askBotName, ask.question, ask.options);
         await emitter.notify(rendered.text, rendered.choices);
-        emitter.endBot?.('askedUser', { nextUserAction: { text: ask.question, options: ask.options } });
+        emitter.endBot?.('askedUser', { nextUserAction: { text: ask.question, options: ask.options }, fallback: resp.fallback });
         return emitter.transcript;
       }
 
-      emitter.endBot?.('done');
+      emitter.endBot?.('done', { fallback: resp.fallback });
 
       // Count this completed (non-paused) run toward the bot's self-loop cap.
       state = { ...state, runStreak: state.runStreak + 1 };
@@ -5109,7 +5109,7 @@ Example: /model gpt-4.1 write a Python script`;
       modelConfig: ModelConfig | undefined,
       blackboard: TeamBlackboard,
       onThinking?: (text: string) => void,
-    ) => Promise<{ success: boolean; output: string; error?: string; thinking?: string }>,
+    ) => Promise<BotRunResult>,
     chatAgent?: CodingAgent,
     chatModel?: ModelConfig,
     signal?: AbortSignal,
@@ -5199,7 +5199,7 @@ Example: /model gpt-4.1 write a Python script`;
       modelConfig: ModelConfig | undefined,
       blackboard: TeamBlackboard,
       onThinking?: (text: string) => void,
-    ): Promise<{ success: boolean; output: string; error?: string; thinking?: string }> => {
+    ): Promise<BotRunResult> => {
       const { response } = await this.runBotStep({
         conversationId: teamConv,
         browserChatId: chatId,
@@ -5249,7 +5249,7 @@ Example: /model gpt-4.1 write a Python script`;
       // endBot is about to freeze this bot's toolCalls into its message.
       await teamStatusChain;
       return response?.success
-        ? { success: true, output: this.formatAgentResponse(response), thinking: response.thinking || undefined }
+        ? { success: true, output: this.formatAgentResponse(response), thinking: response.thinking || undefined, fallback: response.fallback }
         : { success: false, output: '', error: response?.error };
     };
 
@@ -5310,6 +5310,8 @@ Example: /model gpt-4.1 write a Python script`;
       // Pre-create one stub message per bot so streaming events are routed
       // per-bot. Serial modes use beginBot; parallel pre-creates them all.
       const botStep = new Map<string, number>(team.members.map((w, i) => [w, i + 1]));
+      // Last fallback per bot, so its bubble shows who actually answered.
+      const botFallback = new Map<string, NonNullable<AgentResponse['fallback']>>();
 
       const runner = new ParallelTeamRunner({
         workspacesRoot,
@@ -5351,6 +5353,9 @@ Example: /model gpt-4.1 write a Python script`;
           signal: req.signal,
         });
           outputStream.complete(response.output);
+          // A later round on the primary agent must not keep an earlier fallback.
+          if (response.fallback) botFallback.set(botName, response.fallback);
+          else botFallback.delete(botName);
           return response;
         },
         advisorRunner: async req => {
@@ -5411,7 +5416,7 @@ Example: /model gpt-4.1 write a Python script`;
           for (const bot of team.members) {
             botMsgs.endBot(
               completedNormally ? 'done' : 'failed',
-              completedNormally ? undefined : { failureReason: `Parallel discussion ended: ${ev.reason}` },
+              completedNormally ? { fallback: botFallback.get(bot) } : { failureReason: `Parallel discussion ended: ${ev.reason}` },
               bot,
             );
           }
@@ -5424,7 +5429,7 @@ Example: /model gpt-4.1 write a Python script`;
         },
         onBotDone: (bot, ok, error) => botMsgs.endBot(
           ok ? 'done' : 'failed',
-          ok ? undefined : { failureReason: error ?? 'Bot failed without an error message' },
+          ok ? { fallback: botFallback.get(bot) } : { failureReason: error ?? 'Bot failed without an error message' },
           bot,
         ),
       });
@@ -5480,7 +5485,7 @@ Example: /model gpt-4.1 write a Python script`;
           }
         },
         runOneBot,
-        (d) => botMsgs.endBot(d.failed ? 'failed' : 'done', d.failed ? { failureReason: d.error ?? 'Bot failed without an error message' } : undefined),
+        (d) => botMsgs.endBot(d.failed ? 'failed' : 'done', d.failed ? { failureReason: d.error ?? 'Bot failed without an error message' } : { fallback: d.fallback }),
         this.getAdvisorAgentAndModel(),
         opts.routingTask,
       );

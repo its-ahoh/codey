@@ -121,6 +121,33 @@ describe('BotMessageEmitter — serial', () => {
     expect(waiting.patched[0].patch.botNextUserAction).toEqual({ text: 'Choose a target', options: ['A', 'B'] });
   });
 
+  it('a fallback swaps the bubble to the agent and model that answered', () => {
+    const h = harness();
+    h.em.beginBot({ step: 1, bot: 'a', agent: 'claude-code', model: 'model-a' });
+    const fallback = { from: 'claude-code(model-a)', to: 'codex(model-b)', reason: 'Rate limit reached' };
+    h.em.endBot('done', { fallback });
+    expect(h.patched.at(-1)!.patch).toMatchObject({ agent: 'codex', model: 'model-b', fallback });
+    expect(h.events.at(-1)).toMatchObject({ type: 'bot_end', status: 'done', agent: 'codex', model: 'model-b', fallback });
+  });
+
+  it('keeps the planned agent and model when no fallback happened', () => {
+    const h = harness();
+    h.em.beginBot({ step: 1, bot: 'a', agent: 'claude-code', model: 'model-a' });
+    h.em.endBot('done');
+    const patch = h.patched.at(-1)!.patch;
+    expect(patch).not.toHaveProperty('agent');
+    expect(patch).not.toHaveProperty('model');
+    expect(patch).not.toHaveProperty('fallback');
+  });
+
+  it('routes a parallel bot fallback to that bot only', () => {
+    const h = harness('roundtable');
+    h.em.teamStart([{ step: 1, bot: 'a' }, { step: 2, bot: 'b' }]);
+    const fallback = { from: 'codex(model-b)', to: 'opencode(model-c)' };
+    h.em.endBot('done', { fallback }, 'b');
+    expect(h.patched.at(-1)).toMatchObject({ id: 'id-2', patch: { agent: 'opencode', model: 'model-c', fallback } });
+  });
+
   it('beginBot auto-finalizes a still-active previous bot as done', () => {
     const h = harness();
     h.em.beginBot({ step: 1, bot: 'a' });

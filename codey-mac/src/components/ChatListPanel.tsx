@@ -1,5 +1,6 @@
 import { SidebarNavigation, SidebarFooter, SidebarAction, type SidebarCommonProps } from './SidebarNavigation'
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useChats } from '../hooks/useChats'
 import { pollWhileVisible } from '../hooks/pollWhileVisible'
 import { apiService } from '../services/api'
@@ -12,6 +13,7 @@ import { UIIcon } from './UIIcons'
 import { moveWorkspace, reconcileWorkspaceOrder } from './workspaceOrder'
 import { ChatHoverCard } from './ChatHoverCard'
 import { buildChatHoverCard } from './chatHoverCardView'
+import { clampFloatingPoint, floatingViewportRight } from './floatingLayer'
 import { visibleChatCount } from './chatListVisible'
 import { useVoiceTurn } from '../hooks/useVoiceTurn'
 
@@ -55,6 +57,47 @@ const DeliveryBadge: React.FC<{ pullRequest?: Chat['pullRequest'] }> = ({ pullRe
     )
   }
   return <span style={{ ...styles.deliveryBadge, color: C.red }} title={`${pr} closed without merge`}><UIIcon name="pull-request" size={12} strokeWidth={2} /></span>
+}
+
+/** A right-click menu. Portalled to <body>: the sidebar root paints through a
+ * backdrop-filter, which makes it the containing block AND the stacking context
+ * for fixed descendants — a menu left inside it is positioned against the
+ * sidebar's box (not the viewport), gets clipped by the sidebar's overflow, and
+ * renders behind the chat view. The position is measured and clamped so the
+ * menu stays fully inside the visible renderer region. */
+const ContextMenu: React.FC<{ x: number; y: number; children: React.ReactNode }> = ({ x, y, children }) => {
+  const ref = useRef<HTMLDivElement | null>(null)
+  const [pos, setPos] = useState({ left: x, top: y, ready: false })
+
+  // Re-clamp whenever the menu's size changes too (the chat menu swaps to a
+  // different sub-view in place), not just when it opens.
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const clamp = () => {
+      const { left, top } = clampFloatingPoint(
+        x, y, el.offsetWidth, el.offsetHeight,
+        floatingViewportRight(), window.innerHeight,
+      )
+      setPos(prev => (prev.ready && prev.left === left && prev.top === top ? prev : { left, top, ready: true }))
+    }
+    clamp()
+    const observer = new ResizeObserver(clamp)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [x, y])
+
+  return createPortal(
+    <div
+      ref={ref}
+      style={{ ...styles.menu, top: pos.top, left: pos.left, visibility: pos.ready ? 'visible' : 'hidden' }}
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {children}
+    </div>,
+    document.body,
+  )
 }
 
 export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomations, onOpenBrowser, onOpenTools, onSelectChat, automationsUnseenCount, activeChatId }) => {
@@ -643,11 +686,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
         />
       )}
       {wsMenu && (
-        <div
-          style={{ ...styles.menu, top: wsMenu.y, left: wsMenu.x }}
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={(e) => e.stopPropagation()}
-        >
+        <ContextMenu x={wsMenu.x} y={wsMenu.y}>
           <div style={styles.menuHeader}>{wsMenu.workspace}</div>
           <button style={styles.menuItem} onClick={() => handleNewChat(wsMenu.workspace).then(closeWsMenu)}><UIIcon name="add" size={14} />New chat</button>
           <button
@@ -668,14 +707,10 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
             disabled={wsMenu.workspace === 'default'}
             onClick={() => deleteWs(wsMenu.workspace)}
           ><UIIcon name="trash" size={14} />Delete workspace</button>
-        </div>
+        </ContextMenu>
       )}
       {chatMenu && (
-        <div
-          style={{ ...styles.menu, top: chatMenu.y, left: chatMenu.x }}
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={(e) => e.stopPropagation()}
-        >
+        <ContextMenu x={chatMenu.x} y={chatMenu.y}>
           <div style={styles.menuHeader}>{chatMenu.chat.title?.trim() || 'New Chat'}</div>
           {chatMenuView === 'main' ? (
             <>
@@ -741,7 +776,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
               })}
             </>
           )}
-        </div>
+        </ContextMenu>
       )}
       <style>{`
         @keyframes codey-pulse-dot {

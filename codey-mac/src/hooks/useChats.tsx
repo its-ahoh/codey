@@ -95,7 +95,7 @@ type Action =
   | { type: 'chatRedirect'; chat: Chat; target: Chat }
   | { type: 'teamStart'; taskId?: string; chatId: string; teamTurnId: string; teamName: string; mode: 'sequential' | 'graph' | 'auto' | 'roundtable'; bots?: Array<{ messageId: string; step: number; bot: string; agent?: ChatMessage['agent']; model?: string }> }
   | { type: 'botStart'; taskId?: string; chatId: string; teamTurnId: string; messageId: string; step: number; bot: string; agent?: ChatMessage['agent']; model?: string; reason?: string }
-  | { type: 'botEnd'; chatId: string; messageId: string; step: number; status: 'running' | 'done' | 'failed' | 'askedUser'; failureReason?: string; nextUserAction?: ChatMessage['botNextUserAction'] }
+  | { type: 'botEnd'; chatId: string; messageId: string; step: number; status: 'running' | 'done' | 'failed' | 'askedUser'; failureReason?: string; nextUserAction?: ChatMessage['botNextUserAction']; agent?: ChatMessage['agent']; model?: string; fallback?: ChatMessage['fallback'] }
   | { type: 'blackboardUpdate'; chatId: string; teamTurnId: string; messageId: string; blackboard: BlackboardSnapshot }
   | { type: 'teamEnd'; chatId: string; teamTurnId: string; summary: TeamRunSummary; taskBrief?: TaskBrief }
 
@@ -511,7 +511,9 @@ export function reducer(state: State, action: Action): State {
     case 'botEnd': {
       const chat = state.chats[action.chatId]
       if (!chat) return state
-      const messages = chat.messages.map(m => m.id === action.messageId ? { ...m, botStatus: action.status, isComplete: action.status !== 'running', botFailureReason: action.failureReason, botNextUserAction: action.nextUserAction } : m)
+      const messages = chat.messages.map(m => m.id === action.messageId ? { ...m, botStatus: action.status, isComplete: action.status !== 'running', botFailureReason: action.failureReason, botNextUserAction: action.nextUserAction,
+        // A fallback agent answered: show who actually did, like a single-agent turn.
+        ...(action.agent ? { agent: action.agent } : {}), ...(action.model ? { model: action.model } : {}), ...(action.fallback ? { fallback: action.fallback } : {}) } : m)
       return { ...state, chats: { ...state.chats, [chat.id]: { ...chat, messages, updatedAt: Date.now() } } }
     }
     case 'blackboardUpdate': {
@@ -899,7 +901,7 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           dispatch({ type: 'botStart', taskId: ev.taskId, chatId: ev.chatId, teamTurnId: ev.teamTurnId, messageId: ev.messageId, step: ev.step, bot: ev.bot, agent: ev.agent, model: ev.model, reason: ev.reason })
           break
         case 'bot_end':
-          dispatch({ type: 'botEnd', chatId: ev.chatId, messageId: ev.messageId, step: ev.step, status: ev.status, failureReason: ev.failureReason, nextUserAction: ev.nextUserAction })
+          dispatch({ type: 'botEnd', chatId: ev.chatId, messageId: ev.messageId, step: ev.step, status: ev.status, failureReason: ev.failureReason, nextUserAction: ev.nextUserAction, agent: ev.agent, model: ev.model, fallback: ev.fallback })
           break
         case 'blackboard_update':
           dispatch({ type: 'blackboardUpdate', chatId: ev.chatId, teamTurnId: ev.teamTurnId, messageId: ev.messageId, blackboard: ev.blackboard })
