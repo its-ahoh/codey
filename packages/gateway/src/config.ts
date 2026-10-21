@@ -218,7 +218,12 @@ export interface GatewayConfigJson {
    * servers. Env values are stored in plaintext, same as `apiKeys`.
    */
   mcpServers?: Record<string, ExternalMcpServerConfig>;
-  notifications?: { enabled?: boolean };
+  /**
+   * `sound`: play a short chime when a chat turn ends (default on).
+   * `soundFile`: user-picked audio file used for every end state; unset means
+   * the built-in macOS sounds.
+   */
+  notifications?: { enabled?: boolean; sound?: boolean; soundFile?: string };
   capture?: { hotkey?: string };
   ui?: { launchAtLogin?: boolean; dockless?: boolean; zoom?: number };
 }
@@ -1049,7 +1054,13 @@ function normalize(raw: Partial<GatewayConfigJson> & { dispatcher?: { agent?: Co
     };
   }
   if (raw.notifications && typeof raw.notifications === 'object') {
-    out.notifications = { enabled: raw.notifications.enabled };
+    out.notifications = {
+      enabled: raw.notifications.enabled,
+      sound: raw.notifications.sound,
+      soundFile: typeof raw.notifications.soundFile === 'string' && raw.notifications.soundFile.trim()
+        ? raw.notifications.soundFile
+        : undefined,
+    };
   }
   if (raw.capture && typeof raw.capture === 'object') {
     out.capture = { hotkey: raw.capture.hotkey };

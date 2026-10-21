@@ -85,6 +85,33 @@ export function decideNotification(ev: NotifyEvent, ctx: NotifyContext): Notific
   return { chatId: ev.chatId, title: withTitle('Codey finished', ctx.chatTitle), body: truncate(mdToPlainText(ev.response ?? ''), MAX_BODY) }
 }
 
+// Turn-end chime. Unlike the banner this is NOT focus-gated: the point is to
+// hear the state change while looking at another window or another chat.
+// A user-pressed stop gets no sound — the user already knows.
+export type TurnSound = 'done' | 'input' | 'error'
+
+export function decideTurnSound(ev: NotifyEvent, ctx: { enabled: boolean }): TurnSound | null {
+  if (!ctx.enabled) return null
+  if (ev.type === 'error') return 'error'
+  if (ev.type !== 'done') return null
+  return ev.userQuestion && ev.userQuestion.options.length >= 1 ? 'input' : 'done'
+}
+
+// macOS system sounds; always present under /System/Library/Sounds.
+export const TURN_SOUND_FILES: Record<TurnSound, string> = {
+  done: '/System/Library/Sounds/Glass.aiff',
+  input: '/System/Library/Sounds/Ping.aiff',
+  error: '/System/Library/Sounds/Basso.aiff',
+}
+
+export const SOUND_FILE_EXTENSIONS = ['aiff', 'aif', 'wav', 'mp3', 'm4a', 'aac', 'caf']
+
+// A user-picked file wins; a file that has since been moved or deleted falls
+// back to the built-in sound rather than going silent.
+export function resolveTurnSoundFile(sound: TurnSound, customFile: string | undefined, exists: (p: string) => boolean): string {
+  return customFile && exists(customFile) ? customFile : TURN_SOUND_FILES[sound]
+}
+
 const TERMINAL_TYPES = new Set(['done', 'error', 'stopped'])
 
 // Per-chat turn state: dedupes notifications (one per turn) and tells the

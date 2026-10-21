@@ -9,7 +9,7 @@ import { findAvailablePort } from './portUtils'
 import { clampZoom, formatZoom, zoomIn, zoomOut, DEFAULT_ZOOM } from './zoom'
 import { initAutoUpdater, registerUpdaterIpc } from './updater'
 import { createCoreStateStore } from './core-state'
-import { decideNotification, createTurnTracker } from './chat-notifications'
+import { decideNotification, createTurnTracker, decideTurnSound, resolveTurnSoundFile, SOUND_FILE_EXTENSIONS, type TurnSound } from './chat-notifications'
 import { decideAutomationNotification, findUnseenRuns, findUnnotifiedRuns } from './automation-notifications'
 import { validateAutomationChatPatch, validateAutomationDraft, validateAutomationPatch } from './automation-validate'
 import { applyEvent, clearAttention, summarize } from './tray-state'
@@ -70,6 +70,8 @@ let isQuitting = false
 let inProcessGateway: Codey | null = null
 const coreStateStore = createCoreStateStore((s) => sendToRenderer('core:state', s))
 const turnTracker = createTurnTracker()
+// Separate tracker so the chime dedupes per turn independently of banners.
+const soundTracker = createTurnTracker()
 let botManager: BotManager | null = null
 let workspaceManager: WorkspaceManager | null = null
 let coreConfigManager: ConfigManager | null = null
@@ -646,6 +648,29 @@ function automationNotificationsAllowed(): boolean {
 // Native macOS notifications for background chats. Decisions are pure
 // (chat-notifications.ts); this is the impure shell: focus check, config
 // read, Notification construction, click/action routing.
+function turnSoundEnabled(): boolean {
+  return ((coreConfigManager?.get() as any)?.notifications?.sound ?? true) as boolean
+}
+// One chime per chat turn when it finishes, errors, or asks for input.
+function maybePlayTurnSound(ev: any) {
+  try {
+    if (!ev || typeof ev.chatId !== 'string') return
+    const sound = decideTurnSound(ev, { enabled: turnSoundEnabled() })
+    const isDuplicate = soundTracker.alreadyNotified(ev.chatId)
+    soundTracker.observe(ev)
+    if (!sound || isDuplicate) return
+    soundTracker.markNotified(ev.chatId)
+    playTurnSound(sound)
+  } catch { /* never let a chime break event fan-out */ }
+}
+function playTurnSound(sound: TurnSound, file?: string) {
+  const custom = file ?? ((coreConfigManager?.get() as any)?.notifications?.soundFile as string | undefined)
+  const target = resolveTurnSoundFile(sound, custom, p => require('fs').existsSync(p))
+  void import('child_process').then(({ execFile }) => {
+    // Cap playback so a long track picked by mistake can't play for minutes.
+    execFile('/usr/bin/afplay', [target], { timeout: 10_000 }, () => { /* best effort */ })
+  })
+}
 function maybeNotify(ev: any) {
   try {
     if (!ev || typeof ev.chatId !== 'string') return
@@ -665,6 +690,8 @@ function maybeNotify(ev: any) {
     const notif = new Notification({
       title: decision.title,
       body: decision.body,
+      // The turn chime already played; don't stack the banner's default sound on it.
+      silent: turnSoundEnabled(),
       actions: decision.actions?.map(a => ({ type: 'button' as const, text: a.label })),
     })
     notif.on('click', openChat)
@@ -1202,6 +1229,7 @@ async function bootInProcessCore() {
     // messages on paired surfaces) to the renderer so the Mac UI stays in sync.
     inProcessGateway.setChatEventListener((ev: any) => {
       sendToRenderer('chats:event', ev)
+      maybePlayTurnSound(ev)
       maybeNotify(ev)
       trayState = applyEvent(trayState, ev)
       scheduleTrayRebuild()
@@ -4376,6 +4404,21 @@ app.whenReady().then(async () => {
   // ── Config IPC ────────────────────────────────────────────────────
   ipcMain.handle('config:get', async () =>
     wrap(async () => coreConfigManager?.get() ?? {})
+  )
+
+  ipcMain.handle('sound:pick', async () =>
+    wrap(async () => {
+      const result = await dialog.showOpenDialog(mainWindow ?? (undefined as any), {
+        title: 'Choose a turn-end sound',
+        buttonLabel: 'Choose',
+        properties: ['openFile'],
+        filters: [{ name: 'Audio', extensions: SOUND_FILE_EXTENSIONS }],
+      })
+      return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0]
+    })
+  )
+  ipcMain.handle('sound:preview', async (_e, file?: string) =>
+    wrap(async () => { playTurnSound('done', typeof file === 'string' ? file : '') })
   )
 
   ipcMain.handle('config:set', async (_e, updates: any) =>

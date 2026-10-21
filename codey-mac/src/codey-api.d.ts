@@ -382,6 +382,12 @@ declare global {
         get: () => Promise<IpcResult<any>>
         set: (updates: any) => Promise<IpcResult<void>>
       }
+      sound: {
+        /** Opens an audio file picker; resolves to the path, or null if cancelled. */
+        pick: () => Promise<IpcResult<string | null>>
+        /** Plays `file`, or the built-in sound when it is empty. */
+        preview: (file?: string) => Promise<IpcResult<void>>
+      }
       models: {
         list: () => Promise<IpcResult<ModelEntry[]>>
         save: (entry: ModelEntry) => Promise<IpcResult<void>>
