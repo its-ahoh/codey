@@ -69,14 +69,22 @@ const ContextMenu: React.FC<{ x: number; y: number; children: React.ReactNode }>
   const ref = useRef<HTMLDivElement | null>(null)
   const [pos, setPos] = useState({ left: x, top: y, ready: false })
 
+  // Re-clamp whenever the menu's size changes too (the chat menu swaps to a
+  // different sub-view in place), not just when it opens.
   useLayoutEffect(() => {
     const el = ref.current
     if (!el) return
-    const { left, top } = clampFloatingPoint(
-      x, y, el.offsetWidth, el.offsetHeight,
-      floatingViewportRight(), window.innerHeight,
-    )
-    setPos({ left, top, ready: true })
+    const clamp = () => {
+      const { left, top } = clampFloatingPoint(
+        x, y, el.offsetWidth, el.offsetHeight,
+        floatingViewportRight(), window.innerHeight,
+      )
+      setPos(prev => (prev.ready && prev.left === left && prev.top === top ? prev : { left, top, ready: true }))
+    }
+    clamp()
+    const observer = new ResizeObserver(clamp)
+    observer.observe(el)
+    return () => observer.disconnect()
   }, [x, y])
 
   return createPortal(
