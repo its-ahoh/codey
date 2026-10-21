@@ -22,6 +22,8 @@ export const AppearanceTab: React.FC = () => {
   const [version, setVersion] = React.useState<string>('')
   const [skipPerms, setSkipPerms] = React.useState<boolean>(true)
   const [notifyEnabled, setNotifyEnabled] = React.useState<boolean>(true)
+  const [turnSound, setTurnSound] = React.useState<boolean>(true)
+  const [soundFile, setSoundFile] = React.useState<string>('')
   const [captureHotkey, setCaptureHotkey] = React.useState<string>('Alt+Space')
   const [screenshotHotkey, setScreenshotHotkey] = React.useState<string>('Control+Alt+Space')
   const [launchAtLogin, setLaunchAtLogin] = React.useState<boolean>(false)
@@ -36,6 +38,8 @@ export const AppearanceTab: React.FC = () => {
       const cfg = res?.ok ? res.data : res
       setSkipPerms(cfg?.gateway?.skipPermissions ?? true)
       setNotifyEnabled(cfg?.notifications?.enabled ?? true)
+      setTurnSound(cfg?.notifications?.sound ?? true)
+      setSoundFile(cfg?.notifications?.soundFile ?? '')
       setCaptureHotkey(cfg?.capture?.hotkey ?? 'Alt+Space')
       setScreenshotHotkey(cfg?.capture?.screenshotHotkey ?? 'Control+Alt+Space')
       setLaunchAtLogin(cfg?.ui?.launchAtLogin ?? false)
@@ -66,6 +70,25 @@ export const AppearanceTab: React.FC = () => {
   const toggleNotify = (v: boolean) => {
     setNotifyEnabled(v)
     window.codey?.config?.set?.({ notifications: { enabled: v } }).catch(() => { /* ignore */ })
+  }
+
+  const toggleTurnSound = (v: boolean) => {
+    setTurnSound(v)
+    window.codey?.config?.set?.({ notifications: { sound: v } }).catch(() => { /* ignore */ })
+  }
+
+  // '' means the built-in sounds; it is dropped from gateway.json on next load.
+  const changeSoundFile = (file: string) => {
+    setSoundFile(file)
+    window.codey?.config?.set?.({ notifications: { soundFile: file } }).catch(() => { /* ignore */ })
+  }
+
+  const pickSoundFile = async () => {
+    const res = await window.codey?.sound?.pick?.().catch(() => null)
+    if (res?.ok && res.data) {
+      changeSoundFile(res.data)
+      void window.codey?.sound?.preview?.(res.data)
+    }
   }
 
   const toggleLaunchAtLogin = (v: boolean) => {
@@ -232,6 +255,36 @@ export const AppearanceTab: React.FC = () => {
             </div>
             <Toggle on={notifyEnabled} onChange={toggleNotify}/>
           </div>
+
+          <div style={styles.settingRow}>
+            <div style={{ ...styles.label, width: 'auto', flex: 1 }}>
+              <div>Turn-end sound</div>
+              <div style={styles.settingDesc}>
+                Play a short sound each time a reply finishes, errors, or needs your input — even while Codey is in front.
+              </div>
+            </div>
+            <Toggle on={turnSound} onChange={toggleTurnSound}/>
+          </div>
+
+          {turnSound && (
+            <div style={styles.settingRow}>
+              <div style={{ ...styles.label, width: 'auto', flex: 1, minWidth: 0 }}>
+                <div>Sound</div>
+                <div style={{ ...styles.settingDesc, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={soundFile || undefined}>
+                  {soundFile
+                    ? soundFile.split('/').pop()
+                    : 'System default — different sounds for finished, needs input, and error.'}
+                </div>
+              </div>
+              <div style={styles.stepper}>
+                <button onClick={() => { void pickSoundFile() }} style={{ ...styles.stepValue, color: C.fg }}>Choose…</button>
+                <button onClick={() => { void window.codey?.sound?.preview?.(soundFile) }} style={styles.stepValue}>Play</button>
+                {soundFile && (
+                  <button onClick={() => changeSoundFile('')} style={styles.stepValue} title="Go back to the system sounds">Reset</button>
+                )}
+              </div>
+            </div>
+          )}
 
           <div style={styles.settingRow}>
             <div style={{ ...styles.label, width: 'auto', flex: 1 }}>

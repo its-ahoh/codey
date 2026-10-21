@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { decideNotification, createTurnTracker, truncate, mdToPlainText } from './chat-notifications'
+import { decideNotification, createTurnTracker, truncate, mdToPlainText, decideTurnSound, resolveTurnSoundFile, TURN_SOUND_FILES } from './chat-notifications'
 
 const ctx = { focused: false, enabled: true }
 
@@ -150,5 +150,52 @@ describe('createTurnTracker', () => {
     t.observe({ type: 'done', chatId: 'c1' })
     t.observe({ type: 'info', chatId: 'c1', skillNotice: true })
     expect(t.isInFlight('c1')).toBe(false)
+  })
+})
+
+describe('decideTurnSound', () => {
+  const on = { enabled: true }
+  it('plays even while focused, picks a sound per end state', () => {
+    expect(decideTurnSound({ type: 'done', chatId: 'c', response: 'ok' }, on)).toBe('done')
+    expect(decideTurnSound({ type: 'error', chatId: 'c', message: 'x' }, on)).toBe('error')
+    expect(decideTurnSound({
+      type: 'done', chatId: 'c',
+      userQuestion: { question: 'Pick?', options: [{ label: 'Blue' }] },
+    }, on)).toBe('input')
+  })
+  it('plays the error sound for a failed team run or bot', () => {
+    expect(decideTurnSound({ type: 'done', chatId: 'c', response: '', failed: true }, on)).toBe('error')
+    expect(decideTurnSound({ type: 'done', chatId: 'c', response: 'x', botStatus: 'failed' }, on)).toBe('error')
+  })
+  it('plays the input sound for every way a turn can wait on the user', () => {
+    expect(decideTurnSound({ type: 'done', chatId: 'c', choices: ['A', 'B'] }, on)).toBe('input')
+    expect(decideTurnSound({ type: 'done', chatId: 'c', botStatus: 'askedUser' }, on)).toBe('input')
+    expect(decideTurnSound({ type: 'done', chatId: 'c', response: 'Which file?' }, { enabled: true, awaitingInput: true })).toBe('input')
+  })
+  it('stays quiet for automation chats, which have their own opt-in banner', () => {
+    expect(decideTurnSound({ type: 'done', chatId: 'c', response: 'ok' }, { enabled: true, automation: true })).toBeNull()
+    expect(decideTurnSound({ type: 'error', chatId: 'c', message: 'x' }, { enabled: true, automation: true })).toBeNull()
+  })
+  it('stays quiet when disabled, on stop, and mid-turn', () => {
+    expect(decideTurnSound({ type: 'done', chatId: 'c' }, { enabled: false })).toBeNull()
+    expect(decideTurnSound({ type: 'stopped', chatId: 'c' }, on)).toBeNull()
+    expect(decideTurnSound({ type: 'delta', chatId: 'c' }, on)).toBeNull()
+  })
+})
+
+describe('resolveTurnSoundFile', () => {
+  it('uses the picked file when it exists', () => {
+    expect(resolveTurnSoundFile('error', '/tmp/chime.mp3', () => true)).toBe('/tmp/chime.mp3')
+  })
+  it('falls back to the built-in sound for a non-audio, relative, or option-like path', () => {
+    expect(resolveTurnSoundFile('done', '/etc/passwd', () => true)).toBe(TURN_SOUND_FILES.done)
+    expect(resolveTurnSoundFile('done', 'chime.mp3', () => true)).toBe(TURN_SOUND_FILES.done)
+    expect(resolveTurnSoundFile('done', '-v.mp3', () => true)).toBe(TURN_SOUND_FILES.done)
+    expect(resolveTurnSoundFile('done', '/tmp/Chime.MP3', () => true)).toBe('/tmp/Chime.MP3')
+  })
+  it('falls back to the built-in sound when unset or missing', () => {
+    expect(resolveTurnSoundFile('done', undefined, () => true)).toBe(TURN_SOUND_FILES.done)
+    expect(resolveTurnSoundFile('done', '', () => true)).toBe(TURN_SOUND_FILES.done)
+    expect(resolveTurnSoundFile('input', '/tmp/gone.wav', () => false)).toBe(TURN_SOUND_FILES.input)
   })
 })

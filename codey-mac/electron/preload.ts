@@ -94,6 +94,10 @@ contextBridge.exposeInMainWorld('codey', {
     get: () => ipcRenderer.invoke('config:get'),
     set: (updates: any) => ipcRenderer.invoke('config:set', updates),
   },
+  sound: {
+    pick: () => ipcRenderer.invoke('sound:pick'),
+    preview: (file?: string) => ipcRenderer.invoke('sound:preview', file),
+  },
   models: {
     list: () => ipcRenderer.invoke('models:list'),
     save: (entry: any) => ipcRenderer.invoke('models:save', entry),

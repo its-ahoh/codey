@@ -8,6 +8,9 @@ export interface NotifyEvent {
   chatId: string
   response?: string
   message?: string
+  choices?: string[]
+  botStatus?: string
+  failed?: boolean
   userQuestion?: {
     question: string
     options: Array<{ label: string; description?: string }>
@@ -83,6 +86,56 @@ export function decideNotification(ev: NotifyEvent, ctx: NotifyContext): Notific
     return decision
   }
   return { chatId: ev.chatId, title: withTitle('Codey finished', ctx.chatTitle), body: truncate(mdToPlainText(ev.response ?? ''), MAX_BODY) }
+}
+
+// Turn-end chime. Unlike the banner this is NOT focus-gated: the point is to
+// hear the state change while looking at another window or another chat.
+// A user-pressed stop gets no sound — the user already knows.
+export type TurnSound = 'done' | 'input' | 'error'
+
+export interface TurnSoundContext {
+  enabled: boolean
+  // Automation chats run unattended; their runs have their own opt-in banner.
+  automation?: boolean
+  // The chat is parked on a team question (pendingTeam). A free-text team
+  // question carries no choices or userQuestion on the done event.
+  awaitingInput?: boolean
+}
+
+export function decideTurnSound(ev: NotifyEvent, ctx: TurnSoundContext): TurnSound | null {
+  if (!ctx.enabled || ctx.automation) return null
+  if (ev.type === 'error') return 'error'
+  if (ev.type !== 'done') return null
+  // Team runs report a crash as `done` with `failed`.
+  if (ev.failed || ev.botStatus === 'failed') return 'error'
+  const asked = ctx.awaitingInput
+    || ev.botStatus === 'askedUser'
+    || (ev.userQuestion?.options.length ?? 0) >= 1
+    || (ev.choices?.length ?? 0) >= 1
+  return asked ? 'input' : 'done'
+}
+
+// macOS system sounds; always present under /System/Library/Sounds.
+export const TURN_SOUND_FILES: Record<TurnSound, string> = {
+  done: '/System/Library/Sounds/Glass.aiff',
+  input: '/System/Library/Sounds/Ping.aiff',
+  error: '/System/Library/Sounds/Basso.aiff',
+}
+
+export const SOUND_FILE_EXTENSIONS = ['aiff', 'aif', 'wav', 'mp3', 'm4a', 'aac', 'caf']
+
+// Only an absolute path to an audio file reaches afplay: the path comes from
+// the renderer (preview) or a hand-editable config, and a leading '-' would
+// be read as an afplay option.
+function isPlayableSoundPath(p: string): boolean {
+  const ext = p.slice(p.lastIndexOf('.') + 1).toLowerCase()
+  return p.startsWith('/') && SOUND_FILE_EXTENSIONS.includes(ext)
+}
+
+// A user-picked file wins; a file that has since been moved or deleted falls
+// back to the built-in sound rather than going silent.
+export function resolveTurnSoundFile(sound: TurnSound, customFile: string | undefined, exists: (p: string) => boolean): string {
+  return customFile && isPlayableSoundPath(customFile) && exists(customFile) ? customFile : TURN_SOUND_FILES[sound]
 }
 
 const TERMINAL_TYPES = new Set(['done', 'error', 'stopped'])
