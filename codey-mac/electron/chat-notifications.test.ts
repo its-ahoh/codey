@@ -187,6 +187,12 @@ describe('resolveTurnSoundFile', () => {
   it('uses the picked file when it exists', () => {
     expect(resolveTurnSoundFile('error', '/tmp/chime.mp3', () => true)).toBe('/tmp/chime.mp3')
   })
+  it('falls back to the built-in sound for a non-audio, relative, or option-like path', () => {
+    expect(resolveTurnSoundFile('done', '/etc/passwd', () => true)).toBe(TURN_SOUND_FILES.done)
+    expect(resolveTurnSoundFile('done', 'chime.mp3', () => true)).toBe(TURN_SOUND_FILES.done)
+    expect(resolveTurnSoundFile('done', '-v.mp3', () => true)).toBe(TURN_SOUND_FILES.done)
+    expect(resolveTurnSoundFile('done', '/tmp/Chime.MP3', () => true)).toBe('/tmp/Chime.MP3')
+  })
   it('falls back to the built-in sound when unset or missing', () => {
     expect(resolveTurnSoundFile('done', undefined, () => true)).toBe(TURN_SOUND_FILES.done)
     expect(resolveTurnSoundFile('done', '', () => true)).toBe(TURN_SOUND_FILES.done)

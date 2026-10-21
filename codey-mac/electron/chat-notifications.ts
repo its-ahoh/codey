@@ -124,10 +124,18 @@ export const TURN_SOUND_FILES: Record<TurnSound, string> = {
 
 export const SOUND_FILE_EXTENSIONS = ['aiff', 'aif', 'wav', 'mp3', 'm4a', 'aac', 'caf']
 
+// Only an absolute path to an audio file reaches afplay: the path comes from
+// the renderer (preview) or a hand-editable config, and a leading '-' would
+// be read as an afplay option.
+function isPlayableSoundPath(p: string): boolean {
+  const ext = p.slice(p.lastIndexOf('.') + 1).toLowerCase()
+  return p.startsWith('/') && SOUND_FILE_EXTENSIONS.includes(ext)
+}
+
 // A user-picked file wins; a file that has since been moved or deleted falls
 // back to the built-in sound rather than going silent.
 export function resolveTurnSoundFile(sound: TurnSound, customFile: string | undefined, exists: (p: string) => boolean): string {
-  return customFile && exists(customFile) ? customFile : TURN_SOUND_FILES[sound]
+  return customFile && isPlayableSoundPath(customFile) && exists(customFile) ? customFile : TURN_SOUND_FILES[sound]
 }
 
 const TERMINAL_TYPES = new Set(['done', 'error', 'stopped'])

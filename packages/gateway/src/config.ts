@@ -1056,7 +1056,7 @@ function normalize(raw: Partial<GatewayConfigJson> & { dispatcher?: { agent?: Co
   if (raw.notifications && typeof raw.notifications === 'object') {
     out.notifications = {
       enabled: raw.notifications.enabled,
-      sound: raw.notifications.sound,
+      sound: typeof raw.notifications.sound === 'boolean' ? raw.notifications.sound : undefined,
       soundFile: typeof raw.notifications.soundFile === 'string' && raw.notifications.soundFile.trim()
         ? raw.notifications.soundFile
         : undefined,

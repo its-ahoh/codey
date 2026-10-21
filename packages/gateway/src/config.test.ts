@@ -55,6 +55,15 @@ describe('config normalize', () => {
     });
   });
 
+  it('keeps notifications.sound only when it is a real boolean', () => {
+    withTempConfig({ notifications: { sound: 'false' } }, cm => {
+      expect((cm.get() as any).notifications.sound).toBeUndefined();
+    });
+    withTempConfig({ notifications: { sound: false } }, cm => {
+      expect((cm.get() as any).notifications.sound).toBe(false);
+    });
+  });
+
   it('getSkillsConfig returns hardcoded defaults when skills block is absent', () => {
     withTempConfig({}, cm => {
       const cfg = cm.getSkillsConfig();

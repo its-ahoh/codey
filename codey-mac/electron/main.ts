@@ -9,7 +9,7 @@ import { findAvailablePort } from './portUtils'
 import { clampZoom, formatZoom, zoomIn, zoomOut, DEFAULT_ZOOM } from './zoom'
 import { initAutoUpdater, registerUpdaterIpc } from './updater'
 import { createCoreStateStore } from './core-state'
-import { decideNotification, createTurnTracker, decideTurnSound, resolveTurnSoundFile, SOUND_FILE_EXTENSIONS, type TurnSound } from './chat-notifications'
+import { decideNotification, createTurnTracker, decideTurnSound, resolveTurnSoundFile, SOUND_FILE_EXTENSIONS, TURN_SOUND_FILES, type TurnSound } from './chat-notifications'
 import { decideAutomationNotification, findUnseenRuns, findUnnotifiedRuns } from './automation-notifications'
 import { validateAutomationChatPatch, validateAutomationDraft, validateAutomationPatch } from './automation-validate'
 import { applyEvent, clearAttention, summarize } from './tray-state'
@@ -645,16 +645,14 @@ function sendToRenderer(channel: string, ...args: any[]) {
 function automationNotificationsAllowed(): boolean {
   return ((coreConfigManager?.get() as any)?.notifications?.enabled ?? true) as boolean
 }
-// Native macOS notifications for background chats. Decisions are pure
-// (chat-notifications.ts); this is the impure shell: focus check, config
-// read, Notification construction, click/action routing.
 function turnSoundEnabled(): boolean {
   return ((coreConfigManager?.get() as any)?.notifications?.sound ?? true) as boolean
 }
 // One chime per chat turn when it finishes, errors, or asks for input.
-function maybePlayTurnSound(ev: any) {
+// Returns whether a chime started, so the banner only goes silent when it did.
+function maybePlayTurnSound(ev: any): boolean {
   try {
-    if (!ev || typeof ev.chatId !== 'string') return
+    if (!ev || typeof ev.chatId !== 'string') return false
     const chat = inProcessGateway?.getChatManager().get(ev.chatId)
     const sound = decideTurnSound(ev, {
       enabled: turnSoundEnabled(),
@@ -663,20 +661,33 @@ function maybePlayTurnSound(ev: any) {
     })
     const isDuplicate = soundTracker.alreadyNotified(ev.chatId)
     soundTracker.observe(ev)
-    if (!sound || isDuplicate) return
+    if (!sound || isDuplicate) return false
     soundTracker.markNotified(ev.chatId)
     playTurnSound(sound)
-  } catch { /* never let a chime break event fan-out */ }
+    return true
+  } catch { return false /* never let a chime break event fan-out */ }
 }
+// One chime at a time: a new one (or a preview) cuts off the previous, so
+// several chats finishing together don't stack afplay processes.
+let turnSoundProc: import('child_process').ChildProcess | null = null
 function playTurnSound(sound: TurnSound, file?: string) {
   const custom = file ?? ((coreConfigManager?.get() as any)?.notifications?.soundFile as string | undefined)
   const target = resolveTurnSoundFile(sound, custom, p => require('fs').existsSync(p))
-  void import('child_process').then(({ execFile }) => {
-    // Cap playback so a long track picked by mistake can't play for minutes.
-    execFile('/usr/bin/afplay', [target], { timeout: 10_000 }, () => { /* best effort */ })
+  const { execFile } = require('child_process') as typeof import('child_process')
+  turnSoundProc?.kill()
+  // Cap playback so a long track picked by mistake can't play for minutes.
+  const proc = execFile('/usr/bin/afplay', [target], { timeout: 10_000 }, (err) => {
+    if (turnSoundProc === proc) turnSoundProc = null
+    // A custom file afplay can't decode falls back to the built-in sound
+    // instead of leaving the turn silent. A kill by a newer chime is not a failure.
+    if (err && !proc.killed && target !== TURN_SOUND_FILES[sound]) playTurnSound(sound, '')
   })
+  turnSoundProc = proc
 }
-function maybeNotify(ev: any) {
+// Native macOS notifications for background chats. Decisions are pure
+// (chat-notifications.ts); this is the impure shell: focus check, config
+// read, Notification construction, click/action routing.
+function maybeNotify(ev: any, chimed: boolean) {
   try {
     if (!ev || typeof ev.chatId !== 'string') return
     const enabled = ((coreConfigManager?.get() as any)?.notifications?.enabled ?? true) as boolean
@@ -696,7 +707,7 @@ function maybeNotify(ev: any) {
       title: decision.title,
       body: decision.body,
       // The turn chime already played; don't stack the banner's default sound on it.
-      silent: turnSoundEnabled(),
+      silent: chimed,
       actions: decision.actions?.map(a => ({ type: 'button' as const, text: a.label })),
     })
     notif.on('click', openChat)
@@ -1234,8 +1245,8 @@ async function bootInProcessCore() {
     // messages on paired surfaces) to the renderer so the Mac UI stays in sync.
     inProcessGateway.setChatEventListener((ev: any) => {
       sendToRenderer('chats:event', ev)
-      maybePlayTurnSound(ev)
-      maybeNotify(ev)
+      const chimed = maybePlayTurnSound(ev)
+      maybeNotify(ev, chimed)
       trayState = applyEvent(trayState, ev)
       scheduleTrayRebuild()
     })
@@ -4430,6 +4441,7 @@ app.whenReady().then(async () => {
     wrap(async () => {
       if (!coreConfigManager) throw new Error('Config manager not initialized')
       coreConfigManager.update(updates)
+      if (updates?.notifications?.sound === false) turnSoundProc?.kill()
     })
   )
 
