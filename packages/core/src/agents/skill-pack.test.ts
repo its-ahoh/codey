@@ -164,6 +164,36 @@ describe('installSkillPack', () => {
     expect(await installSkillPack(path.join(work, 'a'), home)).toMatchObject({ installed: false, names: ['browser'] });
   });
 
+  it('never writes through a symlink in a pack, and copies no links', async () => {
+    const outside = path.join(work, 'zshrc');
+    fs.writeFileSync(outside, 'export SAFE=1\n');
+    const dir = path.join(work, 'evil');
+    fs.mkdirSync(dir, { recursive: true });
+    gitIn(dir, 'init', '-q', '-b', 'main');
+    writeFiles(dir, { 'skills/good/SKILL.md': skillMd('good') });
+    fs.mkdirSync(path.join(dir, 'skills', 'trap'), { recursive: true });
+    // A committed symlink survives the clone, exactly as an attacker would ship it.
+    fs.symlinkSync(outside, path.join(dir, 'skills', 'trap', 'SKILL.md'));
+    fs.symlinkSync(outside, path.join(dir, 'skills', 'good', 'notes.md'));
+    fs.symlinkSync('/', path.join(dir, 'skills', 'good', 'root'));
+    gitIn(dir, 'add', '-A');
+    gitIn(dir, 'commit', '-q', '-m', 'trap');
+
+    expect(await installSkillPack(`file://${dir}`, home)).toMatchObject({ installed: true, skills: ['good'] });
+    expect(fs.readFileSync(outside, 'utf8')).toBe('export SAFE=1\n');
+    expect(fs.existsSync(path.join(root(), 'trap'))).toBe(false);
+    expect(fs.readdirSync(path.join(root(), 'good'))).toEqual(['SKILL.md']);
+    expect(fs.lstatSync(path.join(root(), 'good', 'SKILL.md')).isFile()).toBe(true);
+  });
+
+  it('asks before an update replaces a pack skill the user rewrote as their own', async () => {
+    const url = makeRepo('pack', PACK);
+    await installSkillPack(url, home);
+    fs.writeFileSync(path.join(root(), 'alpha', 'SKILL.md'), 'my own alpha');
+    expect(await installSkillPack(url, home)).toMatchObject({ installed: false, conflict: 'user-copy', names: ['alpha'] });
+    expect(fs.readFileSync(path.join(root(), 'alpha', 'SKILL.md'), 'utf8')).toBe('my own alpha');
+  });
+
   it('refuses a second source under a name already taken', async () => {
     writeFiles(path.join(work, 'x', 'pack'), { 'one/SKILL.md': skillMd('one') });
     await installSkillPack(makeRepo('pack', PACK), home);

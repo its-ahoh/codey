@@ -111,6 +111,15 @@ export function listSkillPacks(home: string = os.homedir()): SkillPackInfo[] {
     .sort((a, b) => a.id.localeCompare(b.id));
 }
 
+/** lstat, not stat: a symlink is reported as itself, never as its target. */
+function lexists(target: string): boolean {
+  try { fs.lstatSync(target); return true; } catch { return false; }
+}
+
+function isRegularFile(target: string): boolean {
+  try { return fs.lstatSync(target).isFile(); } catch { return false; }
+}
+
 /** The SKILL.md (or disabled copy) in a directory, if any. */
 function readSkillFile(dir: string): string | undefined {
   for (const file of [SKILL_FILE, DISABLED_SKILL_FILE]) {
@@ -193,7 +202,9 @@ function findPackSkills(root: string): Map<string, string> {
     for (const entry of entries) {
       if (!entry.isDirectory() || !isSafeName(entry.name)) continue;
       const skillDir = path.join(dir, entry.name);
-      if (fs.existsSync(path.join(skillDir, SKILL_FILE))) found.set(entry.name, skillDir);
+      // A symlinked SKILL.md could point anywhere, and stamping it would
+      // write there. Only a real file makes a folder a skill.
+      if (isRegularFile(path.join(skillDir, SKILL_FILE))) found.set(entry.name, skillDir);
     }
     return found;
   };
@@ -248,7 +259,12 @@ export async function installSkillPack(
 
     const found = findPackSkills(packRoot);
     const names = [...found.keys()].sort();
-    const taken = names.filter(name => fs.existsSync(path.join(root, name)) && !previous?.skills.includes(name));
+    // A name is the pack's to replace only if the pack installed it and the
+    // user has not since put their own skill there.
+    const taken = names.filter(name => {
+      const dir = path.join(root, name);
+      return lexists(dir) && (!previous?.skills.includes(name) || isUserOwned(dir));
+    });
     if (taken.length && !force) {
       return { installed: false, conflict: 'user-copy', id, dir: path.join(root, taken[0]), names: taken };
     }
@@ -263,10 +279,17 @@ export async function installSkillPack(
     const out = path.join(staging, 'out');
     for (const name of names) {
       const dest = path.join(out, name);
-      await fs.promises.cp(found.get(name)!, dest, { recursive: true });
+      // Symlinks are dropped: a pack's link can point anywhere on this Mac,
+      // and an installed skill must hold only its own files.
+      await fs.promises.cp(found.get(name)!, dest, {
+        recursive: true,
+        filter: from => !fs.lstatSync(from).isSymbolicLink(),
+      });
       await fs.promises.rm(path.join(dest, DISABLED_SKILL_FILE), { force: true });
-      const text = await fs.promises.readFile(path.join(dest, SKILL_FILE), 'utf8');
-      await fs.promises.writeFile(path.join(dest, SKILL_FILE), stamp(text, name, source.source, id, today), 'utf8');
+      const text = await fs.promises.readFile(path.join(found.get(name)!, SKILL_FILE), 'utf8');
+      // Written fresh ('wx' refuses an existing path), never through a link.
+      await fs.promises.rm(path.join(dest, SKILL_FILE), { force: true });
+      await fs.promises.writeFile(path.join(dest, SKILL_FILE), stamp(text, name, source.source, id, today), { encoding: 'utf8', flag: 'wx' });
       if (disabled.has(name)) await fs.promises.rename(path.join(dest, SKILL_FILE), path.join(dest, DISABLED_SKILL_FILE));
     }
 
