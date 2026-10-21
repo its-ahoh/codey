@@ -67,7 +67,7 @@ import { TerminalPanel } from './TerminalPanel'
 import { splitWhiteboardMarkers } from './teamWhiteboardFormat'
 import { useVoiceTurn } from '../hooks/useVoiceTurn'
 import { VoiceMeter } from './VoiceMeter'
-import { ChatMessageNavigator, type ChatNavigationItem } from './ChatMessageNavigator'
+import { ChatMessageNavigator, navigationItemsFor } from './ChatMessageNavigator'
 
 const EDITOR_LOGOS: Partial<Record<string, string>> = {
   vscode: vscodeLogo,
@@ -914,24 +914,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
   const pendingBotRequests = chat.messages.filter(m => m.botInteraction?.status === 'pending')
   const pendingRunIds = new Set(pendingBotRequests.map(m => m.teamTurnId))
   const runningBotCount = chat.messages.filter(m => pendingRunIds.has(m.teamTurnId) && m.bot && !m.botInteraction && m.botStatus === 'running').length
-  // Only Codey's side of the conversation is mapped: user prompts are short and
-  // sit right above their reply, so they would just double the tick count.
-  const navigationItems = useMemo<ChatNavigationItem[]>(() => renderItems.flatMap<ChatNavigationItem>(item => {
-    const msg = item.message
-    if (msg.role !== 'assistant') return []
-    const plain = (msg.content || msg.userQuestion?.question || 'Agent update')
-      .replace(/```[\s\S]*?```/g, ' Code block ')
-      .replace(/[#>*_`~\[\]]/g, '')
-      .replace(/\s+/g, ' ')
-      .trim()
-    const firstSentence = plain.split(/(?<=[.!?\u3002\uFF01\uFF1F])\s+|\n/)[0] || plain
-    return [{
-      id: msg.id,
-      title: firstSentence.slice(0, 48),
-      preview: plain.slice(0, 180),
-      role: 'assistant',
-    }]
-  }), [renderItems])
+  const navigationItems = useMemo(() => navigationItemsFor(renderItems.map(item => item.message)), [renderItems])
   // Cheap stand-in for "the rendered conversation changed": switching chats,
   // a new message, or a streaming reply growing. Find-in-chat re-scans on it,
   // because its highlight ranges point at text nodes React may have replaced.
