@@ -302,6 +302,21 @@ describe('member identity and failure delivery', () => {
     s = reducer(s, { type: 'botEnd', chatId: 'c1', messageId: 'a', step: 1, status: 'failed', failureReason: 'Missing permission', nextUserAction: { text: 'Grant access' } })
     expect(s.chats.c1.messages.find(m => m.id === 'a')).toMatchObject({ botStatus: 'failed', botFailureReason: 'Missing permission', botNextUserAction: { text: 'Grant access' } })
   })
+  it('shows the fallback agent, model and warning on a bot bubble', () => {
+    let s = baseState()
+    s = reducer(s, { type: 'botStart', chatId: 'c1', teamTurnId: 't', messageId: 'a', step: 1, bot: 'alice', agent: 'claude-code', model: 'model-a' })
+    const fallback = { from: 'claude-code(model-a)', to: 'codex(model-b)', reason: 'Rate limit reached' }
+    s = reducer(s, { type: 'botEnd', chatId: 'c1', messageId: 'a', step: 1, status: 'done', agent: 'codex', model: 'model-b', fallback })
+    expect(s.chats.c1.messages.find(m => m.id === 'a')).toMatchObject({ botStatus: 'done', agent: 'codex', model: 'model-b', fallback })
+  })
+  it('keeps the planned bot agent and model without a fallback', () => {
+    let s = baseState()
+    s = reducer(s, { type: 'botStart', chatId: 'c1', teamTurnId: 't', messageId: 'a', step: 1, bot: 'alice', agent: 'claude-code', model: 'model-a' })
+    s = reducer(s, { type: 'botEnd', chatId: 'c1', messageId: 'a', step: 1, status: 'done' })
+    const m = s.chats.c1.messages.find(x => x.id === 'a')
+    expect(m).toMatchObject({ agent: 'claude-code', model: 'model-a' })
+    expect(m?.fallback).toBeUndefined()
+  })
 })
 
  it('keeps terminal team errors after the generic stub has been removed', () => {

@@ -1,6 +1,17 @@
 import { AgentResponse, BlackboardSnapshot, ChannelType, CodingAgent } from '@codey/core';
 import type { EndBotMeta, BotMessageEmitter } from './bot-message-emitter';
 
+/** Result of one bot step, returned by every `runOneBot` closure. */
+export interface BotRunResult {
+  success: boolean;
+  output: string;
+  error?: string;
+  thinking?: string;
+  /** Set when a fallback agent produced this output, so per-bot bubbles can
+   *  carry the same resolved identity and warning as a single-agent turn. */
+  fallback?: AgentResponse['fallback'];
+}
+
 /** Surface-agnostic sink for team continuation output. */
 export interface TeamEmitter {
   /** A discrete status / result / ASK_USER message to the user. */

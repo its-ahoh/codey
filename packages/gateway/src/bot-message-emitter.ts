@@ -12,12 +12,23 @@ export interface BotMessageStore {
 
 interface Buf { messageId: string; step: number; bot: string; content: string; toolCalls: ToolCallEntry[]; thinking: string; }
 
+const FALLBACK_IDENTITY = /^([^()]+)\((.+)\)$/;
+
+/** Parse a fallback `to` label ("agent(model)") back into its agent/model identity. */
+function fallbackIdentity(fallback?: ChatMessage['fallback']): { agent?: ChatMessage['agent']; model?: string } {
+  const m = fallback?.to.match(FALLBACK_IDENTITY);
+  return m ? { agent: m[1] as ChatMessage['agent'], model: m[2] } : {};
+}
+
 export interface BeginBotArgs { step: number; bot: string; reason?: string; agent?: ChatMessage['agent']; model?: string; }
 export interface EndBotMeta {
   tokens?: number;
   durationSec?: number;
   failureReason?: string;
   nextUserAction?: { text: string; options?: string[] };
+  /** Fallback metadata when a fallback agent answered this bot's turn. The
+   *  resolved agent/model are derived from `to` and persisted alongside it. */
+  fallback?: ChatMessage['fallback'];
 }
 
 /**
@@ -121,18 +132,22 @@ export class BotMessageEmitter {
   endBot(status: 'done' | 'failed' | 'askedUser', extra?: EndBotMeta, bot?: string): void {
     const buf = bot ? this.byBot.get(bot) : this.active;
     if (!buf) return;
+    const identity = fallbackIdentity(extra?.fallback);
     this.store.updateMessage(this.chatId, buf.messageId, {
       content: buf.content,
       toolCalls: buf.toolCalls,
       thinking: buf.thinking || undefined,
       botStatus: status,
       isComplete: true,
+      ...(identity.agent ? { agent: identity.agent } : {}),
+      ...(identity.model ? { model: identity.model } : {}),
+      ...(extra?.fallback ? { fallback: extra.fallback } : {}),
       ...(extra?.tokens != null ? { tokens: extra.tokens } : {}),
       ...(extra?.durationSec != null ? { durationSec: extra.durationSec } : {}),
       ...(extra?.failureReason ? { botFailureReason: extra.failureReason } : {}),
       ...(extra?.nextUserAction ? { botNextUserAction: extra.nextUserAction } : {}),
     });
-    this.sink({ type: 'bot_end', chatId: this.chatId, messageId: buf.messageId, step: buf.step, status, tokens: extra?.tokens, durationSec: extra?.durationSec, failureReason: extra?.failureReason, nextUserAction: extra?.nextUserAction });
+    this.sink({ type: 'bot_end', chatId: this.chatId, messageId: buf.messageId, step: buf.step, status, tokens: extra?.tokens, durationSec: extra?.durationSec, failureReason: extra?.failureReason, nextUserAction: extra?.nextUserAction, agent: identity.agent, model: identity.model, fallback: extra?.fallback });
     if (buf === this.active) this.active = null;
     if (bot) this.byBot.delete(bot);
   }
