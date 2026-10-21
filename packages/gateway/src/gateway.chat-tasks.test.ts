@@ -169,20 +169,17 @@ describe('global Bot conversations', () => {
     expect(manager.get(first.id)?.title).toBe('alice');
     expect(new ChatManager(root).get(first.id)?.botChat?.members).toEqual(['alice']);
   });
-  it('creates and resumes automatically matched tasks without a client task selection', async () => {
+  it('keeps a follow-up in the same context without asking the Aide to sort it', async () => {
     const { gateway, calls } = await bots();
     const direct = await gateway.openBotChat('alice');
-    const classifier = vi.fn(async () => ({ success: true, output: JSON.stringify({ kind: 'new', title: 'Website' }) }));
-    Object.assign(gateway, { isAideConfigured: () => true, getAideOptions: () => ({ agent: 'codex', runner: classifier }) });
-    const events: any[] = [];
-    await gateway.sendToChat(direct.id, 'Build a homepage', event => events.push(event));
-    const taskId = direct.tasks![0].id;
-    expect(direct.messages.every(message => message.taskId === taskId)).toBe(true);
-    expect(events.find(event => event.type === 'done')?.taskId).toBe(taskId);
-    classifier.mockResolvedValue({ success: true, output: JSON.stringify({ kind: 'existing', taskId }) });
-    await gateway.sendToChat(direct.id, 'Make it blue', () => {});
+    const aide = vi.fn(async () => ({ success: true, output: JSON.stringify({ kind: 'new', title: 'Website' }) }));
+    Object.assign(gateway, { isAideConfigured: () => true, getAideOptions: () => ({ agent: 'codex', runner: aide }) });
+    await gateway.sendToChat(direct.id, 'Why does the banner repeat?', () => {});
+    await gateway.sendToChat(direct.id, 'Add a check so that case cannot happen', () => {});
+    expect(direct.tasks ?? []).toHaveLength(0);
+    expect(direct.messages.every(message => message.taskId === undefined)).toBe(true);
     expect(calls[1].resumeSessionId).toBe(calls[0].resumeSessionId ?? 'session-1');
-    expect(direct.tasks).toHaveLength(1);
+    expect(aide).not.toHaveBeenCalled();
   });
   it('renames Bot references without losing direct conversation identity', async () => {
     const { gateway, bots: botManager } = await bots();
