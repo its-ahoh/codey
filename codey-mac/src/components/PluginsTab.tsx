@@ -56,7 +56,7 @@ export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '
       const listed = unwrap(await window.codey.plugins.list())
       setPlugins(listed)
       for (const plugin of listed) {
-        if ((plugin.id === 'browser' || plugin.id === 'pstack') && plugin.state !== 'absent') void checkForUpdate(plugin)
+        if (plugin.id === 'browser' && plugin.state !== 'absent') void checkForUpdate(plugin)
       }
     } catch (caught: any) {
       setError(caught?.message ?? String(caught))

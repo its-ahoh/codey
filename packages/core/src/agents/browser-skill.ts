@@ -19,8 +19,8 @@ export const CODEY_SKILLS_REPO_REF = 'main';
 export const CODEY_SKILLS_REPO = CODEY_SKILLS_REPO_URL.replace('https://github.com/', '');
 
 /** Path of one published plugin skill's directory inside the repository.
- *  Plugins (skills documenting a Codey capability) live under `plugins/`;
- *  `skills/` holds general skill packs such as pstack. */
+ *  Plugins (skills documenting a Codey capability) live under `plugins/`.
+ *  Codey publishes no general skills; users import those as skill packs. */
 export function codeySkillDir(name: string): string {
   return `plugins/${name}`;
 }

@@ -6,7 +6,8 @@ import { matchesToolSearch } from './tools-search'
 import { WorkspaceSelect } from './WorkspaceSelect'
 import { SKILL_SORT_MODES, sortSkills, usageFor, usageLabel, usageMeta } from './skillsSort'
 import type { SkillSortMode } from './skillsSort'
-import type { SkillEntry, SkillUsageMap, SkillsListResult } from '../codey-api'
+import type { SkillEntry, SkillPackInfo, SkillUsageMap, SkillsListResult } from '../codey-api'
+import { SKILL_PACK_PLACEHOLDER, describeSkillPack, skillPackConflictPrompt } from './skillPackDisplay'
 
 type AgentFilter = 'claude-code' | 'opencode' | 'codex' | 'pi'
 const AGENTS: { key: AgentFilter; label: string }[] = [
@@ -52,6 +53,11 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
   const [workspaces, setWorkspaces] = useState<string[]>([])
   const [projectWorkspace, setProjectWorkspace] = useState('')
   const [addSource, setAddSource] = useState<'localDir' | 'gitUrl'>('localDir')
+  // One skill, or a whole pack (pstack, say) imported into the shared root.
+  const [addKind, setAddKind] = useState<'skill' | 'pack'>('skill')
+  const [packs, setPacks] = useState<SkillPackInfo[]>([])
+  const [packUpdates, setPackUpdates] = useState<Record<string, boolean | null>>({})
+  const [packBusy, setPackBusy] = useState<string | null>(null)
   const [addInput, setAddInput] = useState('')
   const [installing, setInstalling] = useState(false)
   const [activeAgent, setActiveAgent] = useState<AgentFilter>('claude-code')
@@ -81,7 +87,8 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
   )
   const now = Date.now()
   const listKey = codey ? 'codey' : agentFilter
-  const canInstall = addScope === 'user' || (projectWorkspace !== '' && data.projectDir !== null)
+  const installingPack = codey && addKind === 'pack'
+  const canInstall = installingPack || addScope === 'user' || (projectWorkspace !== '' && data.projectDir !== null)
 
   // The primary action lives in the parent Tools tab bar; this counter gives
   // that button a clean way to open the existing install form without a second
@@ -93,9 +100,26 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
     }
   }, [addRequest])
 
+  // Packs live in the shared Codey root, so they are listed on the Codey view
+  // only. The update check runs after the list paints and never blocks it.
+  const reloadPacks = useCallback(async () => {
+    try {
+      const listed = unwrap(await window.codey.skillPacks.list())
+      setPacks(listed)
+      for (const pack of listed) {
+        window.codey.skillPacks.check(pack.id)
+          .then(r => { if (r.ok) setPackUpdates(prev => ({ ...prev, [pack.id]: r.data.needsUpdate })) })
+          .catch(() => {})
+      }
+    } catch {
+      setPacks([])
+    }
+  }, [])
+
   const reload = useCallback(async (agent: AgentFilter | 'codey', workspace: string) => {
     setLoading(true)
     setError(null)
+    if (agent === 'codey') void reloadPacks()
     try {
       setData(unwrap(await window.codey.skills.list(agent, workspace || undefined)))
     } catch (e: any) {
@@ -113,7 +137,7 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
     } catch {
       if (token === usageToken.current) setUsage({})
     }
-  }, [])
+  }, [reloadPacks])
 
   useEffect(() => {
     if (!initDone.current) {
@@ -152,11 +176,28 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
     if (r.ok && r.data) setAddInput(r.data)
   }
 
+  const installPack = async (source: string): Promise<boolean> => {
+    let result = unwrap(await window.codey.skillPacks.install(source))
+    if (!result.installed) {
+      if (!confirm(skillPackConflictPrompt(result.id, result.names))) return false
+      result = unwrap(await window.codey.skillPacks.install(source, true))
+    }
+    return result.installed
+  }
+
   const handleInstall = async () => {
     if (!addInput.trim()) return
     setInstalling(true)
     setError(null)
     try {
+      if (installingPack) {
+        if (!(await installPack(addInput.trim()))) return
+        setAddInput('')
+        setAdding(false)
+        setPackUpdates({})
+        await reload(listKey, projectWorkspace)
+        return
+      }
       const payload: Parameters<typeof window.codey.skills.install>[0] = {
         agent: codey ? 'codey' : agentFilter,
         scope: addScope,
@@ -209,6 +250,53 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
         next.delete(skill.dir)
         return next
       })
+    }
+  }
+
+  const handlePackUpdate = async (pack: SkillPackInfo) => {
+    setPackBusy(pack.id)
+    setError(null)
+    try {
+      if (await installPack(pack.source)) {
+        setPackUpdates(prev => ({ ...prev, [pack.id]: false }))
+        await reload(listKey, projectWorkspace)
+      }
+    } catch (e: any) {
+      setError(e?.message ?? String(e))
+    } finally {
+      setPackBusy(null)
+    }
+  }
+
+  const handlePackEnabled = async (pack: SkillPackInfo, enabled: boolean) => {
+    setPackBusy(pack.id)
+    setError(null)
+    try {
+      unwrap(await window.codey.skillPacks.setEnabled(pack.id, enabled))
+      await reload(listKey, projectWorkspace)
+    } catch (e: any) {
+      setError(e?.message ?? String(e))
+    } finally {
+      setPackBusy(null)
+    }
+  }
+
+  const handlePackRemove = async (pack: SkillPackInfo) => {
+    if (!confirm(`Remove the "${pack.id}" pack and its ${pack.skills.length} skills from every agent?`)) return
+    setPackBusy(pack.id)
+    setError(null)
+    try {
+      const result = unwrap(await window.codey.skillPacks.uninstall(pack.id))
+      if (!result.removed && result.conflict) {
+        const names = result.names ?? []
+        if (!confirm(`You edited ${names.join(', ')} by hand. Delete those too?`)) return
+        unwrap(await window.codey.skillPacks.uninstall(pack.id, true))
+      }
+      await reload(listKey, projectWorkspace)
+    } catch (e: any) {
+      setError(e?.message ?? String(e))
+    } finally {
+      setPackBusy(null)
     }
   }
 
@@ -508,8 +596,10 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
         <section style={styles.installCard} aria-label="Install skill">
           <div style={styles.installHeader}>
             <div>
-              <div style={styles.installTitle}>Install a skill</div>
-              <div style={styles.installSubtitle}>{codey ? 'Share it with every coding agent' : `Add it to ${AGENTS.find(a => a.key === agentFilter)?.label}`}</div>
+              <div style={styles.installTitle}>{installingPack ? 'Import a skill pack' : 'Install a skill'}</div>
+              <div style={styles.installSubtitle}>{installingPack
+                ? 'Every skill in the pack is shared with every coding agent'
+                : codey ? 'Share it with every coding agent' : `Add it to ${AGENTS.find(a => a.key === agentFilter)?.label}`}</div>
             </div>
             <button
               onClick={() => { setAdding(false); setAddInput(''); setError(null) }}
@@ -520,6 +610,25 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
           </div>
 
           <div style={styles.optionRow}>
+            {codey && (
+              <div style={styles.optionGroup}>
+                <span style={styles.optionLabel}>Install</span>
+                <div style={styles.smallSwitcher}>
+                  {(['skill', 'pack'] as const).map(kind => (
+                    <button
+                      key={kind}
+                      onClick={() => { setAddKind(kind); setAddInput('') }}
+                      style={{ ...styles.smallSwitchButton, ...(addKind === kind ? styles.smallSwitchButtonSelected : undefined) }}
+                      title={kind === 'skill' ? 'One skill folder' : 'Many skills at once, such as pstack'}
+                    >
+                      {kind === 'skill' ? 'One skill' : 'Skill pack'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {!installingPack && (<>
             <div style={styles.optionGroup}>
               <span style={styles.optionLabel}>Install to</span>
               <div style={styles.smallSwitcher}>
@@ -570,25 +679,26 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
                 ))}
               </div>
             </div>
+            </>)}
           </div>
 
           <label style={styles.pathLabel} htmlFor="skill-source-input">
-            {addSource === 'localDir' ? 'Skill folder' : 'Repository URL'}
+            {installingPack ? 'Git URL, GitHub folder link, or local folder' : addSource === 'localDir' ? 'Skill folder' : 'Repository URL'}
           </label>
           <div style={styles.installInputRow}>
             <div style={styles.pathInputShell}>
-              <span style={styles.pathIcon}><UIIcon name={addSource === 'localDir' ? 'folder' : 'link'} size={15} /></span>
+              <span style={styles.pathIcon}><UIIcon name={!installingPack && addSource === 'localDir' ? 'folder' : 'link'} size={15} /></span>
               <input
                 id="skill-source-input"
                 type="text"
-                placeholder={addSource === 'localDir' ? '~/.claude/skills/my-skill' : 'https://github.com/user/my-skill.git'}
+                placeholder={installingPack ? SKILL_PACK_PLACEHOLDER : addSource === 'localDir' ? '~/.claude/skills/my-skill' : 'https://github.com/user/my-skill.git'}
                 value={addInput}
                 onChange={e => setAddInput(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') void handleInstall() }}
                 style={styles.pathInput}
                 autoFocus
               />
-              {addSource === 'localDir' && (
+              {(installingPack || addSource === 'localDir') && (
                 <button onClick={handleBrowse} style={styles.browseButton}>Choose…</button>
               )}
             </div>
@@ -597,11 +707,11 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
               style={{ ...styles.installButton, opacity: installing || !addInput.trim() || !canInstall ? 0.45 : 1 }}
               disabled={installing || !addInput.trim() || !canInstall}
             >
-              {installing ? 'Installing…' : <><UIIcon name="add" size={14} />Install skill</>}
+              {installing ? (installingPack ? 'Importing…' : 'Installing…') : <><UIIcon name="add" size={14} />{installingPack ? 'Import pack' : 'Install skill'}</>}
             </button>
           </div>
           <div style={styles.destinationHint}>
-            Destination: <code style={styles.inlineCode}>{addScope === 'project'
+            Destination: <code style={styles.inlineCode}>{installingPack ? CODEY_GLOBAL_SKILLS_HINT : addScope === 'project'
               ? (data.projectDir ?? (codey ? CODEY_PROJECT_SKILLS_HINT : 'the selected workspace'))
               : codey ? CODEY_GLOBAL_SKILLS_HINT : AGENT_SKILL_HINTS[agentFilter]}</code>
             {!canInstall && (
@@ -614,6 +724,40 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
           </div>
         </section>
       ) : null}
+
+      {codey && packs.length > 0 && (
+        <section style={styles.packList} aria-label="Skill packs">
+          <div style={styles.packListTitle}>Skill packs</div>
+          {packs.map(pack => {
+            const busy = packBusy === pack.id
+            return (
+              <div key={pack.id} style={styles.packRow}>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={styles.packName}>{pack.id}</div>
+                  <div style={styles.packMeta} title={pack.source}>{describeSkillPack(pack, packUpdates[pack.id])}</div>
+                </div>
+                <button
+                  onClick={() => void handlePackUpdate(pack)}
+                  disabled={busy}
+                  style={{ ...pillButton(packUpdates[pack.id] ? 'primary' : 'ghost'), opacity: busy ? 0.5 : 1 }}
+                  title={`Import again from ${pack.source}`}
+                >{busy ? 'Working…' : 'Update'}</button>
+                <button
+                  onClick={() => void handlePackRemove(pack)}
+                  disabled={busy}
+                  style={{ ...pillButton('ghost'), color: C.red, opacity: busy ? 0.5 : 1 }}
+                >Remove</button>
+                <Toggle
+                  on={pack.state === 'installed'}
+                  onChange={enabled => void handlePackEnabled(pack, enabled)}
+                  disabled={busy}
+                  title={pack.state === 'installed' ? 'Turn every skill in this pack off' : 'Turn every skill in this pack on'}
+                />
+              </div>
+            )
+          })}
+        </section>
+      )}
 
       {loading ? (
         <div style={styles.loadingState}><span style={styles.loadingDot} />Scanning skill directories…</div>
@@ -762,6 +906,14 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 12, fontWeight: 750, flexShrink: 0,
   },
   destinationHint: { marginTop: 8, color: C.fg3, fontSize: 10, lineHeight: 1.5 },
+  packList: {
+    background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12,
+    padding: '10px 14px', marginBottom: 14,
+  },
+  packListTitle: { color: C.fg3, fontSize: 10, fontWeight: 700, letterSpacing: 0.25, marginBottom: 4 },
+  packRow: { display: 'flex', alignItems: 'center', gap: 9, padding: '7px 0' },
+  packName: { color: C.fg, fontSize: 12, fontWeight: 700 },
+  packMeta: { color: C.fg3, fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   inlineCode: {
     background: C.surface3, color: C.fg2, padding: '2px 5px',
     borderRadius: 4, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
