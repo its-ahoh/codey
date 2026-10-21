@@ -22,3 +22,24 @@ export function clampFloatingLeft(
   const maxLeft = boundaryRight - layerWidth - margin
   return Math.max(margin, Math.min(preferred, maxLeft))
 }
+
+/** Keep a top-left-anchored floating layer (a context menu) fully inside the
+ * visible renderer region: prefer the requested point, slide it back when it
+ * would spill past an edge. Degrades to the margin when the layer is larger
+ * than the available space. */
+export function clampFloatingPoint(
+  x: number,
+  y: number,
+  layerWidth: number,
+  layerHeight: number,
+  boundaryRight: number,
+  boundaryBottom: number,
+  margin = DEFAULT_MARGIN,
+): { left: number; top: number } {
+  const maxLeft = Math.max(margin, boundaryRight - layerWidth - margin)
+  const maxTop = Math.max(margin, boundaryBottom - layerHeight - margin)
+  return {
+    left: Math.max(margin, Math.min(x, maxLeft)),
+    top: Math.max(margin, Math.min(y, maxTop)),
+  }
+}
