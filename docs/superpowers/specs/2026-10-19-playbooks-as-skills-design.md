@@ -42,43 +42,16 @@ Playbooks 页面变成"Codey 学出来的 Skill"的管理页：看有哪些、�
 
 同步会在 `.claude/skills/` 和 `.agents/skills/` 下面建链接，Claude Code、Codex、OpenCode、pi 都能找到。这套同步代码现在升级 Skill 时就在用。
 
-### 范围怎么定（PR B）
+### 范围：全部通用（2026-10-20 改）
 
-存之前先给一个建议，按顺序判断：
+不再区分范围，**存下的 playbook 一律写成通用的**，所有项目里的 agent 都能看到。范围建议、保存时回 `global` / `project`、Playbooks 页面的切换按钮都去掉了。
 
-1. 同一套做法在 **2 个以上 workspace** 里都出现过 → 通用
-2. 改过项目里的文件、在项目目录里跑过命令 → 项目
-   （要在运行记录的 `path` 形状里加一个 `inProject: boolean`，只记"在不在项目里"，不记路径本身。）
-3. 只用了浏览器、只访问了外部网站 → 通用
-4. 都看不出来 → 用起名 AI 顺手给的 `scope` 字段（同一次调用，不多花）
-5. AI 也没给 → 项目
+- 老的 playbook（以前存在各个 workspace 里的、手动升级过的）全部不再读取，从空开始。项目目录、`.git/info/exclude`、worktree 链接这一套都删掉了。
+- 代价：只跟某个仓库有关的 playbook 也会出现在别的项目里。agent 看描述不合适就不会用。
 
-然后在保存提示里问你：
+## 5. （已删除）项目 Skill 只留在本机
 
-> 🧩 我好像反复在做这件事（"在 X 上发帖"）。要存成**通用** Skill **playbook-post-to-x** 吗？
-> 回 `yes` 保存 · `no` 不要 · `project` 改成只给这个项目 · `rename <新名字>` 换个名字
-
-如果建议的是项目，选项就换成 `global`。Mac 聊天和频道两条路都要支持。之后在 Playbooks 页面也能切换：把目录挪过去，两边各重新同步一次。从通用改回项目时，挪到**当前打开的 workspace**。版本历史、使用次数都跟着走；目标那边已经有同名的就拒绝。
-
-## 5. 项目 Skill 只留在本机
-
-项目 Skill 写在你的仓库里。为了不出现在 `git status` 里，Codey 第一次往某个仓库写 Skill 时，会在这个仓库的 `.git/info/exclude` 末尾加一段**固定的规则**：
-
-```
-# >>> codey learned skills (local only)
-/.codey/skills/playbook-*
-/.claude/skills/playbook-*
-/.agents/skills/playbook-*
-# <<< codey learned skills
-```
-
-- `.git/info/exclude` 跟 `.gitignore` 作用一样，但**只在你这台电脑上生效**，不会被提交。
-- 因为名字都以 `playbook-` 开头，**这段规则写一次就够了**，之后存再多 Skill 都不用改。已经有这段就跳过。
-- 路径用 `git rev-parse --git-path info/exclude` 去找，这样 git worktree 也能处理对。
-- 项目不是 git 仓库：不用处理，跳过。
-- 想跟团队分享：自己删掉这段，或者删掉其中某一行。Codey 用 Skill 存储里的一个标记记住"已经加过"，你删了它也不会再加回去。
-
-通用 Skill 放在 home 目录，不在任何仓库里，不涉及这个问题。
+全部通用以后，不再往仓库里写 Skill，这一节不再适用。
 
 ## 6. Codey 自己还存什么
 
@@ -115,9 +88,7 @@ Playbooks 页面变成"Codey 学出来的 Skill"的管理页：看有哪些、�
 
 ## 10. 老数据
 
-- **已经存过、还没升级的 playbook**：你当初回过"yes"，所以第一次用到时自动改名成 `playbook-<名字>` 并写成 Skill，范围是项目。
-- **已经升级过的**：它们已经是 `SKILL.md`（没有前缀），算是你的了。保持原样，Codey 不再改它们，Playbooks 页面里标成"旧版升级"。
-- **已归档的**：保持归档。
+不迁移。以前存过的 playbook 全部不再读取，从空开始（2026-10-20 决定）。
 
 ## 11. 要删掉的东西
 

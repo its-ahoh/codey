@@ -267,17 +267,11 @@ describe('SkillStore', () => {
     const s3 = store.add({ name: 'active', description: 'd', whenToUse: 'w', steps: 's', sourceRunId: 'r3' });
     s3.useCount = 5;
     s3.lastUsedAt = Date.now() - 86_400_000;
-    const s4 = store.add({ name: 'promoted', description: 'd', whenToUse: 'w', steps: 's' });
-    s4.createdAt = old;
-    s4.lastUsedAt = old;
-    expect(store.promoteToSkill('promoted')).toBe(true);
     const archived = store.runCollectGarbage({ staleDays: 30, weakSkillDays: 7 });
     expect(archived).toEqual(['old', 'weak']);
     expect(store.get('old')!.archived).toBe(true);
     expect(store.get('weak')!.archived).toBe(true);
     expect(store.get('active')!.archived).toBe(false);
-    expect(store.get('promoted')!.archived).toBe(false);
-    expect(store.archive('promoted')).toBe(false);
   });
 
   it('runCollectGarbage spares hand-edited skills and, without usage tracking, rare use', () => {
@@ -646,14 +640,6 @@ describe('nameTemplate', () => {
     expect(prompt).toContain('2 runs');
     expect(prompt).toContain('browser_navigate(url=x.com)');
     expect(prompt).toContain('comment=«comment»');
-  });
-
-  it('carries the namer\'s scope guess and ignores an invalid one', async () => {
-    const reply = (scope: string) => fakeDeps(async () => ({ success: true, output: JSON.stringify({
-      name: 'x-outreach', description: 'd', whenToUse: 'w', steps: '1. x', scope,
-    }), error: null, tokens: { total: 10 } }));
-    expect((await nameTemplate(reply('global'), template, [], []) as DistillResult).scope).toBe('global');
-    expect(await nameTemplate(reply('everywhere'), template, [], [])).not.toHaveProperty('scope');
   });
 
   it('reports a duplicate distinctly from having nothing to offer', async () => {

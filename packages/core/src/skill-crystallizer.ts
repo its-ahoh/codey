@@ -31,9 +31,6 @@ export interface SkillEntry {
   sourceRunIds: string[];
   createdAt: number;
   archived: boolean;
-  /** Legacy: promoted by hand to a SKILL.md before saved playbooks became
-   *  skills themselves. Codey no longer writes, evolves or archives these. */
-  promotedToSkill?: boolean;
   /** Fingerprint of the SKILL.md Codey last wrote. A mismatch means the user
    *  edited the file, which is absorbed as a new version (playbook-skills). */
   skillHash?: string;
@@ -63,9 +60,6 @@ export interface SkillIndex {
   entries: SkillEntry[];
   /** Suggestions the user said "no" to — fed to the distiller so it stops re-proposing them. */
   rejected: RejectedSuggestion[];
-  /** Working directories whose `.git/info/exclude` already received Codey's
-   *  block — recorded so a user who removes it is not overridden. */
-  localExcludeDirs?: string[];
 }
 
 export interface RunTrace {
@@ -110,8 +104,6 @@ export interface DistillResult {
    *  from prose distillation. */
   parameters?: SkillParameter[];
   inducedFrom?: string[];
-  /** Where it should apply, suggested before the user confirms the save. */
-  scope?: 'project' | 'global';
 }
 
 export const RECENT_TRACES_MAX = 20;
@@ -182,7 +174,6 @@ export class SkillStore {
             version: 1,
             entries: parsed.entries.map(e => ({ ...e, history: e.history ?? [], evolution: e.evolution ?? [] })),
             rejected: Array.isArray(parsed.rejected) ? parsed.rejected : [],
-            localExcludeDirs: Array.isArray(parsed.localExcludeDirs) ? parsed.localExcludeDirs : [],
           };
         }
       } catch {
@@ -282,7 +273,7 @@ export class SkillStore {
 
   archive(name: string): boolean {
     const entry = this.index.entries.find(e => e.name === name);
-    if (!entry || entry.promotedToSkill) return false;
+    if (!entry) return false;
     entry.archived = true;
     this.markIndexDirty();
     return true;
@@ -305,32 +296,6 @@ export class SkillStore {
     return true;
   }
 
-  /** Mark a playbook as a durable agent skill. Promotion also restores a
-   *  previously archived playbook so it can continue to be matched/evolved. */
-  promoteToSkill(name: string): boolean {
-    const entry = this.index.entries.find(e => e.name === name);
-    if (!entry) return false;
-    entry.promotedToSkill = true;
-    entry.archived = false;
-    this.markIndexDirty();
-    return true;
-  }
-
-  /** Take over a playbook moved here from another ledger, history intact. */
-  adopt(entry: SkillEntry): void {
-    this.index.entries.push(JSON.parse(JSON.stringify(entry)));
-    this.markIndexDirty();
-  }
-
-  /** Give a playbook a new name, keeping its history and counters. */
-  rename(name: string, newName: string): boolean {
-    const entry = this.index.entries.find(e => e.name === name);
-    if (!entry || this.index.entries.some(e => e.name === newName)) return false;
-    entry.name = newName;
-    this.markIndexDirty();
-    return true;
-  }
-
   /** Record the fingerprint of the SKILL.md just written for a playbook. */
   setSkillHash(name: string, hash: string | undefined): boolean {
     const entry = this.index.entries.find(e => e.name === name);
@@ -347,16 +312,6 @@ export class SkillStore {
     if (description) entry.description = description;
     entry.editedByUser = true;
     return this.bumpVersion(name, steps, { runId: 'user-edit', promptSummary: 'Edited SKILL.md by hand' });
-  }
-
-  hasLocalExclude(workingDir: string): boolean {
-    return (this.index.localExcludeDirs ?? []).includes(workingDir);
-  }
-
-  recordLocalExclude(workingDir: string): void {
-    if (this.hasLocalExclude(workingDir)) return;
-    this.index.localExcludeDirs = [...(this.index.localExcludeDirs ?? []), workingDir];
-    this.markIndexDirty();
   }
 
   recordUse(name: string): boolean {
@@ -449,7 +404,7 @@ export class SkillStore {
     const now = Date.now();
     const archived: string[] = [];
     for (const entry of this.index.entries) {
-      if (entry.archived || entry.promotedToSkill || entry.editedByUser) continue;
+      if (entry.archived || entry.editedByUser) continue;
       if (now - entry.lastUsedAt > opts.staleDays * 86_400_000) {
         entry.archived = true;
         archived.push(entry.name);
@@ -594,14 +549,12 @@ Return ONE JSON object (no markdown, no prose) or the literal word "NONE":
   "name": "kebab-case",
   "description": "one line describing what this skill does",
   "whenToUse": "when the user asks to...",
-  "steps": "1. ...\\n2. ...\\n3. ...",
-  "scope": "project | global"
+  "steps": "1. ...\\n2. ...\\n3. ..."
 }
 
 Rules:
 - name must match /^[a-z][a-z0-9-]*$/ and be 3-30 chars.
 - Write description, whenToUse and steps in the language the user wrote their requests in; keep name in English kebab-case.
-- scope is "global" when the procedure does not depend on this repository (posting to a website, updating a tool); otherwise "project".
 - Output ONLY the JSON or "NONE". No markdown fences, no prose.`;
 
 /** How much of each trace's output preview reaches the distill prompt. The
@@ -647,8 +600,7 @@ function tryParseDistill(raw: string): DistillResult | null {
     if (typeof p[field] !== 'string' || !(p[field] as string).trim()) return null;
   }
   return { name: p.name as string, description: p.description as string,
-           whenToUse: p.whenToUse as string, steps: p.steps as string,
-           ...(p.scope === 'global' || p.scope === 'project' ? { scope: p.scope } : {}) };
+           whenToUse: p.whenToUse as string, steps: p.steps as string };
 }
 
 /** Bare acknowledgements, matched after trailing punctuation is stripped. */
@@ -758,14 +710,12 @@ duplicates an existing skill:
   "name": "kebab-case",
   "description": "one line describing what this skill does",
   "whenToUse": "when the user asks to...",
-  "steps": "1. ...\\n2. ...\\n3. ...",
-  "scope": "project | global"
+  "steps": "1. ...\\n2. ...\\n3. ..."
 }
 
 Rules:
 - name must match /^[a-z][a-z0-9-]*$/ and be 3-30 chars.
 - Write description, whenToUse and steps in the language the user wrote their requests in; keep name in English kebab-case.
-- scope is "global" when the procedure does not depend on this repository (posting to a website, updating a tool); otherwise "project".
 - Output ONLY the JSON or "NONE". No markdown fences, no prose.`;
 
 /** Name a template that clustering already established.

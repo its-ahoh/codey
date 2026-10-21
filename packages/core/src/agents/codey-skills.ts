@@ -1,8 +1,6 @@
-import { execFile } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { promisify } from 'util';
 
 /** The project-owned source of truth for skills managed by Codey. */
 export const CODEY_SKILLS_SUBDIR = path.join('.codey', 'skills');
@@ -140,47 +138,4 @@ export async function syncCodeyProjectSkills(workingDir: string): Promise<CodeyS
 export async function syncCodeyGlobalSkills(home: string = os.homedir()): Promise<CodeySkillSyncResult> {
   const homeRoot = path.resolve(home);
   return linkCodeySkills(path.join(homeRoot, CODEY_GLOBAL_SKILLS_SUBDIR), homeRoot);
-}
-
-
-/**
- * Learned playbook skills live in the main checkout and are kept out of git,
- * so a linked git worktree does not get them by checking out. Link each one
- * into the worktree's `.codey/skills`, and drop links whose playbook is gone,
- * so the regular project sync exposes them there too. A no-op outside a
- * linked worktree.
- */
-export async function linkPlaybookSkillsIntoWorktree(workingDir: string): Promise<void> {
-  const git = async (...args: string[]) =>
-    (await promisify(execFile)('git', args, { cwd: workingDir })).stdout.trim();
-  let top: string;
-  let common: string;
-  try {
-    top = await git('rev-parse', '--show-toplevel');
-    common = await git('rev-parse', '--path-format=absolute', '--git-common-dir');
-  } catch {
-    return;
-  }
-  if (path.basename(common) !== '.git') return;
-  const main = path.dirname(common);
-  if (path.resolve(main) === path.resolve(top)) return;
-
-  const source = path.join(main, CODEY_SKILLS_SUBDIR);
-  const target = path.join(top, CODEY_SKILLS_SUBDIR);
-  let names: string[] = [];
-  try {
-    names = (await fs.promises.readdir(source)).filter(n => n.startsWith(PLAYBOOK_PREFIX) && isDirectory(path.join(source, n)));
-  } catch { /* the main checkout has none yet */ }
-  await fs.promises.mkdir(target, { recursive: true });
-  for (const name of await fs.promises.readdir(target)) {
-    const link = path.join(target, name);
-    if (name.startsWith(PLAYBOOK_PREFIX) && fs.lstatSync(link).isSymbolicLink() && !fs.existsSync(link)) {
-      await fs.promises.unlink(link);
-    }
-  }
-  for (const name of names) {
-    const link = path.join(target, name);
-    try { await fs.promises.lstat(link); continue; } catch { /* free */ }
-    await fs.promises.symlink(path.join(source, name), link, process.platform === 'win32' ? 'junction' : 'dir');
-  }
 }
