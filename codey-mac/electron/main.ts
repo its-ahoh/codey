@@ -46,7 +46,7 @@ import * as pty from 'node-pty'
 protocol.registerSchemesAsPrivileged([
   { scheme: 'codey-asset', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
 ])
-import { browserSkillStatus, checkBrowserSkillUpdate, checkSkillPackUpdate, chromeCompanionSkillStatus, checkChromeCompanionSkillUpdate, installSkillPack, readSkillPackManifest, setSkillPackEnabled, skillPackStatus, uninstallSkillPack, CODEY_GLOBAL_SKILLS_SUBDIR, CODEY_SKILL_DISCOVERY_SUBDIRS, CODEY_SKILLS_SUBDIR, installBrowserSkill, installChromeCompanionSkill, setChromeCompanionSkillEnabled, syncCodeyGlobalSkills, syncCodeyProjectSkills, uninstallBrowserSkill, absorbPlaybookEdit, reconcilePlaybookSkills, removePlaybookSkill, writePlaybookSkill, uninstallChromeCompanionSkill, renameBotInTeams, BotManager, WorkspaceManager } from '@codey/core'
+import { browserSkillStatus, checkBrowserSkillUpdate, checkSkillPackUpdate, chromeCompanionSkillStatus, checkChromeCompanionSkillUpdate, installSkillPack, listSkillPacks, migrateLegacyPstack, setSkillPackEnabled, uninstallSkillPack, CODEY_GLOBAL_SKILLS_SUBDIR, CODEY_SKILL_DISCOVERY_SUBDIRS, CODEY_SKILLS_SUBDIR, installBrowserSkill, installChromeCompanionSkill, setChromeCompanionSkillEnabled, syncCodeyGlobalSkills, syncCodeyProjectSkills, uninstallBrowserSkill, absorbPlaybookEdit, reconcilePlaybookSkills, removePlaybookSkill, writePlaybookSkill, uninstallChromeCompanionSkill, renameBotInTeams, BotManager, WorkspaceManager } from '@codey/core'
 import { listPlaybooks, playbookDetail, playbookHistory, archivePlaybook, deletePlaybook, restorePlaybook, rollbackPlaybook } from './playbooks'
 import type { PlaybookHome } from '@codey/core'
 import { Codey } from '@codey/gateway/dist/gateway'
@@ -1108,6 +1108,9 @@ async function bootInProcessCore() {
     try {
       const [fsMod, osMod, pathMod] = await Promise.all([import('fs'), import('os'), import('path')])
       removeLegacyManagedSkills(fsMod, pathMod, osMod.homedir(), CODEY_SKILL_DISCOVERY_SUBDIRS)
+      // pstack was a Plugins card; it is now a skill pack the user owns. The
+      // installed skills stay where they are, only the record moves.
+      await migrateLegacyPstack().catch(error => console.warn('[skills] pstack migration failed:', error))
       if (coreConfigManager.isPluginEnabled('browser') && browserSkillStatus().state === 'absent') {
         await installBrowserSkill()
         await syncCodeyGlobalSkills()
@@ -4447,7 +4450,7 @@ app.whenReady().then(async () => {
 
   // ── Plugins IPC ───────────────────────────────────────────────────
   const pluginStatus = (id: string) =>
-    id === 'browser' ? browserSkillStatus() : id === 'pstack' ? skillPackStatus() : chromeCompanionSkillStatus()
+    id === 'browser' ? browserSkillStatus() : chromeCompanionSkillStatus()
 
   ipcMain.handle('plugins:list', async () =>
     wrap(async () => listPlugins(pluginStatus))
@@ -4465,9 +4468,7 @@ app.whenReady().then(async () => {
       if (!isKnownPlugin(id)) throw new Error(`Unknown plugin: ${id}`)
       const result = id === 'browser'
         ? await installBrowserSkill(undefined, { force: force === true })
-        : id === 'pstack'
-          ? await installSkillPack(undefined, { force: force === true })
-          : await installChromeCompanionSkill(undefined, { force: force === true })
+        : await installChromeCompanionSkill(undefined, { force: force === true })
       if (result.installed) await syncCodeyGlobalSkills()
       return result
     })
@@ -4478,9 +4479,7 @@ app.whenReady().then(async () => {
       if (!isKnownPlugin(id)) throw new Error(`Unknown plugin: ${id}`)
       const result = id === 'browser'
         ? await uninstallBrowserSkill(undefined, { force: force === true })
-        : id === 'pstack'
-          ? await uninstallSkillPack(undefined, { force: force === true })
-          : await uninstallChromeCompanionSkill(undefined, { force: force === true })
+        : await uninstallChromeCompanionSkill(undefined, { force: force === true })
       if (result.removed) await syncCodeyGlobalSkills()
       return result
     })
@@ -4496,8 +4495,6 @@ app.whenReady().then(async () => {
       if (typeof enabled !== 'boolean') throw new Error('Invalid enabled flag')
       if (id === 'chrome-companion') {
         await setChromeCompanionSkillEnabled(enabled)
-      } else if (id === 'pstack') {
-        await setSkillPackEnabled(enabled)
       } else {
         const plugin = browserSkillStatus()
         if (plugin.state === 'absent') throw new Error(`Plugin ${id} is not installed`)
@@ -4519,7 +4516,7 @@ app.whenReady().then(async () => {
       try {
         return id === 'browser'
           ? await checkBrowserSkillUpdate()
-          : id === 'pstack' ? await checkSkillPackUpdate() : await checkChromeCompanionSkillUpdate()
+          : await checkChromeCompanionSkillUpdate()
       } catch {
         return { needsUpdate: null }
       }
@@ -4826,9 +4823,10 @@ app.whenReady().then(async () => {
 
     let listed = uniqueSkills(fsMod, pathMod, skills)
     listed = markCodeyBundledSkills(fsMod, pathMod, listed, [browserSkillStatus(home), chromeCompanionSkillStatus(home)])
-    const packRoot = skillPackStatus(undefined, home).dir
-    for (const name of readSkillPackManifest(undefined, home)?.skills ?? []) {
-      listed = markSkillManagedBy(fsMod, pathMod, listed, pathMod.join(packRoot, name), 'codey')
+    for (const pack of listSkillPacks(home)) {
+      for (const name of pack.skills) {
+        listed = markSkillManagedBy(fsMod, pathMod, listed, pathMod.join(pack.dir, name), 'codey')
+      }
     }
     return { skills: listed, projectDir }
   }
@@ -4995,6 +4993,53 @@ app.whenReady().then(async () => {
       }
 
       throw new Error('Either localDir or gitUrl is required')
+    })
+  )
+
+  // ── Skill packs IPC ──────────────────────────────────────────────
+  // A pack (pstack, for one) is many skills imported in one step into the
+  // shared ~/.codey/skills root, so every agent sees all of them. Update is
+  // install again from the recorded source. `force` is the user having
+  // confirmed replacing skills of the same name the pack does not own.
+  ipcMain.handle('skillPacks:list', async () =>
+    wrap(async () => listSkillPacks())
+  )
+
+  ipcMain.handle('skillPacks:install', async (_e, source: string, force?: boolean) =>
+    wrap(async () => {
+      if (typeof source !== 'string' || !source.trim()) throw new Error('Enter a git URL, a GitHub folder link, or a local folder')
+      const result = await installSkillPack(source, undefined, { force: force === true })
+      if (result.installed) await syncCodeyGlobalSkills()
+      return result
+    })
+  )
+
+  ipcMain.handle('skillPacks:uninstall', async (_e, id: string, force?: boolean) =>
+    wrap(async () => {
+      if (typeof id !== 'string' || !id) throw new Error('Invalid skill pack')
+      const result = await uninstallSkillPack(id, undefined, { force: force === true })
+      if (result.removed) await syncCodeyGlobalSkills()
+      return result
+    })
+  )
+
+  ipcMain.handle('skillPacks:setEnabled', async (_e, id: string, enabled: boolean) =>
+    wrap(async () => {
+      if (typeof id !== 'string' || !id) throw new Error('Invalid skill pack')
+      if (typeof enabled !== 'boolean') throw new Error('Invalid enabled flag')
+      await setSkillPackEnabled(id, enabled)
+      await syncCodeyGlobalSkills()
+    })
+  )
+
+  // Offline or unreachable is "unknown", never an error the tab has to show.
+  ipcMain.handle('skillPacks:check', async (_e, id: string) =>
+    wrap(async () => {
+      try {
+        return await checkSkillPackUpdate(id)
+      } catch {
+        return { needsUpdate: null }
+      }
     })
   )
 
