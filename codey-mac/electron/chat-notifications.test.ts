@@ -163,6 +163,19 @@ describe('decideTurnSound', () => {
       userQuestion: { question: 'Pick?', options: [{ label: 'Blue' }] },
     }, on)).toBe('input')
   })
+  it('plays the error sound for a failed team run or bot', () => {
+    expect(decideTurnSound({ type: 'done', chatId: 'c', response: '', failed: true }, on)).toBe('error')
+    expect(decideTurnSound({ type: 'done', chatId: 'c', response: 'x', botStatus: 'failed' }, on)).toBe('error')
+  })
+  it('plays the input sound for every way a turn can wait on the user', () => {
+    expect(decideTurnSound({ type: 'done', chatId: 'c', choices: ['A', 'B'] }, on)).toBe('input')
+    expect(decideTurnSound({ type: 'done', chatId: 'c', botStatus: 'askedUser' }, on)).toBe('input')
+    expect(decideTurnSound({ type: 'done', chatId: 'c', response: 'Which file?' }, { enabled: true, awaitingInput: true })).toBe('input')
+  })
+  it('stays quiet for automation chats, which have their own opt-in banner', () => {
+    expect(decideTurnSound({ type: 'done', chatId: 'c', response: 'ok' }, { enabled: true, automation: true })).toBeNull()
+    expect(decideTurnSound({ type: 'error', chatId: 'c', message: 'x' }, { enabled: true, automation: true })).toBeNull()
+  })
   it('stays quiet when disabled, on stop, and mid-turn', () => {
     expect(decideTurnSound({ type: 'done', chatId: 'c' }, { enabled: false })).toBeNull()
     expect(decideTurnSound({ type: 'stopped', chatId: 'c' }, on)).toBeNull()

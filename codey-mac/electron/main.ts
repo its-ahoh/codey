@@ -655,7 +655,12 @@ function turnSoundEnabled(): boolean {
 function maybePlayTurnSound(ev: any) {
   try {
     if (!ev || typeof ev.chatId !== 'string') return
-    const sound = decideTurnSound(ev, { enabled: turnSoundEnabled() })
+    const chat = inProcessGateway?.getChatManager().get(ev.chatId)
+    const sound = decideTurnSound(ev, {
+      enabled: turnSoundEnabled(),
+      automation: chat?.kind === 'automation',
+      awaitingInput: !!chat?.pendingTeam,
+    })
     const isDuplicate = soundTracker.alreadyNotified(ev.chatId)
     soundTracker.observe(ev)
     if (!sound || isDuplicate) return

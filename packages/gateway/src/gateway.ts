@@ -7282,7 +7282,9 @@ Example: /model gpt-4.1 write a Python script`;
       await settleStatus();
       if (activeTeamId) {
         const final = await finishTeam(`Error: ${(err as Error).message}`, abortController.signal.aborted);
-        sink({ type: 'done', chatId, response: final?.content ?? '', teamTurnId: activeTeamId });
+        // A crashed team run still ends with `done`; `failed` lets clients
+        // tell it apart from a finished one.
+        sink({ type: 'done', chatId, response: final?.content ?? '', teamTurnId: activeTeamId, failed: true });
         return { response: final?.content ?? '', chatId };
       }
       const message = `Error: ${(err as Error).message}`;

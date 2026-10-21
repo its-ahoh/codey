@@ -427,6 +427,19 @@ describe('mention execution contexts', () => {
     expect(dispatch.mock.calls[0][1].members).toEqual(['ben', 'claire']);
   });
 
+  it('marks the done event failed when a team run throws', async () => {
+    const { gateway, dispatch } = await harness();
+    const group = await gateway.createBotGroup('Review', ['alice', 'ben']);
+    const normalDispatch = dispatch.getMockImplementation()!;
+    dispatch.mockImplementationOnce(async (...args) => {
+      await normalDispatch(...args);
+      throw new Error('Bot crashed');
+    });
+    const events: any[] = [];
+    await gateway.sendToChat(group.id, 'Review this', ev => { events.push(ev); });
+    expect(events.filter(e => e.type === 'done')).toEqual([expect.objectContaining({ failed: true })]);
+  });
+
   it('automatically hands off cross-Bot work without exposing other tasks', async () => {
     const { gateway, manager, dispatch } = await harness();
     const direct = await gateway.openBotChat('alice');

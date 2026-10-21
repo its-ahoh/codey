@@ -8,6 +8,9 @@ export interface NotifyEvent {
   chatId: string
   response?: string
   message?: string
+  choices?: string[]
+  botStatus?: string
+  failed?: boolean
   userQuestion?: {
     question: string
     options: Array<{ label: string; description?: string }>
@@ -90,11 +93,26 @@ export function decideNotification(ev: NotifyEvent, ctx: NotifyContext): Notific
 // A user-pressed stop gets no sound — the user already knows.
 export type TurnSound = 'done' | 'input' | 'error'
 
-export function decideTurnSound(ev: NotifyEvent, ctx: { enabled: boolean }): TurnSound | null {
-  if (!ctx.enabled) return null
+export interface TurnSoundContext {
+  enabled: boolean
+  // Automation chats run unattended; their runs have their own opt-in banner.
+  automation?: boolean
+  // The chat is parked on a team question (pendingTeam). A free-text team
+  // question carries no choices or userQuestion on the done event.
+  awaitingInput?: boolean
+}
+
+export function decideTurnSound(ev: NotifyEvent, ctx: TurnSoundContext): TurnSound | null {
+  if (!ctx.enabled || ctx.automation) return null
   if (ev.type === 'error') return 'error'
   if (ev.type !== 'done') return null
-  return ev.userQuestion && ev.userQuestion.options.length >= 1 ? 'input' : 'done'
+  // Team runs report a crash as `done` with `failed`.
+  if (ev.failed || ev.botStatus === 'failed') return 'error'
+  const asked = ctx.awaitingInput
+    || ev.botStatus === 'askedUser'
+    || (ev.userQuestion?.options.length ?? 0) >= 1
+    || (ev.choices?.length ?? 0) >= 1
+  return asked ? 'input' : 'done'
 }
 
 // macOS system sounds; always present under /System/Library/Sounds.
