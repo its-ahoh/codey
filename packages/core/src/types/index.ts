@@ -96,6 +96,14 @@ export interface ApiKeyEntry {
  */
 export type ThinkingEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
+/**
+ * Hard tool boundary for one agent turn, enforced by the adapter with CLI
+ * flags rather than prompt text. `none`: a text-in/text-out call (Advisor,
+ * Judge, distiller) with no usable tools. `read-only`: the agent can look but
+ * cannot write files or run write-capable commands. See agents/tool-policy.ts.
+ */
+export type ToolPolicy = 'none' | 'read-only';
+
 /** Balanced baseline used when no chat, bot, or agent effort is configured. */
 export const DEFAULT_THINKING_EFFORT: ThinkingEffort = 'medium';
 
@@ -221,10 +229,12 @@ export interface AgentRequest {
   /**
    * Restrict the agent to this exact set of tool names. When set, the adapter
    * passes it to the CLI's allow-list flag so the agent cannot use any other
-   * tool. Used by Quick Question to enforce a read-only turn. Only enforced by
-   * the claude-code adapter today; other adapters rely on prompt instructions.
+   * tool. Only honoured by the claude-code adapter, and only as pre-approval;
+   * use `toolPolicy` for a boundary every adapter enforces.
    */
   allowedTools?: string[];
+  /** Hard tool boundary; overrides `skipPermissions`. See ToolPolicy. */
+  toolPolicy?: ToolPolicy;
   /**
    * Advertise Codey's user-visible browser command to this agent turn when
    * the Mac app has supplied a private bridge. Set only for task-performing
