@@ -6,6 +6,7 @@ import { thinkingDeltaFrom } from './thinking-stream';
 import { writeClaudeMcpConfig } from './mcp-config';
 import { ChecklistTracker, checklistFromTodos, isChecklistTool } from './checklist';
 import { claudeEffortArgs } from './effort';
+import { claudeToolPolicyArgs } from './tool-policy';
 import { agentSpawnOptions, cleanupProcessTreeAfterClose, terminateProcessTree, withForegroundPolicy } from './process-tree';
 
 export interface StreamEvent {
@@ -199,7 +200,9 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       ];
       args.push(...claudeEffortArgs(request.effort));
 
-      if (request.skipPermissions) {
+      if (request.toolPolicy) {
+        args.push(...claudeToolPolicyArgs(request.toolPolicy));
+      } else if (request.skipPermissions) {
         args.push('--dangerously-skip-permissions');
       }
 

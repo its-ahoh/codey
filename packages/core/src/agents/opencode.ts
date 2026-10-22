@@ -6,6 +6,7 @@ import { writeOpenCodeMcpConfig } from './mcp-config';
 import { ObservedToolEvent, ToolCallCollector } from './tool-events';
 import { ChecklistTracker, checklistFromTodos, isChecklistTool } from './checklist';
 import { opencodeEffortArgs } from './effort';
+import { opencodeToolPolicyEnv } from './tool-policy';
 import { agentSpawnOptions, cleanupProcessTreeAfterClose, terminateProcessTree, withForegroundPolicy } from './process-tree';
 
 export interface OpenCodeEvent {
@@ -78,7 +79,7 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
       // IDs owned by external plugins, so external plugins are not loaded in
       // a foreground-only gateway turn.
       const args = ['run', '--format', 'json', '--pure'];
-      if (request.skipPermissions) {
+      if (!request.toolPolicy && request.skipPermissions) {
         args.push('--dangerously-skip-permissions');
       }
 
@@ -116,6 +117,8 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
       // Deliberately after extraEnv: plugin MCP config must win even over a
       // user-supplied OPENCODE_CONFIG, or enabled plugins would silently vanish.
       Object.assign(env, mcpEnv);
+      // Last, so neither extraEnv nor plugin config can loosen the boundary.
+      if (request.toolPolicy) Object.assign(env, opencodeToolPolicyEnv(request.toolPolicy));
       const childProcess: ChildProcess = spawn('opencode', args, {
         stdio: ['ignore', 'pipe', 'pipe'],
         cwd: request.context?.workingDir || undefined,

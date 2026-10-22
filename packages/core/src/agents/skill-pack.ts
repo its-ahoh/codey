@@ -1,72 +1,123 @@
+import { execFile } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { promisify } from 'util';
 
-import { CODEY_SKILLS_REPO, CODEY_SKILLS_REPO_REF, CODEY_SKILLS_REPO_URL, CODEY_INSTALL_MARKER, type BrowserSkillStatus } from './browser-skill';
+import { CODEY_INSTALL_MARKER } from './browser-skill';
 import { CODEY_GLOBAL_SKILLS_SUBDIR } from './codey-skills';
 
-/**
- * A skill pack is a plugin made of many skills: every directory under one
- * folder of the skills repository, installed side by side into
- * `~/.codey/skills/<name>` so each agent discovers them one level deep, the only
- * depth every agent scans.
- *
- * pstack is the one pack today. Its skills carry extra files beside SKILL.md
- * (`poteto-mode` has 44 playbooks), so an install downloads whole folders, not
- * one markdown file the way the Browser plugin does.
- *
- * A manifest outside the skills root records which names the pack owns and the
- * version it installed. It is what Uninstall deletes and what Update compares;
- * without it, a pack's 47 directories would be indistinguishable from skills
- * the user wrote.
- */
-export const PSTACK_PACK_ID = 'pstack';
-/** The repository folder whose subdirectories are pstack's skills. */
-export const PSTACK_REPO_DIR = 'skills';
+const execFileAsync = promisify(execFile);
 
+/**
+ * A skill pack is a set of skills the user imports in one step — a git
+ * repository, a GitHub folder link, or a local folder whose subdirectories
+ * each hold a SKILL.md. pstack is the usual example. Every skill is installed
+ * side by side into `~/.codey/skills/<name>`, the shared root every agent
+ * discovers one level deep, so the whole pack reaches every agent at once.
+ *
+ * A manifest outside the skills root records which names the pack owns, where
+ * it came from and which commit it installed. It is what Uninstall deletes and
+ * what Update compares; without it, a pack's directories would be
+ * indistinguishable from skills the user wrote.
+ *
+ * Codey ships no pack of its own. The user picks the source.
+ */
 const SKILL_FILE = 'SKILL.md';
 const DISABLED_SKILL_FILE = 'SKILL.md.disabled';
-const DOWNLOAD_CONCURRENCY = 8;
+const GIT_TIMEOUT_MS = 120_000;
+
+/** Where pstack lived before Codey stopped publishing a copy of it. A legacy
+ *  install is migrated to a pack pointing here so Update keeps working. */
+export const PSTACK_UPSTREAM_SOURCE = 'https://github.com/cursor/plugins/tree/main/pstack';
 
 export interface SkillPackManifest {
-  /** Tree hash of the pack's repository folder — the pack's version. */
-  hash: string;
+  id: string;
+  /** What the user typed, normalized: a git URL, a GitHub folder link, or an
+   *  absolute local path. Update installs from it again. */
+  source: string;
+  /** Commit the pack was installed from; absent for a local folder or a
+   *  migrated install whose commit is unknown. */
+  commit?: string;
   /** Skill directory names the pack installed. */
   skills: string[];
-  from: string;
   installedAt: string;
 }
 
-export type SkillPackInstallResult =
-  | { installed: true; skills: string[]; file: string; source: 'repository' }
-  /** Refused: these names already exist and Codey did not write them. `dir`
-   *  is the first one, for callers that show a single path. */
-  | { installed: false; conflict: 'user-copy'; dir: string; names: string[] };
+export interface SkillPackInfo extends SkillPackManifest {
+  /** 'disabled' when every skill in the pack is turned off. */
+  state: 'installed' | 'disabled';
+  /** The shared skills root the pack's skills live in. */
+  dir: string;
+}
 
-interface TreeEntry { path: string; type: string; sha: string }
+export type SkillPackInstallResult =
+  | { installed: true; id: string; skills: string[]; dir: string }
+  /** Refused: these names already exist and the pack did not write them. */
+  | { installed: false; conflict: 'user-copy'; id: string; dir: string; names: string[] };
+
+export type SkillPackSource =
+  | { kind: 'git'; url: string; ref?: string; subdir?: string; source: string }
+  | { kind: 'local'; dir: string; source: string };
 
 function skillsRoot(home: string): string {
   return path.join(path.resolve(home), CODEY_GLOBAL_SKILLS_SUBDIR);
 }
 
-export function skillPackManifestPath(id: string = PSTACK_PACK_ID, home: string = os.homedir()): string {
-  return path.join(path.resolve(home), '.codey', 'plugins', `${id}.json`);
+function packsDir(home: string): string {
+  return path.join(path.resolve(home), '.codey', 'skill-packs');
 }
 
-export function readSkillPackManifest(id: string = PSTACK_PACK_ID, home: string = os.homedir()): SkillPackManifest | undefined {
+/** A directory name that cannot climb out of the skills root. */
+function isSafeName(name: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name) && !name.includes('..');
+}
+
+export function skillPackManifestPath(id: string, home: string = os.homedir()): string {
+  return path.join(packsDir(home), `${id}.json`);
+}
+
+export function readSkillPackManifest(id: string, home: string = os.homedir()): SkillPackManifest | undefined {
+  if (!isSafeName(id)) return undefined;
   try {
     const parsed = JSON.parse(fs.readFileSync(skillPackManifestPath(id, home), 'utf8')) as Partial<SkillPackManifest>;
-    if (typeof parsed.hash !== 'string' || !Array.isArray(parsed.skills)) return undefined;
-    const skills = parsed.skills.filter((name): name is string => typeof name === 'string' && isSafeSkillName(name));
-    return { hash: parsed.hash, skills, from: String(parsed.from ?? ''), installedAt: String(parsed.installedAt ?? '') };
+    if (typeof parsed.source !== 'string' || !Array.isArray(parsed.skills)) return undefined;
+    const skills = parsed.skills.filter((name): name is string => typeof name === 'string' && isSafeName(name));
+    return {
+      id,
+      source: parsed.source,
+      ...(typeof parsed.commit === 'string' ? { commit: parsed.commit } : {}),
+      skills,
+      installedAt: String(parsed.installedAt ?? ''),
+    };
   } catch {
     return undefined;
   }
 }
 
-/** A directory name that cannot climb out of the skills root. */
-function isSafeSkillName(name: string): boolean {
-  return /^[a-z0-9][a-z0-9-]*$/.test(name);
+function packState(manifest: SkillPackManifest, home: string): SkillPackInfo['state'] {
+  const root = skillsRoot(home);
+  return manifest.skills.some(name => fs.existsSync(path.join(root, name, SKILL_FILE))) ? 'installed' : 'disabled';
+}
+
+export function listSkillPacks(home: string = os.homedir()): SkillPackInfo[] {
+  let files: string[];
+  try { files = fs.readdirSync(packsDir(home)); } catch { return []; }
+  return files
+    .filter(file => file.endsWith('.json'))
+    .map(file => readSkillPackManifest(file.slice(0, -'.json'.length), home))
+    .filter((manifest): manifest is SkillPackManifest => manifest !== undefined)
+    .map(manifest => ({ ...manifest, state: packState(manifest, home), dir: skillsRoot(home) }))
+    .sort((a, b) => a.id.localeCompare(b.id));
+}
+
+/** lstat, not stat: a symlink is reported as itself, never as its target. */
+function lexists(target: string): boolean {
+  try { fs.lstatSync(target); return true; } catch { return false; }
+}
+
+function isRegularFile(target: string): boolean {
+  try { return fs.lstatSync(target).isFile(); } catch { return false; }
 }
 
 /** The SKILL.md (or disabled copy) in a directory, if any. */
@@ -84,174 +135,188 @@ function isUserOwned(dir: string): boolean {
   return text === undefined || !text.includes(CODEY_INSTALL_MARKER);
 }
 
-export function skillPackStatus(id: string = PSTACK_PACK_ID, home: string = os.homedir()): BrowserSkillStatus {
-  const base = { dir: skillsRoot(home), sourceUrl: `${CODEY_SKILLS_REPO_URL}/tree/${CODEY_SKILLS_REPO_REF}/${PSTACK_REPO_DIR}` };
-  const manifest = readSkillPackManifest(id, home);
-  if (!manifest) return { ...base, state: 'absent' };
-  const anyActive = manifest.skills.some(name => fs.existsSync(path.join(base.dir, name, SKILL_FILE)));
-  return { ...base, state: anyActive ? 'installed' : 'disabled', origin: 'codey', hash: manifest.hash };
+/**
+ * Read what the user typed. A path is a local folder; a GitHub `tree` link
+ * names a folder inside a repository (pstack lives in one); anything else is
+ * handed to git as a clone URL.
+ */
+export function parseSkillPackSource(input: string, home: string = os.homedir()): SkillPackSource {
+  const text = input.trim();
+  if (!text) throw new Error('Enter a git URL, a GitHub folder link, or a local folder');
+  if (text === '~' || text.startsWith('~/') || text.startsWith('/') || text.startsWith('./') || text.startsWith('../')) {
+    const dir = path.resolve(text === '~' ? home : text.startsWith('~/') ? path.join(home, text.slice(2)) : text);
+    return { kind: 'local', dir, source: dir };
+  }
+  const tree = /^https?:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/tree\/([^/]+)(?:\/(.+?))?\/?$/.exec(text);
+  if (tree) {
+    const [, owner, repo, ref, subdir] = tree;
+    if (subdir?.split('/').some(part => part === '..' || part === '.')) throw new Error(`Not a folder inside the repository: ${subdir}`);
+    return {
+      kind: 'git',
+      url: `https://github.com/${owner}/${repo}.git`,
+      ref,
+      ...(subdir ? { subdir } : {}),
+      source: `https://github.com/${owner}/${repo}/tree/${ref}${subdir ? `/${subdir}` : ''}`,
+    };
+  }
+  if (text.startsWith('-')) throw new Error(`Not a git URL: ${text}`);
+  return { kind: 'git', url: text, source: text.replace(/\/+$/, '') };
 }
 
-async function fetchTree(timeoutMs: number): Promise<TreeEntry[]> {
-  const url = `https://api.github.com/repos/${CODEY_SKILLS_REPO}/git/trees/${CODEY_SKILLS_REPO_REF}?recursive=1`;
-  const response = await fetch(url, {
-    headers: { accept: 'application/vnd.github+json', 'user-agent': 'codey' },
-    signal: AbortSignal.timeout(timeoutMs),
+/** The pack's name: the folder it was taken from, or the repository's. */
+export function skillPackId(source: SkillPackSource): string {
+  const segments = (source.kind === 'local' ? source.dir : source.subdir ?? source.url.replace(/[:]/g, '/'))
+    .split('/')
+    .map(part => part.replace(/\.git$/, ''))
+    .filter(Boolean);
+  // A generic `skills` folder says nothing about the pack; its parent does.
+  let base = segments.pop() ?? '';
+  if (base === 'skills' && segments.length) base = segments.pop()!;
+  const id = base.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^[^a-z0-9]+|-+$/g, '');
+  if (!id || !isSafeName(id)) throw new Error('Could not name this skill pack from its source');
+  return id;
+}
+
+async function git(args: string[], cwd?: string): Promise<string> {
+  const { stdout } = await execFileAsync('git', args, {
+    cwd,
+    timeout: GIT_TIMEOUT_MS,
+    maxBuffer: 16 * 1024 * 1024,
+    // A private repository must fail, not wait for a password nobody can type.
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
   });
-  if (!response.ok) throw new Error(`${url} returned ${response.status}`);
-  const body = await response.json() as { tree?: unknown; truncated?: unknown };
-  // A truncated tree would install a partial pack and call it complete.
-  if (body.truncated === true) throw new Error('The skills repository tree is too large to read in one request');
-  if (!Array.isArray(body.tree)) throw new Error(`${url} returned no tree`);
-  return body.tree.filter((e): e is TreeEntry =>
-    typeof e?.path === 'string' && typeof e?.type === 'string' && typeof e?.sha === 'string');
+  return stdout.trim();
 }
 
-/** The pack's version and its files, grouped by skill. */
-function packContents(tree: TreeEntry[], repoDir: string): { hash: string; skills: Map<string, string[]>; folderHash: Map<string, string> } {
-  const root = tree.find(e => e.path === repoDir && e.type === 'tree');
-  if (!root || !/^[0-9a-f]{40}$/.test(root.sha)) throw new Error(`no ${repoDir} folder in the skills repository`);
-  const skills = new Map<string, string[]>();
-  const folderHash = new Map<string, string>();
-  for (const entry of tree) {
-    if (!entry.path.startsWith(`${repoDir}/`)) continue;
-    const rest = entry.path.slice(repoDir.length + 1);
-    const [name, ...inner] = rest.split('/');
-    if (!isSafeSkillName(name)) continue;
-    if (inner.length === 0) {
-      if (entry.type === 'tree') folderHash.set(name, entry.sha);
-      continue;
+/** Skill folders inside a pack root: its `skills/` folder when it has one,
+ *  otherwise its own children. */
+function findPackSkills(root: string): Map<string, string> {
+  if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) throw new Error(`Not a folder: ${root}`);
+  if (fs.existsSync(path.join(root, SKILL_FILE))) {
+    throw new Error('This folder is a single skill, not a pack. Install it as a skill instead.');
+  }
+  const scan = (dir: string): Map<string, string> => {
+    const found = new Map<string, string>();
+    let entries: fs.Dirent[];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return found; }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !isSafeName(entry.name)) continue;
+      const skillDir = path.join(dir, entry.name);
+      // A symlinked SKILL.md could point anywhere, and stamping it would
+      // write there. Only a real file makes a folder a skill.
+      if (isRegularFile(path.join(skillDir, SKILL_FILE))) found.set(entry.name, skillDir);
     }
-    if (entry.type !== 'blob') continue;
-    // Refuse paths a malicious tree could use to escape the skill directory.
-    if (inner.some(part => part === '' || part === '.' || part === '..')) continue;
-    const files = skills.get(name) ?? [];
-    files.push(inner.join('/'));
-    skills.set(name, files);
-  }
-  for (const [name, files] of skills) {
-    if (!files.includes(SKILL_FILE)) skills.delete(name);
-  }
-  if (skills.size === 0) throw new Error(`${repoDir} in the skills repository holds no skills`);
-  return { hash: root.sha, skills, folderHash };
+    return found;
+  };
+  const nested = scan(path.join(root, 'skills'));
+  const skills = nested.size ? nested : scan(root);
+  if (skills.size === 0) throw new Error(`No skills found in ${root}: expected folders that each hold a ${SKILL_FILE}`);
+  return skills;
 }
 
-function rawUrl(repoPath: string): string {
-  const encoded = repoPath.split('/').map(encodeURIComponent).join('/');
-  return `https://raw.githubusercontent.com/${CODEY_SKILLS_REPO}/${CODEY_SKILLS_REPO_REF}/${encoded}`;
-}
-
-async function download(repoPath: string, timeoutMs: number): Promise<Buffer> {
-  const url = rawUrl(repoPath);
-  const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
-  if (!response.ok) throw new Error(`${url} returned ${response.status}`);
-  return Buffer.from(await response.arrayBuffer());
-}
-
-/** A SKILL.md download that is the skill we asked for, not a proxy's page. */
-function isPublishedSkill(text: string, name: string): boolean {
-  const frontmatter = /^---\n([\s\S]*?)\n---\n/.exec(text)?.[1];
-  if (!frontmatter) return false;
-  return new RegExp(`^name:[ \t]*${name}[ \t]*$`, 'm').test(frontmatter)
-    && /^description:[ \t]*\S/m.test(frontmatter);
-}
-
-function stamp(markdown: string, name: string, hash: string | undefined, pack: string, today: string): string {
-  const line = `${CODEY_INSTALL_MARKER} ${name}${hash ? ` ${hash}` : ''} from ${CODEY_SKILLS_REPO} (${pack}) on ${today}. `
-    + 'Manage it in Tools -> Plugins; edits here are replaced by the next update. -->';
-  const frontmatter = /^---\n[\s\S]*?\n---\n/.exec(markdown);
+function stamp(markdown: string, name: string, source: string, pack: string, today: string): string {
+  const line = `${CODEY_INSTALL_MARKER} ${name} from ${source} (${pack}) on ${today}. `
+    + 'Manage it in Tools -> Skills; edits here are replaced by the next update. -->';
+  const frontmatter = /^---\r?\n[\s\S]*?\r?\n---\r?\n/.exec(markdown);
   if (!frontmatter) return `${line}\n\n${markdown}`;
   return `${markdown.slice(0, frontmatter[0].length)}\n${line}\n\n${markdown.slice(frontmatter[0].length).replace(/^\n+/, '')}`;
 }
 
-/** Waits for every item in a batch, even after one fails, so nothing is still
- *  writing when the caller cleans up; then rethrows the first failure. */
-async function inBatches<T>(items: T[], size: number, run: (item: T) => Promise<void>): Promise<void> {
-  for (let i = 0; i < items.length; i += size) {
-    const settled = await Promise.allSettled(items.slice(i, i + size).map(run));
-    const failed = settled.find((s): s is PromiseRejectedResult => s.status === 'rejected');
-    if (failed) throw failed.reason;
-  }
-}
-
 /**
- * Install (or update) every skill in the pack. Downloads everything into a
- * staging directory first and only then swaps it into place, so a dropped
- * connection leaves the previous install — or nothing — rather than half a
- * pack. There is no bundled fallback: the pack is too large to ship in the app.
+ * Install (or update) every skill in a pack. The source is cloned or read into
+ * a staging directory first and only then swapped into place, so a failed
+ * clone leaves the previous install — or nothing — rather than half a pack.
  *
- * Refuses, writing nothing, when any name is taken by a skill Codey did not
- * write; `force` is the caller's confirmation to replace them.
+ * Refuses, writing nothing, when any name is taken by a skill the pack does
+ * not already own; `force` is the caller's confirmation to replace them.
  */
 export async function installSkillPack(
+  input: string,
   home: string = os.homedir(),
-  { id = PSTACK_PACK_ID, repoDir = PSTACK_REPO_DIR, force = false, timeoutMs = 15000, today = new Date().toISOString().slice(0, 10) }: {
-    id?: string; repoDir?: string; force?: boolean; timeoutMs?: number; today?: string;
-  } = {},
+  { force = false, today = new Date().toISOString().slice(0, 10) }: { force?: boolean; today?: string } = {},
 ): Promise<SkillPackInstallResult> {
+  const source = parseSkillPackSource(input, home);
+  const id = skillPackId(source);
   const root = skillsRoot(home);
-  const tree = await fetchTree(timeoutMs);
-  const { hash, skills, folderHash } = packContents(tree, repoDir);
-  const names = [...skills.keys()].sort();
-
-  const taken = names.filter(name => isUserOwned(path.join(root, name)));
-  if (taken.length && !force) {
-    return { installed: false, conflict: 'user-copy', dir: path.join(root, taken[0]), names: taken };
+  const previous = readSkillPackManifest(id, home);
+  if (previous && previous.source !== source.source) {
+    throw new Error(`A skill pack named "${id}" is already installed from ${previous.source}. Remove it first.`);
   }
 
-  // An update keeps what the user turned off: a skill disabled on its own, or,
-  // when the whole pack is off, every skill including ones new to the pack.
-  const previous = readSkillPackManifest(id, home);
-  const packOff = previous !== undefined && skillPackStatus(id, home).state === 'disabled';
-  const disabled = new Set(names.filter(name => previous?.skills.includes(name)
-    ? fs.existsSync(path.join(root, name, DISABLED_SKILL_FILE)) && !fs.existsSync(path.join(root, name, SKILL_FILE))
-    : packOff));
-
-  const manifestFile = skillPackManifestPath(id, home);
-  const staging = path.join(path.dirname(manifestFile), `.${id}-staging-${process.pid}-${Date.now()}`);
-  await fs.promises.mkdir(staging, { recursive: true });
+  await fs.promises.mkdir(packsDir(home), { recursive: true });
+  const staging = await fs.promises.mkdtemp(path.join(packsDir(home), `.${id}-staging-`));
   try {
-    const files = names.flatMap(name => skills.get(name)!.map(file => ({ name, file })));
-    await inBatches(files, DOWNLOAD_CONCURRENCY, async ({ name, file }) => {
-      let bytes = await download(`${repoDir}/${name}/${file}`, timeoutMs);
-      if (file === SKILL_FILE) {
-        const text = bytes.toString('utf8');
-        if (!isPublishedSkill(text, name)) throw new Error(`${repoDir}/${name}/${SKILL_FILE} is not the ${name} skill`);
-        bytes = Buffer.from(stamp(text, name, folderHash.get(name), id, today), 'utf8');
-      }
-      const target = path.join(staging, name, file === SKILL_FILE && disabled.has(name) ? DISABLED_SKILL_FILE : file);
-      await fs.promises.mkdir(path.dirname(target), { recursive: true });
-      await fs.promises.writeFile(target, bytes);
+    let packRoot: string;
+    let commit: string | undefined;
+    if (source.kind === 'git') {
+      const checkout = path.join(staging, 'repo');
+      await git(['clone', '--depth', '1', ...(source.ref ? ['--branch', source.ref] : []), '--', source.url, checkout]);
+      commit = await git(['rev-parse', 'HEAD'], checkout);
+      packRoot = source.subdir ? path.join(checkout, ...source.subdir.split('/')) : checkout;
+    } else {
+      packRoot = source.dir;
+    }
+
+    const found = findPackSkills(packRoot);
+    const names = [...found.keys()].sort();
+    // A name is the pack's to replace only if the pack installed it and the
+    // user has not since put their own skill there.
+    const taken = names.filter(name => {
+      const dir = path.join(root, name);
+      return lexists(dir) && (!previous?.skills.includes(name) || isUserOwned(dir));
     });
+    if (taken.length && !force) {
+      return { installed: false, conflict: 'user-copy', id, dir: path.join(root, taken[0]), names: taken };
+    }
+
+    // An update keeps what the user turned off: a skill disabled on its own,
+    // or, when the whole pack is off, every skill including new ones.
+    const packOff = previous !== undefined && packState(previous, home) === 'disabled';
+    const disabled = new Set(names.filter(name => previous?.skills.includes(name)
+      ? fs.existsSync(path.join(root, name, DISABLED_SKILL_FILE)) && !fs.existsSync(path.join(root, name, SKILL_FILE))
+      : packOff));
+
+    const out = path.join(staging, 'out');
+    for (const name of names) {
+      const dest = path.join(out, name);
+      // Symlinks are dropped: a pack's link can point anywhere on this Mac,
+      // and an installed skill must hold only its own files.
+      await fs.promises.cp(found.get(name)!, dest, {
+        recursive: true,
+        filter: from => !fs.lstatSync(from).isSymbolicLink(),
+      });
+      await fs.promises.rm(path.join(dest, DISABLED_SKILL_FILE), { force: true });
+      const text = await fs.promises.readFile(path.join(found.get(name)!, SKILL_FILE), 'utf8');
+      // Written fresh ('wx' refuses an existing path), never through a link.
+      await fs.promises.rm(path.join(dest, SKILL_FILE), { force: true });
+      await fs.promises.writeFile(path.join(dest, SKILL_FILE), stamp(text, name, source.source, id, today), { encoding: 'utf8', flag: 'wx' });
+      if (disabled.has(name)) await fs.promises.rename(path.join(dest, SKILL_FILE), path.join(dest, DISABLED_SKILL_FILE));
+    }
 
     await fs.promises.mkdir(root, { recursive: true });
     for (const name of names) {
       const dest = path.join(root, name);
       await fs.promises.rm(dest, { recursive: true, force: true });
-      await fs.promises.rename(path.join(staging, name), dest);
+      await fs.promises.rename(path.join(out, name), dest);
     }
     // Skills the previous install had but the pack no longer publishes.
     for (const name of previous?.skills ?? []) {
-      if (skills.has(name)) continue;
+      if (found.has(name)) continue;
       const dir = path.join(root, name);
       if (!isUserOwned(dir)) await fs.promises.rm(dir, { recursive: true, force: true });
     }
-    const manifest: SkillPackManifest = { hash, skills: names, from: CODEY_SKILLS_REPO, installedAt: today };
-    await fs.promises.writeFile(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+    const manifest: Omit<SkillPackManifest, 'id'> = { source: source.source, ...(commit ? { commit } : {}), skills: names, installedAt: today };
+    await fs.promises.writeFile(skillPackManifestPath(id, home), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+    return { installed: true, id, skills: names, dir: root };
   } finally {
     await fs.promises.rm(staging, { recursive: true, force: true });
   }
-  return { installed: true, skills: names, file: manifestFile, source: 'repository' };
 }
 
 /** Turn every skill in the pack on or off, the way the Skills tab does one. */
-export async function setSkillPackEnabled(
-  enabled: boolean,
-  home: string = os.homedir(),
-  { id = PSTACK_PACK_ID }: { id?: string } = {},
-): Promise<void> {
+export async function setSkillPackEnabled(id: string, enabled: boolean, home: string = os.homedir()): Promise<void> {
   const manifest = readSkillPackManifest(id, home);
-  if (!manifest) throw new Error(`Plugin ${id} is not installed`);
+  if (!manifest) throw new Error(`Skill pack ${id} is not installed`);
   const root = skillsRoot(home);
   for (const name of manifest.skills) {
     const dir = path.join(root, name);
@@ -266,8 +331,9 @@ export async function setSkillPackEnabled(
  * has since replaced with their own skill is kept unless `force`.
  */
 export async function uninstallSkillPack(
+  id: string,
   home: string = os.homedir(),
-  { id = PSTACK_PACK_ID, force = false }: { id?: string; force?: boolean } = {},
+  { force = false }: { force?: boolean } = {},
 ): Promise<{ removed: boolean; conflict?: 'user-copy'; names?: string[] }> {
   const manifest = readSkillPackManifest(id, home);
   if (!manifest) return { removed: false };
@@ -279,14 +345,55 @@ export async function uninstallSkillPack(
   return { removed: true };
 }
 
-/** Compare the installed pack against the published folder. Throws offline. */
+/**
+ * Compare the installed commit against the source's tip. A local folder has
+ * no tip (`needsUpdate: null`); an install with no recorded commit always has
+ * one to take. Throws when the remote cannot be reached.
+ */
 export async function checkSkillPackUpdate(
+  id: string,
   home: string = os.homedir(),
-  { id = PSTACK_PACK_ID, repoDir = PSTACK_REPO_DIR, timeoutMs = 5000 }: { id?: string; repoDir?: string; timeoutMs?: number } = {},
-): Promise<{ recorded?: string; current: string; needsUpdate: boolean }> {
-  const tree = await fetchTree(timeoutMs);
-  const root = tree.find(e => e.path === repoDir && e.type === 'tree');
-  if (!root) throw new Error(`no ${repoDir} folder in the skills repository`);
-  const recorded = readSkillPackManifest(id, home)?.hash;
-  return { recorded, current: root.sha, needsUpdate: recorded !== undefined && recorded !== root.sha };
+): Promise<{ recorded?: string; current?: string; needsUpdate: boolean | null }> {
+  const manifest = readSkillPackManifest(id, home);
+  if (!manifest) throw new Error(`Skill pack ${id} is not installed`);
+  const source = parseSkillPackSource(manifest.source, home);
+  if (source.kind === 'local') return { needsUpdate: null };
+  const listed = await git(['ls-remote', '--', source.url, source.ref ?? 'HEAD']);
+  const current = /^([0-9a-f]{40})\s/m.exec(listed)?.[1];
+  if (!current) throw new Error(`${source.url} has no ${source.ref ?? 'HEAD'}`);
+  return { recorded: manifest.commit, current, needsUpdate: manifest.commit !== current };
+}
+
+/**
+ * Codey used to publish its own copy of pstack and install it from the
+ * Plugins tab, recording `~/.codey/plugins/pstack.json`. Turn that record into
+ * an ordinary pack pointing at pstack's upstream, so the installed skills keep
+ * working untouched and Update, disable and Remove move to the Skills tab.
+ * Safe to run on every launch.
+ */
+export async function migrateLegacyPstack(home: string = os.homedir()): Promise<boolean> {
+  const legacy = path.join(path.resolve(home), '.codey', 'plugins', 'pstack.json');
+  let parsed: { skills?: unknown; installedAt?: unknown };
+  try {
+    parsed = JSON.parse(await fs.promises.readFile(legacy, 'utf8'));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    parsed = {};
+  }
+  if (!readSkillPackManifest('pstack', home)) {
+    const skills = Array.isArray(parsed.skills)
+      ? parsed.skills.filter((name): name is string => typeof name === 'string' && isSafeName(name))
+      : [];
+    const manifest: Omit<SkillPackManifest, 'id'> = {
+      source: PSTACK_UPSTREAM_SOURCE,
+      skills,
+      installedAt: typeof parsed.installedAt === 'string' ? parsed.installedAt : '',
+    };
+    await fs.promises.mkdir(packsDir(home), { recursive: true });
+    const target = skillPackManifestPath('pstack', home);
+    await fs.promises.writeFile(`${target}.tmp`, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+    await fs.promises.rename(`${target}.tmp`, target);
+  }
+  await fs.promises.rm(legacy, { force: true });
+  return true;
 }

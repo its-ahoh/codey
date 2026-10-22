@@ -10,6 +10,7 @@ import { ToolCallCollector } from './tool-events';
 import { ChecklistTracker, checklistFromCodexItem } from './checklist';
 import { codexMcpArgs } from './mcp-config';
 import { codexEffortArgs, shouldDegradeEffort, withDegradeNotice, type EffortRetryable } from './effort';
+import { codexToolPolicyArgs } from './tool-policy';
 import { agentSpawnOptions, cleanupProcessTreeAfterClose, terminateProcessTree, withForegroundPolicy } from './process-tree';
 
 /**
@@ -133,7 +134,9 @@ export class CodexAdapter extends BaseAgentAdapter {
         '--skip-git-repo-check',
       );
       args.push(...codexEffortArgs(request.effort));
-      if (request.skipPermissions) {
+      if (request.toolPolicy) {
+        args.push(...codexToolPolicyArgs(request.toolPolicy));
+      } else if (request.skipPermissions) {
         args.push('--dangerously-bypass-approvals-and-sandbox');
       }
       args.push('-o', outFile);

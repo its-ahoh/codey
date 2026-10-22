@@ -49,6 +49,29 @@ export interface SkillsListResult {
   projectDir: string | null
 }
 
+/** A set of skills imported in one step into the shared skills root. */
+export interface SkillPackInfo {
+  id: string
+  /** Git URL, GitHub folder link or local folder it was imported from. */
+  source: string
+  commit?: string
+  skills: string[]
+  installedAt: string
+  state: 'installed' | 'disabled'
+  dir: string
+}
+
+export type SkillPackInstallResult =
+  | { installed: true; id: string; skills: string[]; dir: string }
+  | { installed: false; conflict: 'user-copy'; id: string; dir: string; names: string[] }
+
+export interface SkillPackUpdateCheck {
+  recorded?: string
+  current?: string
+  /** null: unknown (offline, or a local folder with nothing to compare). */
+  needsUpdate: boolean | null
+}
+
 export interface PluginInfo {
   id: string
   name: string
@@ -451,6 +474,13 @@ declare global {
         remove: (dir: string) => Promise<IpcResult<void>>
         setEnabled: (dir: string, enabled: boolean) => Promise<IpcResult<void>>
         reveal: (dir: string) => Promise<IpcResult<void>>
+      }
+      skillPacks: {
+        list: () => Promise<IpcResult<SkillPackInfo[]>>
+        install: (source: string, force?: boolean) => Promise<IpcResult<SkillPackInstallResult>>
+        uninstall: (id: string, force?: boolean) => Promise<IpcResult<{ removed: boolean; conflict?: 'user-copy'; names?: string[] }>>
+        setEnabled: (id: string, enabled: boolean) => Promise<IpcResult<void>>
+        check: (id: string) => Promise<IpcResult<SkillPackUpdateCheck>>
       }
       memory: {
         /** Read-only: what each agent knows about the user, in every project. */

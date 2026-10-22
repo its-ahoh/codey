@@ -1,14 +1,12 @@
 import { canUseAideForFirstRoute, routeAutomaticFirst } from './automatic-first-route';
 import { TaskBriefCache } from './task-brief-cache';
-import { openingChatTitle } from './chat-title';
-import type { AgentRunLeaseProvider } from "@codey/core";
 import { botOutputStream } from './bot-output';
 import { teamInteractionResponse } from './team-interaction';
 import { inheritWorktreeMemory } from './worktree-memory';
-import { CoMemoClient } from '@codey/core';
+import { CoMemoClient, type AgentRunLeaseProvider } from '@codey/core';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { matchAutomaticChatTask } from './automatic-chat-task';
-import { chatTaskContext, chatSessionScope, runAideJson, type ChatTaskRoute, type ChatTurnMessageIds } from '@codey/core';
+import { chatTaskForMessage } from './automatic-chat-task';
+import { chatTaskContext, chatSessionScope, type ChatTaskRoute, type ChatTurnMessageIds } from '@codey/core';
 import { publishTeamFinal, composeTeamFinal, planTeamFooter, isSoloMentionRun, parseTeamResultLines, teamStepRecords, TeamStepRecord } from './team-finalizer';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -599,8 +597,10 @@ export class Codey {
     return { agent, model };
   }
 
+  /** Coordination calls (Advisor, Judge, distiller) answer from the prompt
+   *  alone. Tools are removed at the CLI, not just forbidden in the prompt. */
   private advisorRunner = (req: AgentRequest): Promise<AgentResponse> => {
-    return this.runWithFallback(req.agent, req);
+    return this.runWithFallback(req.agent, { ...req, toolPolicy: 'none' });
   };
 
   /** Conservative gate for Sequential/Graph teams. Invalid, failed, or
@@ -640,6 +640,7 @@ export class Codey {
         agent,
         model,
         context: { workingDir },
+        toolPolicy: 'none',
         onStream: () => {},
         onThinking: () => {},
         onStatus: () => {},
@@ -5370,6 +5371,7 @@ Example: /model gpt-4.1 write a Python script`;
             agent: mAgent,
             model: mModel,
             context: { workingDir },
+            toolPolicy: 'none',
             onStream: () => {},
             onThinking: () => {},
             onStatus: () => {},
@@ -6151,6 +6153,7 @@ Example: /model gpt-4.1 write a Python script`;
         context: { workingDir },
         skipPermissions: true,
         allowedTools: READ_ONLY_TOOLS,
+        toolPolicy: 'read-only',
         onStream,
         onStatus,
         signal: abortController.signal,
@@ -6275,29 +6278,8 @@ Example: /model gpt-4.1 write a Python script`;
     }
     const directTaskChat = chat.selection.type !== 'team' && chat.botChat?.kind !== 'group' && !chat.pendingTeam && chat.kind !== 'automation';
     let taskId: string | undefined;
-    let classifiedTitle: string | undefined;
     if (directTaskChat) {
-      const matchingAbort = new AbortController();
-      const ownsMatchingAbort = !this.chatAborts.has(chatId);
-      if (ownsMatchingAbort) this.chatAborts.set(chatId, matchingAbort);
-      try {
-        const decision = await matchAutomaticChatTask(chat, userTextParam, taskRoute,
-          this.isAideConfigured() && !/^\s*(?:\/|@(?!["/~]))/.test(userTextParam)
-            ? prompt => runAideJson(prompt, { ...this.getAideOptions(matchingAbort.signal, false), timeoutMs: 8000, retries: 0 })
-            : undefined);
-        if (matchingAbort.signal.aborted) {
-          sinkParam({ type: 'stopped', chatId, userMessageId: '', text: userTextParam });
-          return { response: '', chatId };
-        }
-        taskId = decision.taskId;
-        if (decision.newTitle) {
-          classifiedTitle = decision.newTitle;
-          const updated = this.chatManager.createTask(chatId, decision.newTitle);
-          taskId = updated.tasks![updated.tasks!.length - 1].id;
-        }
-      } finally {
-        if (ownsMatchingAbort && this.chatAborts.get(chatId) === matchingAbort) this.chatAborts.delete(chatId);
-      }
+      taskId = chatTaskForMessage(chat, userTextParam, taskRoute);
     } else if (answeringTeam) {
       taskId = chat.pendingTeam?.taskId;
       if (taskRoute?.taskId !== undefined && taskRoute.taskId !== (taskId ?? null)) {
@@ -6738,7 +6720,7 @@ Example: /model gpt-4.1 write a Python script`;
     const titleAtStart = afterUser.title;
     const titlePromise: Promise<string> | undefined =
       afterUser.messages.length === 1 && this.isAideConfigured() && chat.kind !== 'automation' && !chat.botChat && !chat.titleIsManual
-        ? openingChatTitle(classifiedTitle, () => this.generateChatTitleSafe(userText))
+        ? this.generateChatTitleSafe(userText)
         : undefined;
 
     let streamedText = '';
