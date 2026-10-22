@@ -32,7 +32,11 @@ export async function deliverMediaExtras(args: MediaExtrasArgs): Promise<void> {
       failed = attachments.map(a => a.name);
     }
     if (failed.length > 0) {
-      await sendText(`Image failed to send: ${failed.join(', ')}`).catch(() => {});
+      try {
+        await sendText(`Image failed to send: ${failed.join(', ')}`);
+      } catch (err) {
+        log?.(`[media] failure note failed: ${(err as Error).message}`);
+      }
     }
   }
   for (const code of findMermaidBlocks(args.originalText)) {
@@ -41,6 +45,10 @@ export async function deliverMediaExtras(args: MediaExtrasArgs): Promise<void> {
       log?.(`[media] mermaid preview link skipped (${line.length} chars)`);
       continue;
     }
-    await sendText(line).catch(err => log?.(`[media] preview link failed: ${(err as Error).message}`));
+    try {
+      await sendText(line);
+    } catch (err) {
+      log?.(`[media] preview link failed: ${(err as Error).message}`);
+    }
   }
 }

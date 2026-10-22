@@ -129,7 +129,7 @@ export class IMessageHandler extends BaseChannelHandler {
     for (const img of images) {
       // execFile, not exec: the path never passes through a shell.
       const ok = await new Promise<boolean>(resolve => {
-        execFile('osascript', ['-e', buildSendFileScript(target, img.path)], err => {
+        execFile('osascript', ['-e', buildSendFileScript(target, img.path)], { timeout: 30_000 }, err => {
           if (err) console.error('[iMessage] Send file error:', err.message);
           resolve(!err);
         });

@@ -293,7 +293,15 @@ export class TelegramHandler extends BaseChannelHandler {
       try {
         // Telegram cannot show SVG as a photo; send it as a file instead.
         if (img.mimeType === 'image/svg+xml') await this.bot.sendDocument(target, img.path, {}, fileOptions);
-        else await this.bot.sendPhoto(target, img.path, {}, fileOptions);
+        else {
+          try {
+            await this.bot.sendPhoto(target, img.path, {}, fileOptions);
+          } catch {
+            // Photos are rejected for extreme dimensions (very tall charts) or
+            // size; a document upload has no such limits.
+            await this.bot.sendDocument(target, img.path, {}, fileOptions);
+          }
+        }
       } catch {
         failed.push(img.name);
       }

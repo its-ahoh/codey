@@ -14,7 +14,7 @@ describe('buildSendFileScript', () => {
 
 describe('IMessageHandler.sendImages', () => {
   it('sends one file per image with execFile and reports failures', async () => {
-    execFile.mockImplementation((_cmd: string, args: string[], cb: (e: Error | null) => void) => {
+    execFile.mockImplementation((_cmd: string, args: string[], _opts: unknown, cb: (e: Error | null) => void) => {
       cb(args[1].includes('bad.png') ? new Error('denied') : null);
     });
     const h = new IMessageHandler();
@@ -25,6 +25,7 @@ describe('IMessageHandler.sendImages', () => {
     expect(execFile).toHaveBeenCalledTimes(2);
     expect(execFile.mock.calls[0][0]).toBe('osascript');
     expect(execFile.mock.calls[0][1][0]).toBe('-e');
+    expect(execFile.mock.calls[0][2]).toEqual({ timeout: 30_000 });
     expect(failed).toEqual(['bad.png']);
   });
 });

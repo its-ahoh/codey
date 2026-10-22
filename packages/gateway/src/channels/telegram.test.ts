@@ -91,6 +91,17 @@ describe('TelegramHandler.sendImages', () => {
     expect(failed).toEqual(['b.svg']);
   });
 
+  it('falls back to a document when sendPhoto is rejected', async () => {
+    const bot = {
+      sendPhoto: vi.fn(async () => { throw new Error('PHOTO_INVALID_DIMENSIONS'); }),
+      sendDocument: vi.fn(async () => ({})),
+    };
+    const h = new TelegramHandler();
+    (h as any).bot = bot;
+    expect(await h.sendImages('42', [att('tall.png', 'image/png')])).toEqual([]);
+    expect(bot.sendDocument).toHaveBeenCalledWith('42', '/w/tall.png', {}, { filename: 'tall.png', contentType: 'image/png' });
+  });
+
   it('reports everything as failed when the bot is not running', async () => {
     expect(await new TelegramHandler().sendImages('42', [att('a.png', 'image/png')])).toEqual(['a.png']);
   });

@@ -47,6 +47,21 @@ describe('deliverMediaExtras', () => {
     expect(sendText.mock.calls.map(c => c[0])).toEqual(['Image failed to send: a.png', 'Image failed to send: c.png']);
   });
 
+  it('survives a sendText that throws synchronously', async () => {
+    const log = vi.fn();
+    const sendText = vi.fn((_text: string): Promise<void> => { throw new Error('sync boom'); });
+    await expect(deliverMediaExtras({
+      originalText: '```mermaid\ngraph TD\nA-->B\n```',
+      attachments: [img('a.png')],
+      maxLinkLength: 4096,
+      sendText,
+      sendImages: async () => ['a.png'],
+      log,
+    })).resolves.toBeUndefined();
+    expect(sendText).toHaveBeenCalledTimes(2);
+    expect(log).toHaveBeenCalledTimes(2);
+  });
+
   it('skips a preview link longer than the channel limit', async () => {
     const sendText = vi.fn(async () => {});
     await deliverMediaExtras({
