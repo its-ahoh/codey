@@ -3,7 +3,7 @@ import { TaskBriefCache } from './task-brief-cache';
 import { botOutputStream } from './bot-output';
 import { teamInteractionResponse } from './team-interaction';
 import { inheritWorktreeMemory } from './worktree-memory';
-import { CoMemoClient } from '@codey/core';
+import { CoMemoClient, type AgentRunLeaseProvider } from '@codey/core';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { chatTaskForMessage } from './automatic-chat-task';
 import { chatTaskContext, chatSessionScope, type ChatTaskRoute, type ChatTurnMessageIds } from '@codey/core';
@@ -808,6 +808,10 @@ export class Codey {
   }
 
   /** Apply runtime config changes (e.g. from the API). */
+  setAgentRunLeaseProvider(provider: AgentRunLeaseProvider): void {
+    this.agentFactory.setRunLeaseProvider(provider);
+  }
+
   async applyConfig(config: GatewayConfig): Promise<void> {
     const prevChannels = this.config.channels;
     this.config = config;

@@ -49,3 +49,6 @@ voice/*.bin
 
 # Local tooling artifacts
 graphify-out/
+
+# Verified native Cua Driver staged by prepare:cua
+codey-mac/build/cua-driver/
