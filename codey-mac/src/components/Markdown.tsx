@@ -5,6 +5,7 @@ import remarkCjkFriendly from 'remark-cjk-friendly'
 import { C } from '../theme'
 import { FilePathCwd, FilePathLink } from './FilePathLink'
 import { parseFileRef } from './filePathRef'
+import { markdownImageSource } from './markdownImage'
 
 interface MarkdownProps {
   children: string
@@ -285,6 +286,34 @@ const MarkdownInner: React.FC<MarkdownProps> = ({ children, variant = 'assistant
               {children}
             </a>
           ),
+          img: ({ src, alt }) => {
+            const source = markdownImageSource(typeof src === 'string' ? src : undefined)
+            if (source.kind === 'asset') {
+              return (
+                <img
+                  src={source.url}
+                  alt={alt ?? ''}
+                  style={{ display: 'block', maxWidth: '100%', borderRadius: 6, margin: `6px 0 ${M.blockGap}px` }}
+                />
+              )
+            }
+            if (source.kind === 'remote') {
+              return (
+                <a
+                  href={source.url}
+                  onClick={e => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    void openLink(source.url, e.metaKey || e.shiftKey)
+                  }}
+                  style={{ color: linkColor, textDecoration: 'underline' }}
+                >
+                  {alt || source.url}
+                </a>
+              )
+            }
+            return <span>{alt ? `[${alt}]` : ''}</span>
+          },
           strong: ({ children }) => <strong style={{ fontWeight: 700 }}>{children}</strong>,
           em: ({ children }) => <em style={{ fontStyle: 'italic' }}>{children}</em>,
           del: ({ children }) => <del style={{ opacity: 0.6 }}>{children}</del>,

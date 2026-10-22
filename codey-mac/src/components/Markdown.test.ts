@@ -28,3 +28,17 @@ describe('Markdown emphasis next to Chinese punctuation', () => {
     expect(render('a **bold** word')).toContain('>bold</strong>')
   })
 })
+
+describe('Markdown images', () => {
+  it('renders an upload snapshot as an img', () => {
+    const html = render('![Sales](</w/.codey/uploads/outputs/1-x-chart.png>)')
+    expect(html).toContain('<img')
+    expect(html).toContain('codey-asset://file/')
+  })
+
+  it('renders a remote image as a link, not an img', () => {
+    const html = render('![r](https://e.com/x.png)')
+    expect(html).not.toContain('<img')
+    expect(html).toContain('href="https://e.com/x.png"')
+  })
+})
