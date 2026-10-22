@@ -1,9 +1,9 @@
-import { exec } from 'child_process';
+import { exec, execFile } from 'child_process';
 import Database from 'better-sqlite3';
 import * as os from 'os';
 import * as path from 'path';
 import { BaseChannelHandler, formatChoicesAsText } from './base';
-import { UserMessage, GatewayResponse, ChatRoute } from '@codey/core';
+import { UserMessage, GatewayResponse, ChatRoute, FileAttachment } from '@codey/core';
 
 const CHAT_DB_PATH = path.join(os.homedir(), 'Library', 'Messages', 'chat.db');
 const CORE_DATA_EPOCH_OFFSET = 978307200;
@@ -17,6 +17,12 @@ interface IMessageConfig {
 
 function coreDataToUnixMs(coreDataTimestamp: number): number {
   return (coreDataTimestamp / 1e9 + CORE_DATA_EPOCH_OFFSET) * 1000;
+}
+
+const appleScriptString = (s: string): string => `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+
+export function buildSendFileScript(recipient: string, filePath: string): string {
+  return `tell application "Messages" to send (POSIX file ${appleScriptString(filePath)}) to buddy ${appleScriptString(recipient)}`;
 }
 
 export class IMessageHandler extends BaseChannelHandler {
@@ -116,6 +122,21 @@ export class IMessageHandler extends BaseChannelHandler {
   async sendToRoute(route: ChatRoute, text: string): Promise<void> {
     if (route.channel !== 'imessage') return;
     await this.runAppleScript(route.channelChatId, text);
+  }
+
+  async sendImages(target: string, images: FileAttachment[]): Promise<string[]> {
+    const failed: string[] = [];
+    for (const img of images) {
+      // execFile, not exec: the path never passes through a shell.
+      const ok = await new Promise<boolean>(resolve => {
+        execFile('osascript', ['-e', buildSendFileScript(target, img.path)], err => {
+          if (err) console.error('[iMessage] Send file error:', err.message);
+          resolve(!err);
+        });
+      });
+      if (!ok) failed.push(img.name);
+    }
+    return failed;
   }
 
   private runAppleScript(recipient: string, text: string): Promise<void> {
