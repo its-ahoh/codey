@@ -94,6 +94,28 @@ Text first, then images. In the text, each `![alt](snapshot)` becomes
   `图片发送失败：<name>` is sent. Failures are logged, never thrown up to the
   turn.
 
+### 3b. Mermaid fallback link (channels)
+
+Prompt hints reduce mermaid in channel-linked chats but cannot prevent it.
+Mermaid can still reach a channel through: an agent ignoring the hint, the
+Aide team summary (also an LLM), and the prior-history summary pushed by
+`linkChat`. So the channel send layer — the single choke point all of these
+pass through — adds a link for every ` ```mermaid ` block:
+
+- New pure helper `mermaidLiveUrl(code)` in core: JSON
+  `{"code": <source>, "mermaid": "{\"theme\":\"default\"}"}` →
+  `zlib.deflateSync` → base64url → `https://mermaid.live/view#pako:<data>`.
+  Node built-ins only, no new dependency. The diagram lives in the URL
+  fragment, which browsers do not send to the mermaid.live server.
+- The code block stays in the text. Each link is sent as its **own message**
+  after the text (so chunking can never split a URL), labelled
+  `图表预览：<url>`.
+- If a URL is longer than the channel's message limit (Telegram 4096,
+  Discord 2000; iMessage uses 2000), that link is skipped; the code block
+  remains.
+- Applies to `sendMessage`, `sendResponseWithChunking`, and every
+  `sendToRoute` caller (fan-out, `linkChat` summary).
+
 ### 4. Prompt hint
 
 A short block added to **every turn's prompt** (not only at session start).
@@ -108,9 +130,6 @@ channel mid-session must see the PNG rule on its very next turn.
 
 ### 5. Error handling
 
-- Prompt hints are requests, not guarantees: an agent may still write mermaid
-  in a channel-linked chat. Then the channel shows the code block as text.
-
 - Missing / too large / outside allowed dirs / non-image → left as text, debug
   log only.
 - Copy failure → treated as rejected (text unchanged).
@@ -124,6 +143,7 @@ channel mid-session must see the PNG rule on its very next turn.
 - Telegram / Discord / iMessage handler tests with mocked clients: photo vs
   document choice, text-then-image order, `[图：alt]` replacement, failure note.
 - Prompt hint test: channel turn, Mac turn with linked route, Mac-only turn.
+- `mermaidLiveUrl` round-trip test (inflate → same source); over-limit link skipped.
 - Mac `Markdown` test: mermaid fallback on invalid source; `img` src mapping.
 
 ## Out of scope
