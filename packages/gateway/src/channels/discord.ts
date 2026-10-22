@@ -1,6 +1,6 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, Client, GatewayIntentBits, Interaction, Message, TextChannel } from 'discord.js';
 import { BaseChannelHandler } from './base';
-import { UserMessage, GatewayResponse, ChatRoute } from '@codey/core';
+import { UserMessage, GatewayResponse, ChatRoute, FileAttachment } from '@codey/core';
 
 export class DiscordHandler extends BaseChannelHandler {
   name = 'discord';
@@ -110,6 +110,19 @@ export class DiscordHandler extends BaseChannelHandler {
     const channel = await this.client.channels.fetch(route.channelChatId).catch(() => null);
     if (channel && channel instanceof TextChannel) {
       await channel.send(text);
+    }
+  }
+
+  async sendImages(target: string, images: FileAttachment[]): Promise<string[]> {
+    const names = images.map(i => i.name);
+    if (!this.client) return names;
+    const channel = await this.client.channels.fetch(target).catch(() => null);
+    if (!(channel instanceof TextChannel)) return names;
+    try {
+      await channel.send({ files: images.map(i => ({ attachment: i.path, name: i.name })) });
+      return [];
+    } catch {
+      return names;
     }
   }
 }
