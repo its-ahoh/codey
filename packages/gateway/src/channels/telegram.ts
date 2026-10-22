@@ -1,6 +1,6 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { BaseChannelHandler } from './base';
-import { UserMessage, GatewayResponse, ChatRoute } from '@codey/core';
+import { UserMessage, GatewayResponse, ChatRoute, FileAttachment } from '@codey/core';
 
 /**
  * Convert markdown to Telegram HTML.
@@ -283,6 +283,22 @@ export class TelegramHandler extends BaseChannelHandler {
       // Malformed HTML (e.g. a chunk split mid-tag) — fall back to plain text.
       await this.bot.sendMessage(route.channelChatId, text);
     }
+  }
+
+  async sendImages(target: string, images: FileAttachment[]): Promise<string[]> {
+    if (!this.bot) return images.map(i => i.name);
+    const failed: string[] = [];
+    for (const img of images) {
+      const fileOptions = { filename: img.name, contentType: img.mimeType };
+      try {
+        // Telegram cannot show SVG as a photo; send it as a file instead.
+        if (img.mimeType === 'image/svg+xml') await this.bot.sendDocument(target, img.path, {}, fileOptions);
+        else await this.bot.sendPhoto(target, img.path, {}, fileOptions);
+      } catch {
+        failed.push(img.name);
+      }
+    }
+    return failed;
   }
 
   private startTyping(chatId: string): void {
