@@ -204,13 +204,19 @@ export class AgentFactory {
     }
 
     let lease: AgentRunLease | undefined;
+    let response: AgentResponse;
     try {
       lease = await this.runLeaseProvider?.(agent, request);
-      return await adapter.run(lease?.request ?? request);
+      response = await adapter.run(lease?.request ?? request);
     } catch (error) {
-      return { success: false, output: '', error: error instanceof Error ? error.message : String(error) };
-    } finally {
-      await lease?.dispose();
+      response = { success: false, output: '', error: error instanceof Error ? error.message : String(error) };
     }
+    try {
+      await lease?.dispose();
+    } catch {
+      // The lease owner reports teardown failures through its own state and
+      // disables unsafe reuse. Cleanup must not replace the agent response.
+    }
+    return response;
   }
 }

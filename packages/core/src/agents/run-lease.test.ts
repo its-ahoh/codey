@@ -27,6 +27,15 @@ describe('desktop capability leases', () => {
     await expect(factory.run('codex', request)).resolves.toMatchObject({ success: false, error: 'fixture failure' });
     expect(dispose).toHaveBeenCalledOnce();
   });
+  it('preserves a completed agent response when desktop teardown fails', async () => {
+    const factory = new AgentFactory();
+    factory.register('codex', { name: 'codex', run: async () => ({ success: true, output: 'finished' }) });
+    factory.setRunLeaseProvider(async () => ({
+      request,
+      dispose: async () => { throw new Error('fixture teardown failure'); },
+    }));
+    await expect(factory.run('codex', request)).resolves.toEqual({ success: true, output: 'finished' });
+  });
   it('never starts an agent when authorization is denied', async () => {
     const factory = new AgentFactory();
     const run = vi.fn(async () => ({ success: true, output: '' }));
