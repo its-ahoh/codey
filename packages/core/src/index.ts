@@ -44,3 +44,4 @@ export * from './chat-tasks';
 export * from "./co-memo";
 export * from './playbook-skills';
 export * from './output-media';
+export * from './mermaid-link';
