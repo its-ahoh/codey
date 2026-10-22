@@ -19,7 +19,8 @@ const IMAGE_MIME: Record<string, string> = {
 
 // ![alt](target "optional title") — target is either <anything but >> or a run without spaces.
 const IMAGE_RE = /!\[([^\]\n]*)\]\(\s*(<[^>\n]+>|[^)\s]+)(?:\s+"[^"\n]*")?\s*\)/g;
-const FENCE_RE = /(```[\s\S]*?```)/g;
+// Fenced blocks and inline code spans; split() puts them at odd indices.
+const CODE_RE = /(```[\s\S]*?```|`[^`\n]+`)/;
 
 const realpathOrNull = (p: string): string | null => {
   try { return fs.realpathSync(p); } catch { return null; }
@@ -30,9 +31,9 @@ const isInside = (child: string, parent: string): boolean => {
   return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
 };
 
-/** Map over the parts of `text` that are outside fenced code blocks. */
+/** Map over the parts of `text` that are outside fenced code blocks and inline code. */
 const mapOutsideFences = (text: string, fn: (part: string) => string): string =>
-  text.split(FENCE_RE).map((part, i) => (i % 2 === 1 ? part : fn(part))).join('');
+  text.split(CODE_RE).map((part, i) => (i % 2 === 1 ? part : fn(part))).join('');
 
 const toLocalPath = (raw: string, workingDir: string): string | null => {
   const target = raw.startsWith('<') ? raw.slice(1, -1).trim() : raw;
@@ -53,13 +54,19 @@ const toLocalPath = (raw: string, workingDir: string): string | null => {
   }
 };
 
-const ensureOutputsDir = (workingDir: string): string => {
-  const uploads = path.join(workingDir, '.codey', 'uploads');
+/**
+ * Create the outputs dir and return its realpath, or null when it resolves
+ * outside `workRoot` (e.g. `.codey`, `uploads` or `outputs` is a symlink out).
+ */
+const ensureOutputsDir = (workRoot: string): string | null => {
+  const uploads = path.join(workRoot, '.codey', 'uploads');
   const outputs = path.join(uploads, 'outputs');
   fs.mkdirSync(outputs, { recursive: true });
+  const real = realpathOrNull(outputs);
+  if (!real || !isInside(real, workRoot)) return null;
   const ignore = path.join(uploads, '.gitignore');
   if (!fs.existsSync(ignore)) fs.writeFileSync(ignore, '*\n');
-  return outputs;
+  return real;
 };
 
 export interface ExtractOptions {
@@ -82,10 +89,13 @@ export function extractOutputImages(
   const now = opts.now ?? Date.now;
   const workRoot = realpathOrNull(opts.workingDir);
   if (!workRoot || !text.includes('![')) return { text, images: [] };
-  const roots = [workRoot, realpathOrNull(os.tmpdir())].filter((r): r is string => !!r);
+  // Agents usually write to /tmp, which on macOS is /private/tmp, not os.tmpdir().
+  const roots = [workRoot, realpathOrNull(os.tmpdir()), process.platform !== 'win32' ? realpathOrNull('/tmp') : null]
+    .filter((r): r is string => !!r);
   const images: FileAttachment[] = [];
   const bySource = new Map<string, FileAttachment>();
-  let outputsReal: string | null = realpathOrNull(path.join(workRoot, '.codey', 'uploads', 'outputs'));
+  const existing = realpathOrNull(path.join(workRoot, '.codey', 'uploads', 'outputs'));
+  let outputsReal: string | null = existing && isInside(existing, workRoot) ? existing : null;
 
   const snapshot = (source: string): FileAttachment | null => {
     const real = realpathOrNull(source);
@@ -93,22 +103,25 @@ export function extractOutputImages(
     const ext = path.extname(real).slice(1).toLowerCase();
     const mimeType = IMAGE_MIME[ext];
     if (!mimeType) return null;
-    const stat = fs.statSync(real);
-    if (!stat.isFile() || stat.size > OUTPUT_IMAGE_MAX_BYTES) return null;
     const cached = bySource.get(real);
     if (cached) return cached;
     let dest = real;
+    let size: number;
     try {
+      // The file can vanish between realpath and stat; never let that throw.
+      const stat = fs.statSync(real, { throwIfNoEntry: false });
+      if (!stat || !stat.isFile() || stat.size > OUTPUT_IMAGE_MAX_BYTES) return null;
+      size = stat.size;
       if (!(outputsReal && path.dirname(real) === outputsReal)) {
-        const dir = ensureOutputsDir(workRoot);
-        outputsReal = realpathOrNull(dir);
-        dest = path.join(outputsReal ?? dir, `${now()}-${randomBytes(4).toString('hex')}-${path.basename(real)}`);
+        outputsReal = ensureOutputsDir(workRoot);
+        if (!outputsReal) return null;
+        dest = path.join(outputsReal, `${now()}-${randomBytes(4).toString('hex')}-${path.basename(real)}`);
         fs.copyFileSync(real, dest);
       }
     } catch {
       return null;
     }
-    const att: FileAttachment = { id: randomUUID(), name: path.basename(real), path: dest, mimeType, size: stat.size };
+    const att: FileAttachment = { id: randomUUID(), name: path.basename(real), path: dest, mimeType, size };
     bySource.set(real, att);
     images.push(att);
     return att;
