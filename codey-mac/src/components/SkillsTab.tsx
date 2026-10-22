@@ -3,7 +3,6 @@ import { C } from '../theme'
 import { pillButton, Toggle, unwrap } from './settingsAtoms'
 import { UIIcon } from './UIIcons'
 import { matchesToolSearch } from './tools-search'
-import { WorkspaceSelect } from './WorkspaceSelect'
 import { SKILL_SORT_MODES, sortSkills, usageFor, usageLabel, usageMeta } from './skillsSort'
 import type { SkillSortMode } from './skillsSort'
 import type { SkillEntry, SkillPackInfo, SkillUsageMap, SkillsListResult } from '../codey-api'
@@ -19,13 +18,18 @@ const AGENTS: { key: AgentFilter; label: string }[] = [
 
 /** Codey's own skills are global; a workspace can still hold repo-local ones. */
 const CODEY_GLOBAL_SKILLS_HINT = '~/.codey/skills'
-const CODEY_PROJECT_SKILLS_HINT = '.codey/skills'
 
 const AGENT_SKILL_HINTS: Record<AgentFilter, string> = {
   'claude-code': '~/.claude/skills/',
   'codex': '~/.codex/skills/',
   'opencode': '~/.config/opencode/skills/',
   'pi': '~/.pi/agent/skills/',
+}
+
+/** Same rule the gateway uses to tell a folder from a git source. */
+export function looksLikeLocalPath(text: string): boolean {
+  const t = text.trim()
+  return t === '~' || t.startsWith('~/') || t.startsWith('/') || t.startsWith('./') || t.startsWith('../')
 }
 
 /** Keep the on-disk skill name compatible with every agent while making its
@@ -44,17 +48,9 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
-  const [addScope, setAddScope] = useState<'user' | 'project'>('user')
-  // Codey installs default to the global root; the project root is offered
-  // only when a workspace is open.
-  // Which workspace the "Project" scope means. Empty until the workspace list
-  // loads, at which point it settles on the active one; the user can point it
-  // at any other workspace without switching the whole app over to it.
-  const [workspaces, setWorkspaces] = useState<string[]>([])
+  // The workspace whose repo-local skills the list also shows. Installs never
+  // target it: every new skill goes to the shared Codey root.
   const [projectWorkspace, setProjectWorkspace] = useState('')
-  const [addSource, setAddSource] = useState<'localDir' | 'gitUrl'>('localDir')
-  // One skill, or a whole pack (pstack, say) imported into the shared root.
-  const [addKind, setAddKind] = useState<'skill' | 'pack'>('skill')
   const [packs, setPacks] = useState<SkillPackInfo[]>([])
   const [packUpdates, setPackUpdates] = useState<Record<string, boolean | null>>({})
   const [packBusy, setPackBusy] = useState<string | null>(null)
@@ -65,6 +61,12 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
   const [selected, setSelected] = useState<SkillEntry | null>(null)
   const [copyState, setCopyState] = useState<{ label: string; status: 'copying' | 'done' | 'error'; msg?: string } | null>(null)
   const [copyMenuOpen, setCopyMenuOpen] = useState(false)
+  // Only steers the icon, placeholder and picker; the gateway decides from
+  // the text itself, so typing a path or a URL flips it on its own.
+  const [addSource, setAddSource] = useState<'local' | 'git'>('git')
+  const [sourceMenuOpen, setSourceMenuOpen] = useState(false)
+  const sourceRef = useRef<HTMLDivElement>(null)
+  const sourceInputRef = useRef<HTMLInputElement>(null)
   const [busyDirs, setBusyDirs] = useState<Set<string>>(new Set())
   const [usage, setUsage] = useState<SkillUsageMap>({})
   const [sortMode, setSortMode] = useState<SkillSortMode>('name')
@@ -87,8 +89,6 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
   )
   const now = Date.now()
   const listKey = codey ? 'codey' : agentFilter
-  const installingPack = codey && addKind === 'pack'
-  const canInstall = installingPack || addScope === 'user' || (projectWorkspace !== '' && data.projectDir !== null)
 
   // The primary action lives in the parent Tools tab bar; this counter gives
   // that button a clean way to open the existing install form without a second
@@ -152,7 +152,6 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
       Promise.all([window.codey.workspaces.list(), window.codey.workspaces.current()])
         .then(([all, current]) => {
           const names = all.ok ? all.data : []
-          setWorkspaces(names)
           const active = current.ok ? current.data : ''
           setProjectWorkspace(active && names.includes(active) ? active : names[0] ?? '')
         })
@@ -171,9 +170,31 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
     return () => document.removeEventListener('mousedown', onDown)
   }, [copyMenuOpen])
 
+  useEffect(() => {
+    if (!sourceMenuOpen) return
+    const onDown = (e: MouseEvent) => {
+      if (sourceRef.current && !sourceRef.current.contains(e.target as Node)) setSourceMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [sourceMenuOpen])
+
   const handleBrowse = async () => {
     const r = await window.codey.dialog.pickDirectory()
     if (r.ok && r.data) setAddInput(r.data)
+  }
+
+  const handleSourceInput = (text: string) => {
+    setAddInput(text)
+    if (text.trim()) setAddSource(looksLikeLocalPath(text) ? 'local' : 'git')
+  }
+
+  const pickSource = (source: 'local' | 'git') => {
+    setSourceMenuOpen(false)
+    if (source !== addSource) setAddInput('')
+    setAddSource(source)
+    if (source === 'local') void handleBrowse()
+    else sourceInputRef.current?.focus()
   }
 
   const installPack = async (source: string): Promise<boolean> => {
@@ -190,24 +211,12 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
     setInstalling(true)
     setError(null)
     try {
-      if (installingPack) {
-        if (!(await installPack(addInput.trim()))) return
-        setAddInput('')
-        setAdding(false)
-        setPackUpdates({})
-        await reload(listKey, projectWorkspace)
-        return
-      }
-      const payload: Parameters<typeof window.codey.skills.install>[0] = {
-        agent: codey ? 'codey' : agentFilter,
-        scope: addScope,
-      }
-      if (addScope === 'project') payload.workspace = projectWorkspace
-      if (addSource === 'localDir') payload.localDir = addInput.trim()
-      else payload.gitUrl = addInput.trim()
-      unwrap(await window.codey.skills.install(payload))
+      // One skill or a whole pack, local or git: the gateway looks inside and
+      // installs it into the shared Codey root every coding agent reads.
+      if (!(await installPack(addInput.trim()))) return
       setAddInput('')
       setAdding(false)
+      setPackUpdates({})
       await reload(listKey, projectWorkspace)
     } catch (e: any) {
       setError(e?.message ?? String(e))
@@ -596,10 +605,8 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
         <section style={styles.installCard} aria-label="Install skill">
           <div style={styles.installHeader}>
             <div>
-              <div style={styles.installTitle}>{installingPack ? 'Import a skill pack' : 'Install a skill'}</div>
-              <div style={styles.installSubtitle}>{installingPack
-                ? 'Every skill in the pack is shared with every coding agent'
-                : codey ? 'Share it with every coding agent' : `Add it to ${AGENTS.find(a => a.key === agentFilter)?.label}`}</div>
+              <div style={styles.installTitle}>Install a skill</div>
+              <div style={styles.installSubtitle}>One skill or a whole pack, shared with every coding agent</div>
             </div>
             <button
               onClick={() => { setAdding(false); setAddInput(''); setError(null) }}
@@ -609,118 +616,60 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
             ><UIIcon name="close" size={15} /></button>
           </div>
 
-          <div style={styles.optionRow}>
-            {codey && (
-              <div style={styles.optionGroup}>
-                <span style={styles.optionLabel}>Install</span>
-                <div style={styles.smallSwitcher}>
-                  {(['skill', 'pack'] as const).map(kind => (
-                    <button
-                      key={kind}
-                      onClick={() => { setAddKind(kind); setAddInput('') }}
-                      style={{ ...styles.smallSwitchButton, ...(addKind === kind ? styles.smallSwitchButtonSelected : undefined) }}
-                      title={kind === 'skill' ? 'One skill folder' : 'Many skills at once, such as pstack'}
-                    >
-                      {kind === 'skill' ? 'One skill' : 'Skill pack'}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {!installingPack && (<>
-            <div style={styles.optionGroup}>
-              <span style={styles.optionLabel}>Install to</span>
-              <div style={styles.smallSwitcher}>
-                {(['user', 'project'] as const).map(s => {
-                  const unavailable = s === 'project' && workspaces.length === 0
-                  return (
-                    <button
-                      key={s}
-                      onClick={() => setAddScope(s)}
-                      style={{
-                        ...styles.smallSwitchButton,
-                        ...(addScope === s ? styles.smallSwitchButtonSelected : undefined),
-                        opacity: unavailable ? 0.38 : 1,
-                      }}
-                      disabled={unavailable}
-                      title={unavailable ? 'No workspaces yet' : s === 'user' ? 'Available across projects' : 'Only the selected workspace'}
-                    >
-                      {s === 'user' ? (codey ? 'Global' : 'User') : 'Project'}
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-
-            {addScope === 'project' && (
-              <div style={styles.optionGroup}>
-                <span style={styles.optionLabel}>Workspace</span>
-                <WorkspaceSelect
-                  id="skill-workspace-select"
-                  value={projectWorkspace}
-                  options={workspaces}
-                  onChange={setProjectWorkspace}
-                />
-              </div>
-            )}
-
-            <div style={styles.optionGroup}>
-              <span style={styles.optionLabel}>Source</span>
-              <div style={styles.smallSwitcher}>
-                {(['localDir', 'gitUrl'] as const).map(src => (
-                  <button
-                    key={src}
-                    onClick={() => { setAddSource(src); setAddInput('') }}
-                    style={{ ...styles.smallSwitchButton, ...(addSource === src ? styles.smallSwitchButtonSelected : undefined) }}
-                  >
-                    {src === 'localDir' ? 'Local folder' : 'Git URL'}
-                  </button>
-                ))}
-              </div>
-            </div>
-            </>)}
-          </div>
-
           <label style={styles.pathLabel} htmlFor="skill-source-input">
-            {installingPack ? 'Git URL, GitHub folder link, or local folder' : addSource === 'localDir' ? 'Skill folder' : 'Repository URL'}
+            Git URL, GitHub folder link, or local folder
           </label>
           <div style={styles.installInputRow}>
+            <div ref={sourceRef} style={styles.pathInputWrap}>
             <div style={styles.pathInputShell}>
-              <span style={styles.pathIcon}><UIIcon name={!installingPack && addSource === 'localDir' ? 'folder' : 'link'} size={15} /></span>
+              <button
+                onClick={() => setSourceMenuOpen(o => !o)}
+                style={styles.sourceButton}
+                title="Choose where the skill comes from"
+                aria-label="Source"
+                aria-haspopup="menu"
+                aria-expanded={sourceMenuOpen}
+              >
+                <UIIcon name={addSource === 'local' ? 'folder' : 'link'} size={15} />
+                <span style={{ display: 'inline-flex', transform: 'rotate(90deg)' }}><UIIcon name="chevron" size={10} /></span>
+              </button>
               <input
                 id="skill-source-input"
+                ref={sourceInputRef}
                 type="text"
-                placeholder={installingPack ? SKILL_PACK_PLACEHOLDER : addSource === 'localDir' ? '~/.claude/skills/my-skill' : 'https://github.com/user/my-skill.git'}
+                placeholder={addSource === 'local' ? '~/path/to/skill-or-pack' : SKILL_PACK_PLACEHOLDER}
                 value={addInput}
-                onChange={e => setAddInput(e.target.value)}
+                onChange={e => handleSourceInput(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') void handleInstall() }}
                 style={styles.pathInput}
                 autoFocus
               />
-              {(installingPack || addSource === 'localDir') && (
-                <button onClick={handleBrowse} style={styles.browseButton}>Choose…</button>
-              )}
+            </div>
+            {sourceMenuOpen && (
+              <div role="menu" style={styles.sourceMenu}>
+                {([['local', 'folder', 'Local folder…'], ['git', 'link', 'Git URL or GitHub link']] as const).map(([key, icon, label]) => (
+                  <button
+                    key={key}
+                    role="menuitem"
+                    onClick={() => pickSource(key)}
+                    style={{ ...menuItem, display: 'flex', alignItems: 'center', gap: 8, color: addSource === key ? C.accent : C.fg }}
+                  >
+                    <UIIcon name={icon} size={14} />{label}
+                  </button>
+                ))}
+              </div>
+            )}
             </div>
             <button
               onClick={handleInstall}
-              style={{ ...styles.installButton, opacity: installing || !addInput.trim() || !canInstall ? 0.45 : 1 }}
-              disabled={installing || !addInput.trim() || !canInstall}
+              style={{ ...styles.installButton, opacity: installing || !addInput.trim() ? 0.45 : 1 }}
+              disabled={installing || !addInput.trim()}
             >
-              {installing ? (installingPack ? 'Importing…' : 'Installing…') : <><UIIcon name="add" size={14} />{installingPack ? 'Import pack' : 'Install skill'}</>}
+              {installing ? 'Installing…' : <><UIIcon name="add" size={14} />Install</>}
             </button>
           </div>
           <div style={styles.destinationHint}>
-            Destination: <code style={styles.inlineCode}>{installingPack ? CODEY_GLOBAL_SKILLS_HINT : addScope === 'project'
-              ? (data.projectDir ?? (codey ? CODEY_PROJECT_SKILLS_HINT : 'the selected workspace'))
-              : codey ? CODEY_GLOBAL_SKILLS_HINT : AGENT_SKILL_HINTS[agentFilter]}</code>
-            {!canInstall && (
-              <span style={{ color: C.red, marginLeft: 8 }}>
-                {projectWorkspace
-                  ? `"${projectWorkspace}" has no working directory.`
-                  : 'Select a workspace first.'}
-              </span>
-            )}
+            Destination: <code style={styles.inlineCode}>{CODEY_GLOBAL_SKILLS_HINT}</code>
           </div>
         </section>
       ) : null}
@@ -866,9 +815,6 @@ const styles: Record<string, React.CSSProperties> = {
   },
   installTitle: { color: C.fg, fontSize: 13, fontWeight: 720, marginBottom: 3 },
   installSubtitle: { color: C.fg3, fontSize: 11 },
-  optionRow: { display: 'flex', alignItems: 'center', gap: 22, flexWrap: 'wrap', marginBottom: 14 },
-  optionGroup: { display: 'flex', alignItems: 'center', gap: 9 },
-  optionLabel: { color: C.fg3, fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' },
   smallSwitcher: {
     display: 'inline-flex', alignItems: 'center', padding: 2, gap: 2,
     borderRadius: 8, background: C.bg, border: `1px solid ${C.border}`,
@@ -885,19 +831,24 @@ const styles: Record<string, React.CSSProperties> = {
   },
   installInputRow: { display: 'flex', gap: 9, alignItems: 'stretch', flexWrap: 'wrap' },
   pathInputShell: {
-    display: 'flex', alignItems: 'center', flex: '1 1 420px', minWidth: 220,
+    display: 'flex', alignItems: 'center', flex: 1, minWidth: 0,
     border: `1px solid ${C.border2}`, borderRadius: 9, background: C.bg,
     overflow: 'hidden', minHeight: 38,
   },
-  pathIcon: { display: 'inline-flex', color: C.fg3, marginLeft: 11, flexShrink: 0 },
+  pathInputWrap: { position: 'relative', display: 'flex', flex: '1 1 420px', minWidth: 220 },
+  sourceButton: {
+    alignSelf: 'stretch', display: 'inline-flex', alignItems: 'center', gap: 3,
+    border: 'none', borderRight: `1px solid ${C.border}`, padding: '0 9px 0 11px',
+    background: 'transparent', color: C.fg3, cursor: 'pointer', flexShrink: 0,
+  },
+  sourceMenu: {
+    position: 'absolute', top: '100%', left: 0, marginTop: 6, zIndex: 2,
+    background: C.surface2 ?? C.surface, border: `1px solid ${C.border}`, borderRadius: 8,
+    padding: 4, minWidth: 210, boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
+  },
   pathInput: {
     flex: 1, minWidth: 80, border: 'none', outline: 'none', background: 'transparent',
     color: C.fg, fontSize: 12, padding: '9px 10px', fontFamily: 'inherit',
-  },
-  browseButton: {
-    alignSelf: 'stretch', border: 'none', borderLeft: `1px solid ${C.border}`,
-    padding: '0 12px', background: C.surface3, color: C.fg2,
-    fontSize: 11, fontWeight: 650, cursor: 'pointer', flexShrink: 0,
   },
   installButton: {
     minHeight: 38, border: 'none', borderRadius: 9, padding: '8px 14px',

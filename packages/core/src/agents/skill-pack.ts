@@ -52,7 +52,9 @@ export interface SkillPackInfo extends SkillPackManifest {
 }
 
 export type SkillPackInstallResult =
-  | { installed: true; id: string; skills: string[]; dir: string }
+  /** `single` is set when the source was one skill, not a pack: it is copied
+   *  in as a plain skill with no manifest, so it never shows up as a pack. */
+  | { installed: true; id: string; skills: string[]; dir: string; single?: true }
   /** Refused: these names already exist and the pack did not write them. */
   | { installed: false; conflict: 'user-copy'; id: string; dir: string; names: string[] };
 
@@ -191,10 +193,6 @@ async function git(args: string[], cwd?: string): Promise<string> {
 /** Skill folders inside a pack root: its `skills/` folder when it has one,
  *  otherwise its own children. */
 function findPackSkills(root: string): Map<string, string> {
-  if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) throw new Error(`Not a folder: ${root}`);
-  if (fs.existsSync(path.join(root, SKILL_FILE))) {
-    throw new Error('This folder is a single skill, not a pack. Install it as a skill instead.');
-  }
   const scan = (dir: string): Map<string, string> => {
     const found = new Map<string, string>();
     let entries: fs.Dirent[];
@@ -214,6 +212,14 @@ function findPackSkills(root: string): Map<string, string> {
   return skills;
 }
 
+/** A single skill keeps the name of the folder (or repository) it came from. */
+function singleSkillName(source: SkillPackSource): string {
+  const from = source.kind === 'local' ? source.dir : source.subdir ?? source.url.replace(/[:]/g, '/');
+  const name = from.split('/').filter(Boolean).pop()?.replace(/\.git$/, '') ?? '';
+  if (!isSafeName(name)) throw new Error(`Could not name this skill from its source: ${source.source}`);
+  return name;
+}
+
 function stamp(markdown: string, name: string, source: string, pack: string, today: string): string {
   const line = `${CODEY_INSTALL_MARKER} ${name} from ${source} (${pack}) on ${today}. `
     + 'Manage it in Tools -> Skills; edits here are replaced by the next update. -->';
@@ -223,6 +229,9 @@ function stamp(markdown: string, name: string, source: string, pack: string, tod
 }
 
 /**
+ * Install whatever the source holds: one skill when its root has a SKILL.md,
+ * otherwise a pack of skills. The user never has to say which.
+ *
  * Install (or update) every skill in a pack. The source is cloned or read into
  * a staging directory first and only then swapped into place, so a failed
  * clone leaves the previous install — or nothing — rather than half a pack.
@@ -239,9 +248,6 @@ export async function installSkillPack(
   const id = skillPackId(source);
   const root = skillsRoot(home);
   const previous = readSkillPackManifest(id, home);
-  if (previous && previous.source !== source.source) {
-    throw new Error(`A skill pack named "${id}" is already installed from ${previous.source}. Remove it first.`);
-  }
 
   await fs.promises.mkdir(packsDir(home), { recursive: true });
   const staging = await fs.promises.mkdtemp(path.join(packsDir(home), `.${id}-staging-`));
@@ -256,7 +262,31 @@ export async function installSkillPack(
     } else {
       packRoot = source.dir;
     }
+    if (!fs.existsSync(packRoot) || !fs.statSync(packRoot).isDirectory()) throw new Error(`Not a folder: ${packRoot}`);
 
+    if (isRegularFile(path.join(packRoot, SKILL_FILE))) {
+      // An installed pack whose source turned into one skill would leave its
+      // manifest pointing at skills that no longer come from it.
+      if (previous?.source === source.source) throw new Error(`"${id}" is installed as a skill pack, but its source is now a single skill. Remove the pack first.`);
+      const name = singleSkillName(source);
+      const dest = path.join(root, name);
+      if (lexists(dest) && !force) {
+        return { installed: false, conflict: 'user-copy', id: name, dir: dest, names: [name] };
+      }
+      const out = path.join(staging, 'out');
+      await fs.promises.cp(packRoot, out, {
+        recursive: true,
+        filter: from => !fs.lstatSync(from).isSymbolicLink() && path.basename(from) !== '.git',
+      });
+      await fs.promises.mkdir(root, { recursive: true });
+      await fs.promises.rm(dest, { recursive: true, force: true });
+      await fs.promises.rename(out, dest);
+      return { installed: true, id: name, skills: [name], dir: dest, single: true };
+    }
+
+    if (previous && previous.source !== source.source) {
+      throw new Error(`A skill pack named "${id}" is already installed from ${previous.source}. Remove it first.`);
+    }
     const found = findPackSkills(packRoot);
     const names = [...found.keys()].sort();
     // A name is the pack's to replace only if the pack installed it and the
