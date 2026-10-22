@@ -74,6 +74,23 @@ describe('team reducer routing', () => {
     expect(s.chats.c1.messages.find(x => x.id === 'w1')!.botStatus).toBe('done');
   });
 
+  it('keeps rewritten media content and attachments on completed replies', () => {
+    const attachment = { id: 'image', name: 'chart.png', path: '/snap/chart.png', mimeType: 'image/png', size: 1 }
+    let s = baseState()
+    s.chats.c1.messages = [{ id: 'a1', role: 'assistant', content: '', timestamp: 1 }]
+    s = reducer(s, {
+      type: 'completeSend',
+      chatId: 'c1',
+      assistantMessageId: 'a1',
+      content: '![Chart](</snap/chart.png>)',
+      attachments: [attachment],
+    })
+    expect(s.chats.c1.messages[0]).toMatchObject({
+      content: '![Chart](</snap/chart.png>)',
+      attachments: [attachment],
+    })
+  });
+
   it('stores live blackboard updates on the bot message', () => {
     let s = baseState();
     s = reducer(s, { type: 'botStart', chatId: 'c1', teamTurnId: 'tt1', messageId: 'w1', step: 1, bot: 'a', reason: '' });

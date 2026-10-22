@@ -82,6 +82,37 @@ describe('BotMessageEmitter — serial', () => {
     expect(h.events.at(-1)).toMatchObject({ type: 'bot_end', messageId: id, status: 'done' });
   });
 
+  it('persists rewritten media content and reports it on bot_end', () => {
+    const events: ChatStreamEvent[] = [];
+    const patches: Array<{ content?: string; attachments?: unknown[] }> = [];
+    const emitter = new BotMessageEmitter(
+      event => events.push(event),
+      {
+        appendMessage: () => undefined,
+        updateMessage: (_chatId, _messageId, patch) => { patches.push(patch); },
+      },
+      'chat1',
+      {
+        teamTurnId: 'turn1',
+        teamName: 'team',
+        mode: 'auto',
+        rewriteContent: content => ({
+          content: content.replace('chart.png', '/snap/chart.png'),
+          attachments: [{ id: 'image1', name: 'chart.png', path: '/snap/chart.png', mimeType: 'image/png', size: 1 }],
+        }),
+      },
+    );
+    emitter.beginBot({ step: 1, bot: 'writer' });
+    emitter.onStream('![Chart](chart.png)');
+    emitter.endBot('done');
+
+    expect(patches.at(-1)).toMatchObject({
+      content: '![Chart](/snap/chart.png)',
+      attachments: [{ name: 'chart.png' }],
+    });
+    expect(events.at(-1)).toMatchObject({ type: 'bot_end', content: '![Chart](/snap/chart.png)' });
+  });
+
   it('persists and emits the latest team blackboard snapshot', () => {
     const h = harness();
     const id = h.em.beginBot({ step: 1, bot: 'pm' });

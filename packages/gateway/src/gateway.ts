@@ -48,6 +48,8 @@ import { resolveChoiceDigit } from './digit-mapping';
 import { ParallelTeamRunner, ParallelFinalEvent } from './parallel-team';
 import { ChannelEmitter, ChatEmitter, TeamEmitter, BotRunResult } from './team-emitter';
 import { BotMessageEmitter } from './bot-message-emitter';
+import { extractOutputImages, labelOutputImages, mediaOutputInstruction, type FileAttachment } from '@codey/core';
+import { channelMessageLimit, deliverMediaExtras } from './channel-delivery';
 
 interface ParsedCommand {
   command: string;
@@ -1165,6 +1167,12 @@ export class Codey {
       if (handler?.sendToRoute) {
         try {
           await handler.sendToRoute(route, summary);
+          await deliverMediaExtras({
+            originalText: summary,
+            attachments: [],
+            maxLinkLength: channelMessageLimit(channel),
+            sendText: text => handler.sendToRoute!(route, text),
+          });
         } catch (err) {
           this.logger.warn(`linkChat: failed to push summary to ${channel}: ${(err as Error).message}`);
         }
@@ -2617,6 +2625,7 @@ export class Codey {
       runPrompt = applySkill(skillInvoke.task, skillInvoke.skill);
       this.logger.info(`[skills] explicit invoke: ${skillInvoke.skill.name} v${skillInvoke.skill.version}`);
     }
+    runPrompt += mediaOutputInstruction(true);
 
     let prep = this.prepareAgentTurn(ctxWindow, agent, runPrompt, memoryContext);
     const buildRequest = (p: typeof prep): AgentRequest => ({
@@ -2660,19 +2669,21 @@ export class Codey {
     this.logger.info(`[OUTPUT] ${channel}/${message.username}: ${response.success ? '(streamed)' : response.error}${response.tokens ? ` [${response.tokens.total} tokens]` : ''}${response.duration ? ` [${response.duration}s]` : ''}`);
 
     // Format and send response
-    const replyText = this.formatAgentResponse(response);
+    const media = extractOutputImages(this.formatAgentResponse(response), { workingDir: this.workingDir });
+    const replyText = media.text;
 
     await this.sendResponse({
       chatId,
       channel,
       text: replyText,
+      attachments: media.images,
       replyTo: messageId,
     });
 
     // Fan-out: if this message belongs to a Codey chat with multiple routes,
     // send the reply to every other attached route too.
     if (codeyChatId) {
-      await this.fanOutToOtherRoutes(codeyChatId, channel, userId, replyText);
+      await this.fanOutToOtherRoutes(codeyChatId, channel, userId, replyText, media.images);
     }
 
     // ── Skills: post-run pass (fire-and-forget — never blocks the reply) ──
@@ -2729,6 +2740,7 @@ export class Codey {
           chatId,
           channel,
           text: ev.response,
+          attachments: ev.attachments,
           choices: ev.choices,
           replyTo: messageId,
         });
@@ -2776,6 +2788,7 @@ export class Codey {
     originChannel: ChannelType,
     originUserId: string,
     text: string,
+    attachments: FileAttachment[] = [],
   ): Promise<void> {
     const chat = this.chatManager.get(codeyChatId);
     const routeCount = chat?.routes?.length ?? 0;
@@ -2787,9 +2800,10 @@ export class Codey {
     // Chunk long messages — sendToRoute doesn't handle platform length limits
     // (Telegram ~4096, Discord ~2000), so split here using the same limit as
     // the normal sendResponse path.
-    const chunks = text.length > this.MAX_MESSAGE_LENGTH
-      ? this.splitIntoChunks(text, this.MAX_MESSAGE_LENGTH)
-      : [text];
+    const channelText = labelOutputImages(text, attachments);
+    const chunks = channelText.length > this.MAX_MESSAGE_LENGTH
+      ? this.splitIntoChunks(channelText, this.MAX_MESSAGE_LENGTH)
+      : [channelText];
     for (const route of chat.routes) {
       if (route.channel === originChannel && route.channelUserId === originUserId) {
         this.logger.info(`[fanOut]   skip ${route.channel}:${route.channelUserId} (origin)`);
@@ -2805,6 +2819,14 @@ export class Codey {
           const header = chunks.length > 1 && i > 0 ? `[${i + 1}/${chunks.length}]\n` : '';
           await handler.sendToRoute(route, header + chunks[i]);
         }
+        await deliverMediaExtras({
+          originalText: text,
+          attachments,
+          maxLinkLength: channelMessageLimit(route.channel),
+          sendText: extra => handler.sendToRoute!(route, extra),
+          sendImages: handler.sendImages ? images => handler.sendImages!(route.channelChatId, images) : undefined,
+          log: message => this.logger.warn(message),
+        });
         this.logger.info(`[fanOut]   ✓ sent to ${route.channel}:${route.channelChatId} (${chunks.length} chunk(s))`);
       } catch (err) {
         this.logger.warn(`[fanOut]   ✗ failed to send to ${route.channel}: ${(err as Error).message}`);
@@ -5171,7 +5193,16 @@ Example: /model gpt-4.1 write a Python script`;
             : 'sequential';
     const botMsgs = new BotMessageEmitter(
       sink, this.chatManager, chatId,
-      { teamTurnId, teamName, mode: teamMode, taskId: opts.taskId },
+      {
+        teamTurnId,
+        teamName,
+        mode: teamMode,
+        taskId: opts.taskId,
+        rewriteContent: content => {
+          const media = extractOutputImages(content, { workingDir });
+          return { content: media.text, attachments: media.images };
+        },
+      },
     );
     // A roundtable answer resumes the existing runner and its existing bot
     // messages. Every new run publishes its complete roster before routing so
@@ -5917,6 +5948,24 @@ Example: /model gpt-4.1 write a Python script`;
     const handler = this.handlers.get(response.channel);
     if (!handler) return;
 
+    const attachments = response.attachments ?? [];
+    const { attachments: _attachments, ...rest } = response;
+    await this.sendTextResponse({ ...rest, text: labelOutputImages(response.text, attachments) });
+    await deliverMediaExtras({
+      originalText: response.text,
+      attachments,
+      maxLinkLength: channelMessageLimit(response.channel),
+      sendText: text => handler.sendMessage({ chatId: response.chatId, channel: response.channel, text }),
+      sendImages: handler.sendImages ? images => handler.sendImages!(response.chatId, images) : undefined,
+      log: message => this.logger.warn(message),
+    });
+  }
+
+  /** Send text only, chunking when needed. Media extras are added by sendResponse. */
+  private async sendTextResponse(response: GatewayResponse): Promise<void> {
+    const handler = this.handlers.get(response.channel);
+    if (!handler) return;
+
     try {
       // Auto-chunking for long messages
       if (response.text.length > this.MAX_MESSAGE_LENGTH) {
@@ -5933,7 +5982,7 @@ Example: /model gpt-4.1 write a Python script`;
     const { chatId, channel, text, replyTo } = response;
     
     if (text.length <= this.MAX_MESSAGE_LENGTH) {
-      await this.sendResponse({ chatId, channel, text, replyTo });
+      await this.sendTextResponse({ chatId, channel, text, replyTo });
       return;
     }
 
@@ -5945,7 +5994,7 @@ Example: /model gpt-4.1 write a Python script`;
       const header = i > 0 ? `[${i + 1}/${chunks.length}]\n` : '';
       const footer = !isLast ? `\n\n_(continued...)_` : '';
       
-      await this.sendResponse({
+      await this.sendTextResponse({
         chatId,
         channel,
         text: header + chunk + footer,
@@ -6679,6 +6728,7 @@ Example: /model gpt-4.1 write a Python script`;
     if (!isTeamTurn) prompt = await this.wrapPromptWithMemory(prompt, userText, selectedBot?.name, !!chat.botChat, chat.workspaceName, workingDir);
     if (chat.botChat?.handoffContext) prompt += '\n\n' + chat.botChat.handoffContext;
     prompt += chatWorkspaceInstruction;
+    prompt += mediaOutputInstruction(!!origin || (chat.routes?.length ?? 0) > 0);
 
     // Solo advisor: when enabled (and not a team), tell the agent how to escalate.
     if (chat.soloAdvisor && !isTeamTurn) {
@@ -6808,6 +6858,7 @@ Example: /model gpt-4.1 write a Python script`;
 
     try {
       let output = '';
+      let outputImages: FileAttachment[] = [];
       let tokens: number | undefined;
       let teamChoices: string[] | undefined;
       let teamThinkingByStep: Record<number, string> | undefined;
@@ -6825,7 +6876,16 @@ Example: /model gpt-4.1 write a Python script`;
         teamTurnId = pendingTeam.teamTurnId;
         const botMsgs = new BotMessageEmitter(
           sink, this.chatManager, chatId,
-          { taskId, teamTurnId: teamTurnId!, teamName: pendingTeam.teamName, mode: pendingTeam.mode === 'graph' ? 'graph' : pendingTeam.mode },
+          {
+            taskId,
+            teamTurnId: teamTurnId!,
+            teamName: pendingTeam.teamName,
+            mode: pendingTeam.mode === 'graph' ? 'graph' : pendingTeam.mode,
+            rewriteContent: content => {
+              const media = extractOutputImages(content, { workingDir });
+              return { content: media.text, attachments: media.images };
+            },
+          },
         );
         // Patch the asking bot's message from askedUser → done so the Mac
         // UI can release the pause UI and show the bot as completed.
@@ -6932,7 +6992,8 @@ Example: /model gpt-4.1 write a Python script`;
           resumeSessionId = undefined;
           newSessionId = canResume && agent === 'claude-code' ? randomUUID() : undefined;
           prompt = selPrefix + buildChatBootstrapPrompt(contextChat, userText, attachments, CHAT_CONTEXT_WINDOW,
-            historyOptions) + chatWorkspaceInstruction;
+            historyOptions) + chatWorkspaceInstruction
+            + mediaOutputInstruction(!!origin || (chat.routes?.length ?? 0) > 0);
           // Re-apply the skill banner: the rebuilt bootstrap prompt replaced
           // the one that carried it (still exactly once per prompt build).
           if (appliedChatSkill) prompt = applySkill(prompt, appliedChatSkill);
@@ -7067,12 +7128,18 @@ Example: /model gpt-4.1 write a Python script`;
         && !this.chatManager.get(chatId)?.pendingTeam
         ? finalizeTeamRunSummary(terminalTeamMessages) ?? undefined
         : undefined;
+      if (output) {
+        const media = extractOutputImages(output, { workingDir });
+        output = media.text;
+        outputImages = media.images;
+      }
       const assistantMessage: ChatMessage = {
         memoryUsed: [...(memoryUsageContext.getStore()?.values() ?? [])],
         id: messageIds?.assistantMessageId ?? randomUUID(),
         role: 'assistant',
         taskId,
         content: output,
+        ...(outputImages.length ? { attachments: outputImages } : {}),
         ...(!teamTurnId && chat.selection.type === 'bot' ? { bot: chat.selection.name, botStatus: agentUserQuestion ? 'askedUser' as const : singleAgentResponse?.success === false ? 'failed' as const : 'done' as const } : {}),
         thinking: singleAgentResponse?.thinking,
         thinkingByStep: teamThinkingByStep,
@@ -7175,7 +7242,7 @@ Example: /model gpt-4.1 write a Python script`;
       // The Mac app turns a non-empty team response into a footer bubble, so
       // it only travels when a footer was actually persisted.
       const doneResponse = teamTurnId && footerPlan !== 'append' ? '' : output;
-      sink({ type: 'done', chatId, response: doneResponse, memoryUsed: assistantMessage.memoryUsed, bot: assistantMessage.bot, botStatus: assistantMessage.botStatus, thinking: singleAgentResponse?.thinking, tokens, durationSec, agent: responseAgent, ...(responseModel ? { model: responseModel } : {}), title: finalTitle, choices: surfacedChoices, userQuestion: agentUserQuestion, fallback: singleAgentResponse?.fallback, ...(teamTurnId ? { teamTurnId } : {}) });
+      sink({ type: 'done', chatId, response: doneResponse, ...(outputImages.length ? { attachments: outputImages } : {}), memoryUsed: assistantMessage.memoryUsed, bot: assistantMessage.bot, botStatus: assistantMessage.botStatus, thinking: singleAgentResponse?.thinking, tokens, durationSec, agent: responseAgent, ...(responseModel ? { model: responseModel } : {}), title: finalTitle, choices: surfacedChoices, userQuestion: agentUserQuestion, fallback: singleAgentResponse?.fallback, ...(teamTurnId ? { teamTurnId } : {}) });
 
       // ── Skills: post-run pass (fire-and-forget, response already delivered) ──
       // Skip the whole pass when this turn ended PAUSED — i.e. the team run
@@ -7253,7 +7320,7 @@ Example: /model gpt-4.1 write a Python script`;
       if (origin) {
         await this.fanOutToOtherRoutes(chatId, originChannel, originUserId, `💬 ${userText}`);
       }
-      await this.fanOutToOtherRoutes(chatId, originChannel, originUserId, output);
+      await this.fanOutToOtherRoutes(chatId, originChannel, originUserId, output, outputImages);
 
       return { response: output, chatId, tokens, durationSec };
     } catch (err) {

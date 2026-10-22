@@ -74,7 +74,7 @@ type Action =
   | { type: 'toolCall'; chatId: string; entry: ToolCallEntry; status: AgentActivity; messageId?: string }
   | { type: 'patchChecklist'; chatId: string; items: ChecklistItem[] }
   | { type: 'queued'; chatId: string; position: number }
-  | { type: 'completeSend'; memoryUsed?: ChatMessage['memoryUsed']; taskId?: string | null; tasks?: Chat['tasks']; bot?: string; botStatus?: ChatMessage['botStatus']; chatId: string; assistantMessageId: string; content: string; thinking?: string; tokens?: number; durationSec?: number; agent?: ChatMessage['agent']; model?: string; title?: string; choices?: string[]; userQuestion?: ChatMessage['userQuestion']; fallback?: ChatMessage['fallback']; teamTurnId?: string }
+  | { type: 'completeSend'; memoryUsed?: ChatMessage['memoryUsed']; taskId?: string | null; tasks?: Chat['tasks']; bot?: string; botStatus?: ChatMessage['botStatus']; chatId: string; assistantMessageId: string; content: string; attachments?: ChatMessage['attachments']; thinking?: string; tokens?: number; durationSec?: number; agent?: ChatMessage['agent']; model?: string; title?: string; choices?: string[]; userQuestion?: ChatMessage['userQuestion']; fallback?: ChatMessage['fallback']; teamTurnId?: string }
   | { type: 'errorSend'; chatId: string; assistantMessageId: string; error: string }
   | { type: 'stoppedSend'; chatId: string; text: string }
   | { type: 'clearRestore'; chatId: string }
@@ -95,7 +95,7 @@ type Action =
   | { type: 'chatRedirect'; chat: Chat; target: Chat }
   | { type: 'teamStart'; taskId?: string; chatId: string; teamTurnId: string; teamName: string; mode: 'sequential' | 'graph' | 'auto' | 'roundtable'; bots?: Array<{ messageId: string; step: number; bot: string; agent?: ChatMessage['agent']; model?: string }> }
   | { type: 'botStart'; taskId?: string; chatId: string; teamTurnId: string; messageId: string; step: number; bot: string; agent?: ChatMessage['agent']; model?: string; reason?: string }
-  | { type: 'botEnd'; chatId: string; messageId: string; step: number; status: 'running' | 'done' | 'failed' | 'askedUser'; failureReason?: string; nextUserAction?: ChatMessage['botNextUserAction']; agent?: ChatMessage['agent']; model?: string; fallback?: ChatMessage['fallback'] }
+  | { type: 'botEnd'; chatId: string; messageId: string; step: number; status: 'running' | 'done' | 'failed' | 'askedUser'; content?: string; failureReason?: string; nextUserAction?: ChatMessage['botNextUserAction']; agent?: ChatMessage['agent']; model?: string; fallback?: ChatMessage['fallback'] }
   | { type: 'blackboardUpdate'; chatId: string; teamTurnId: string; messageId: string; blackboard: BlackboardSnapshot }
   | { type: 'teamEnd'; chatId: string; teamTurnId: string; summary: TeamRunSummary; taskBrief?: TaskBrief }
 
@@ -512,6 +512,7 @@ export function reducer(state: State, action: Action): State {
       const chat = state.chats[action.chatId]
       if (!chat) return state
       const messages = chat.messages.map(m => m.id === action.messageId ? { ...m, botStatus: action.status, isComplete: action.status !== 'running', botFailureReason: action.failureReason, botNextUserAction: action.nextUserAction,
+        ...(action.content !== undefined ? { content: action.content } : {}),
         // A fallback agent answered: show who actually did, like a single-agent turn.
         ...(action.agent ? { agent: action.agent } : {}), ...(action.model ? { model: action.model } : {}), ...(action.fallback ? { fallback: action.fallback } : {}) } : m)
       return { ...state, chats: { ...state.chats, [chat.id]: { ...chat, messages, updatedAt: Date.now() } } }
@@ -567,6 +568,7 @@ export function reducer(state: State, action: Action): State {
             id: action.assistantMessageId,
             role: 'assistant',
             content: action.content,
+            attachments: action.attachments,
             timestamp: Date.now(),
             toolCalls: [],
             isComplete: true,
@@ -592,7 +594,7 @@ export function reducer(state: State, action: Action): State {
             // `?? m.thinking` rather than a plain assignment: thinking that
             // already streamed in through thinkingToken must not be wiped by a
             // done event that carries none.
-            ? { ...m, ...(action.bot ? { bot: action.bot, botStatus: action.botStatus } : {}), content: action.content, thinking: action.thinking ?? m.thinking, tokens: action.tokens, memoryUsed: action.memoryUsed, durationSec: action.durationSec, agent: action.agent, model: action.model, isComplete: true, choices: action.choices, userQuestion: action.userQuestion, fallback: action.fallback }
+            ? { ...m, ...(action.bot ? { bot: action.bot, botStatus: action.botStatus } : {}), content: action.content, attachments: action.attachments, thinking: action.thinking ?? m.thinking, tokens: action.tokens, memoryUsed: action.memoryUsed, durationSec: action.durationSec, agent: action.agent, model: action.model, isComplete: true, choices: action.choices, userQuestion: action.userQuestion, fallback: action.fallback }
             : m
         )
       } else {
@@ -602,6 +604,7 @@ export function reducer(state: State, action: Action): State {
           id: action.assistantMessageId,
           role: 'assistant',
           content: action.content,
+          attachments: action.attachments,
           bot: action.bot,
           botStatus: action.botStatus,
           thinking: action.thinking,
@@ -901,7 +904,7 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           dispatch({ type: 'botStart', taskId: ev.taskId, chatId: ev.chatId, teamTurnId: ev.teamTurnId, messageId: ev.messageId, step: ev.step, bot: ev.bot, agent: ev.agent, model: ev.model, reason: ev.reason })
           break
         case 'bot_end':
-          dispatch({ type: 'botEnd', chatId: ev.chatId, messageId: ev.messageId, step: ev.step, status: ev.status, failureReason: ev.failureReason, nextUserAction: ev.nextUserAction, agent: ev.agent, model: ev.model, fallback: ev.fallback })
+          dispatch({ type: 'botEnd', chatId: ev.chatId, messageId: ev.messageId, step: ev.step, status: ev.status, content: ev.content, failureReason: ev.failureReason, nextUserAction: ev.nextUserAction, agent: ev.agent, model: ev.model, fallback: ev.fallback })
           break
         case 'blackboard_update':
           dispatch({ type: 'blackboardUpdate', chatId: ev.chatId, teamTurnId: ev.teamTurnId, messageId: ev.messageId, blackboard: ev.blackboard })
@@ -928,6 +931,7 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               chatId: ev.chatId,
               assistantMessageId: asstId,
               content: ev.response,
+              attachments: ev.attachments,
               bot: ev.bot,
               botStatus: ev.botStatus,
               // The agent may report thinking only at the end rather than

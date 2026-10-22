@@ -34,6 +34,18 @@ describe('Aide terminal message', () => {
     expect(run.mock.calls[0][0]).toContain('No access');
     expect(run.mock.calls[0][0]).toContain('do not decide disagreements');
   });
+  it('passes member images to the Aide summary as evidence', async () => {
+    const run = vi.fn().mockResolvedValue('The chart is ready.');
+    await composeTeamFinal({
+      ...input(),
+      messages: [bot('done', {
+        attachments: [{ id: 'image', name: 'chart.png', path: '/w/.codey/uploads/outputs/chart.png', mimeType: 'image/png', size: 1 }],
+      })],
+      run,
+    });
+    expect(run.mock.calls[0][0]).toContain('![chart.png](</w/.codey/uploads/outputs/chart.png>)');
+    expect(run.mock.calls[0][0]).toContain('Keep Markdown image references');
+  });
   it.each(['Flow reached maximum hops', 'Flow stopped: no matching next step'])('preserves termination reason: %s', async reason => {
     const message = await composeTeamFinal({ ...input(), reason });
     expect(message!.content).toContain(reason);
