@@ -64,7 +64,8 @@ existing `ChatMessage.attachments` field. `GatewayResponse` gains
   renders via `codey-asset://`; `http(s)` images are **not** auto-loaded
   (a remote image can track when the chat is opened) — they render as a link;
   anything else shows the alt text. While a reply is still streaming the path
-  is not yet rewritten, so the alt text shows until the turn completes. Images are max-width 100% and click to open full size.
+  is not yet rewritten, so the alt text shows until the turn completes. Images
+  are max-width 100%.
 - `code` blocks with `language-mermaid` lazy-load `mermaid`
   (`securityLevel: 'strict'`) and render SVG. On parse/render error, fall back
   to the normal code block. Theme follows light/dark.
@@ -72,7 +73,7 @@ existing `ChatMessage.attachments` field. `GatewayResponse` gains
 ### 3. Channels
 
 Text first, then images. In the text, each `![alt](snapshot)` becomes
-`[图：alt]` (or `[图]` when alt is empty).
+`[Image: alt]` (or `[Image]` when alt is empty).
 
 - **Telegram:** `sendPhoto` for png/jpg/gif/webp ≤ 10 MB; `sendDocument` for
   svg.
@@ -91,8 +92,8 @@ Text first, then images. In the text, each `![alt](snapshot)` becomes
 - Telegram `sendPhoto` recompresses images, which can blur charts. Charts are
   usually small, so photo stays the default for inline preview.
 - Any single image failing → the text is still delivered and a follow-up line
-  `图片发送失败：<name>` is sent. Failures are logged, never thrown up to the
-  turn.
+  `Image failed to send: <name>` is sent. Failures are logged, never thrown up
+  to the turn.
 
 ### 3b. Mermaid fallback link (channels)
 
@@ -109,7 +110,7 @@ pass through — adds a link for every ` ```mermaid ` block:
   fragment, which browsers do not send to the mermaid.live server.
 - The code block stays in the text. Each link is sent as its **own message**
   after the text (so chunking can never split a URL), labelled
-  `图表预览：<url>`.
+  `Diagram preview: <url>`.
 - If a URL is longer than the channel's message limit (Telegram 4096,
   Discord 2000; iMessage uses 2000), that link is skipped; the code block
   remains.
