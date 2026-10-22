@@ -61,8 +61,10 @@ existing `ChatMessage.attachments` field. `GatewayResponse` gains
 ### 2. Mac app
 
 - `Markdown.tsx` gets an `img` component: a path under `.codey/uploads/`
-  renders via `codey-asset://`; `http(s)` renders directly; anything else
-  shows the alt text. Images are max-width 100% and click to open full size.
+  renders via `codey-asset://`; `http(s)` images are **not** auto-loaded
+  (a remote image can track when the chat is opened) — they render as a link;
+  anything else shows the alt text. While a reply is still streaming the path
+  is not yet rewritten, so the alt text shows until the turn completes. Images are max-width 100% and click to open full size.
 - `code` blocks with `language-mermaid` lazy-load `mermaid`
   (`securityLevel: 'strict'`) and render SVG. On parse/render error, fall back
   to the normal code block. Theme follows light/dark.
@@ -79,13 +81,24 @@ Text first, then images. In the text, each `![alt](snapshot)` becomes
   one per image.
 - Both paths are covered: `sendMessage(response)` and the linked-chat fan-out
   `sendToRoute(route, text)` (gains an attachments argument).
+- Long text is chunked (2000 chars). Images go out once, after the last chunk
+  — both in `sendResponseWithChunking` and in `fanOutToOtherRoutes`.
+- Every assistant message that reaches a channel is covered: solo replies,
+  fan-out mirrors, and the team's final Aide summary. Images that only appear
+  in an individual worker message (not forwarded to channels since #419) are
+  lost on channels unless the Aide summary repeats the `![alt](path)`; the
+  Aide summary prompt is told to keep image references it wants to show.
+- Telegram `sendPhoto` recompresses images, which can blur charts. Charts are
+  usually small, so photo stays the default for inline preview.
 - Any single image failing → the text is still delivered and a follow-up line
   `图片发送失败：<name>` is sent. Failures are logged, never thrown up to the
   turn.
 
 ### 4. Prompt hint
 
-A short block appended where per-turn agent instructions are built:
+A short block added to **every turn's prompt** (not only at session start).
+Agent sessions are resumed across turns, so a chat that gets linked to a
+channel mid-session must see the PNG rule on its very next turn.
 
 - Always: "To show an image, save it as a file in the project (or a temp dir)
   and reference it with `![description](path)`."
@@ -94,6 +107,9 @@ A short block appended where per-turn agent instructions are built:
 - Mac-only chat: "` ```mermaid ` blocks render as diagrams."
 
 ### 5. Error handling
+
+- Prompt hints are requests, not guarantees: an agent may still write mermaid
+  in a channel-linked chat. Then the channel shows the code block as text.
 
 - Missing / too large / outside allowed dirs / non-image → left as text, debug
   log only.
