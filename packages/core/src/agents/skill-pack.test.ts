@@ -138,9 +138,29 @@ describe('installSkillPack', () => {
     expect(readSkillPackManifest('mine', home)?.commit).toBeUndefined();
   });
 
-  it('refuses a single skill, pointing at the single-skill install', async () => {
+  it('installs a folder that is one skill as a plain skill, not a pack', async () => {
+    writeFiles(path.join(work, 'solo'), { 'SKILL.md': skillMd('solo'), 'notes.md': 'extra' });
+    expect(await installSkillPack(path.join(work, 'solo'), home)).toMatchObject({ installed: true, id: 'solo', skills: ['solo'], single: true });
+    expect(fs.readFileSync(path.join(root(), 'solo', 'SKILL.md'), 'utf8')).toBe(skillMd('solo'));
+    expect(fs.existsSync(path.join(root(), 'solo', 'notes.md'))).toBe(true);
+    expect(readSkillPackManifest('solo', home)).toBeUndefined();
+    expect(listSkillPacks(home)).toEqual([]);
+  });
+
+  it('asks before replacing an existing skill with a single one', async () => {
+    writeFiles(path.join(root(), 'solo'), { 'SKILL.md': 'mine' });
     writeFiles(path.join(work, 'solo'), { 'SKILL.md': skillMd('solo') });
-    await expect(installSkillPack(path.join(work, 'solo'), home)).rejects.toThrow(/single skill/);
+    expect(await installSkillPack(path.join(work, 'solo'), home)).toMatchObject({ installed: false, conflict: 'user-copy', names: ['solo'] });
+    expect(fs.readFileSync(path.join(root(), 'solo', 'SKILL.md'), 'utf8')).toBe('mine');
+    await installSkillPack(path.join(work, 'solo'), home, { force: true });
+    expect(fs.readFileSync(path.join(root(), 'solo', 'SKILL.md'), 'utf8')).toBe(skillMd('solo'));
+  });
+
+  it('installs a git repository that is one skill, leaving .git behind', async () => {
+    const url = makeRepo('one-skill', { 'SKILL.md': skillMd('one-skill') });
+    expect(await installSkillPack(url, home)).toMatchObject({ installed: true, id: 'one-skill', single: true });
+    expect(fs.existsSync(path.join(root(), 'one-skill', 'SKILL.md'))).toBe(true);
+    expect(fs.existsSync(path.join(root(), 'one-skill', '.git'))).toBe(false);
   });
 
   it('refuses, writing nothing, when a name belongs to a skill the pack does not own', async () => {
