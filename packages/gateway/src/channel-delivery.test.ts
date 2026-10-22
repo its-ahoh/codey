@@ -38,7 +38,7 @@ describe('deliverMediaExtras', () => {
   });
 
   it('treats a throwing sender and a missing sender as all failed', async () => {
-    const sendText = vi.fn(async () => {});
+    const sendText = vi.fn(async (_text: string) => {});
     await deliverMediaExtras({
       originalText: '', attachments: [img('a.png')], maxLinkLength: 4096, sendText,
       sendImages: async () => { throw new Error('boom'); },
