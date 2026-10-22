@@ -45,3 +45,4 @@ export * from "./co-memo";
 export * from './playbook-skills';
 export * from './output-media';
 export * from './mermaid-link';
+export * from './media-prompt';

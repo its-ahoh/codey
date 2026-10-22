@@ -29,6 +29,8 @@ export interface GatewayResponse {
   replyTo?: string;
   /** When present, the response is asking the user to pick from these options. */
   choices?: string[];
+  /** Image snapshots referenced from `text`; channels send them after the text. */
+  attachments?: import('./chat').FileAttachment[];
 }
 
 // Coding agent types
