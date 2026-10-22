@@ -42,3 +42,15 @@ describe('Markdown images', () => {
     expect(html).toContain('href="https://e.com/x.png"')
   })
 })
+
+describe('Markdown mermaid', () => {
+  it('server-renders the code fallback until mermaid has drawn the diagram', () => {
+    const html = render('```mermaid\ngraph TD\nA-->B\n```')
+    expect(html).toContain('data-mermaid-pending')
+    expect(html).toContain('graph TD')
+  })
+
+  it('leaves other code blocks alone', () => {
+    expect(render('```ts\nconst a = 1\n```')).not.toContain('data-mermaid-pending')
+  })
+})

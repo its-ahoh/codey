@@ -6,6 +6,7 @@ import { C } from '../theme'
 import { FilePathCwd, FilePathLink } from './FilePathLink'
 import { parseFileRef } from './filePathRef'
 import { markdownImageSource } from './markdownImage'
+import { MermaidBlock } from './MermaidBlock'
 
 interface MarkdownProps {
   children: string
@@ -381,7 +382,7 @@ const MarkdownInner: React.FC<MarkdownProps> = ({ children, variant = 'assistant
             </td>
           ),
           pre: ({ children }: any) => {
-            return (
+            const block = (
               <CodeBlock
                 background={codeBlockBg}
                 borderColor={codeBlockBorder}
@@ -393,6 +394,14 @@ const MarkdownInner: React.FC<MarkdownProps> = ({ children, variant = 'assistant
                 {children}
               </CodeBlock>
             )
+            const child = React.Children.toArray(children)[0]
+            if (React.isValidElement<{ className?: string; children?: React.ReactNode }>(child)
+              && /language-mermaid/.test(child.props.className ?? '')) {
+              const raw = child.props.children
+              const code = (Array.isArray(raw) ? raw.join('') : String(raw ?? '')).replace(/\n$/, '')
+              return <MermaidBlock code={code} fallback={block} />
+            }
+            return block
           },
           code: ({ className, children, ...props }: any) => {
             const isBlock = /language-/.test(className || '')
