@@ -15,18 +15,20 @@ export interface CoMemoNote {
   metadata?: { kind?: string; source?: { agent?: string; sessionId?: string; messageId?: string; excerpt?: string } | null; module?: string | null; pinned?: boolean };
 }
 export interface CoMemoConflict {
-  id: string; memoryId: string; currentVersion: number; currentContent: string | null;
+  id: string; revision?: number; memoryId: string; currentVersion: number; currentContent: string | null;
   proposals: Array<{ replicaId: string; agent?: string; content: string | null }>;
   candidates: Array<{ id: string; content: string }>;
   createdAt: number;
 }
-export interface CoMemoConflictView extends CoMemoConflict { revision: string }
+export interface CoMemoConflictView extends Omit<CoMemoConflict, 'revision'> { revision: string }
 export interface CoMemoDetails { memory: CoMemoNote; history: CoMemoNote[]; conflicts: CoMemoConflict[] }
 const conflictRevision = (conflict: CoMemoConflict) => createHash('sha256').update(JSON.stringify(conflict)).digest('hex');
 export interface CoMemoSettings { paused: boolean; saveMode: 'auto' | 'explicit'; defaultScope: CoMemoScope }
 export interface CoMemoContext { context: string; settings: CoMemoSettings; sync?: CoMemoSync }
 interface CoMemoSync { errors?: unknown[]; conflicts?: unknown[] }
 interface CoMemoWrite { memory: CoMemoNote; sync?: CoMemoSync }
+// Co-memo 0.8 returns this, with nothing saved, when a new note resembles an existing one.
+interface CoMemoReview { status: 'needs_review'; review: { token: string } }
 export interface CoMemoOptions { home?: string; node?: string; cli?: string; personalRoot?: string; timeoutMs?: number }
 
 /** Public MCP protocol only: Codey never opens Co-memo's database or imports its internals. */
@@ -98,12 +100,15 @@ export class CoMemoClient {
     return result;
   }
   async conflicts(scope: CoMemoScope, projectPath?: string): Promise<CoMemoConflictView[]> {
+    return (await this.scopedConflicts(scope, projectPath)).map(conflict => ({ ...conflict, revision: conflictRevision(conflict) }));
+  }
+  private async scopedConflicts(scope: CoMemoScope, projectPath?: string): Promise<CoMemoConflict[]> {
     this.requireProject(scope, projectPath);
     const conflicts = await this.call<CoMemoConflict[]>('memory_conflicts', {}, projectPath);
-    const visible: CoMemoConflictView[] = [];
+    const visible: CoMemoConflict[] = [];
     for (const conflict of conflicts) {
       const { memory } = await this.call<{ memory: CoMemoNote }>('memory_get', { id: conflict.memoryId }, projectPath);
-      if (memory.scope === scope) visible.push({ ...conflict, revision: conflictRevision(conflict) });
+      if (memory.scope === scope) visible.push(conflict);
     }
     return visible;
   }
@@ -115,9 +120,9 @@ export class CoMemoClient {
     return result.memory;
   }
   async resolve(id: string, revision: string, choice: { take: string } | { content: string }, scope: CoMemoScope, projectPath?: string) {
-    const current = (await this.conflicts(scope, projectPath)).find(c => c.id === id);
-    if (!current || current.revision !== revision) throw new Error('Conflict changed; refresh and review the alternatives again');
-    const result = await this.call<CoMemoWrite>('memory_resolve', { id, ...choice, userRequested: true }, projectPath);
+    const current = (await this.scopedConflicts(scope, projectPath)).find(c => c.id === id);
+    if (!current || conflictRevision(current) !== revision) throw new Error('Conflict changed; refresh and review the alternatives again');
+    const result = await this.call<CoMemoWrite>('memory_resolve', { id, revision: current.revision ?? 1, ...choice, userRequested: true }, projectPath);
     await this.verify(result.memory, projectPath);
     return result.memory;
   }
@@ -138,7 +143,14 @@ export class CoMemoClient {
   }
   async remember(content: string, scope: CoMemoScope, projectPath?: string, intent: 'explicit' | 'automatic' = 'explicit'): Promise<CoMemoNote> {
     this.requireProject(scope, projectPath);
-    const result = await this.call<CoMemoWrite>('memory_remember', { content, scope, intent }, projectPath);
+    let result = await this.call<CoMemoWrite | CoMemoReview>('memory_remember', { content, scope, intent }, projectPath);
+    // Codey only saves text a person typed or a note copied verbatim into a new worktree,
+    // so a resemblance to an existing note is not a reason to drop the save.
+    if ('status' in result && result.status === 'needs_review') {
+      const reason = intent === 'explicit' ? 'The user asked Codey to save this exact note' : 'Copied unchanged from the parent project';
+      result = await this.call<CoMemoWrite | CoMemoReview>('memory_remember', { content, scope, intent, review: { token: result.review.token, reason } }, projectPath);
+    }
+    if (!('memory' in result)) throw new Error('Co-memo did not save the note; refresh and try again');
     if (result.memory.deleted) throw new Error('An identical note is archived; restore it from Archived instead of saving a duplicate.');
     await this.verify(result.memory, projectPath);
     return result.memory;
