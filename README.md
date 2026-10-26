@@ -394,7 +394,7 @@ codey-mac auto-updates via electron-updater from GitHub Releases.
 
 ### Shared memory with Co-memo
 
-Codey uses the official `@ahoh.tech/co-memo` 0.7.0 package through local MCP stdio. The gateway requires Node.js 24.12+. User notes are shared across projects; project notes use the chat's working directory, including its worktree. Conversations without a project receive personal memory only. No Bot-private memory is created.
+Codey uses the official `co-memo` 0.8.2 package through local MCP stdio. The gateway requires Node.js 24.12+. User notes are shared across projects; project notes use the chat's working directory, including its worktree. Conversations without a project receive personal memory only. No Bot-private memory is created.
 
 Settings → Memory and workspace memory panels edit Co-memo directly. Edits and archives retain the version shown to the user, so concurrent changes are rejected. Archive keeps history. Codey's memory panels provide active, archived and conflict views, version history, restoration, and explicit conflict resolution by selecting current/candidate content or saving a merge. Stale restores and changed conflict reviews are rejected. Search, pause/resume and confirmed permanent deletion of archived notes are available directly in Codey. Memory controls use the app theme, with expandable cards and an on-demand composer; no external console is required.
 
