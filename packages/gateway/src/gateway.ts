@@ -2736,10 +2736,13 @@ export class Codey {
     // the `origin` passed below to skip this channel's route).
     const sink = (ev: any) => {
       if (ev?.type === 'done' && typeof ev.response === 'string') {
+        // Team turns leave `response` empty for the Mac; channels get the final text.
+        const text: string = ev.channelText ?? ev.response;
+        if (!text && !ev.attachments?.length && !ev.choices?.length) return;
         void this.sendResponse({
           chatId,
           channel,
-          text: ev.response,
+          text,
           attachments: ev.attachments,
           choices: ev.choices,
           replyTo: messageId,
@@ -7245,7 +7248,7 @@ Example: /model gpt-4.1 write a Python script`;
       // The Mac app turns a non-empty team response into a footer bubble, so
       // it only travels when a footer was actually persisted.
       const doneResponse = teamTurnId && footerPlan !== 'append' ? '' : output;
-      sink({ type: 'done', chatId, response: doneResponse, ...(outputImages.length ? { attachments: outputImages } : {}), memoryUsed: assistantMessage.memoryUsed, bot: assistantMessage.bot, botStatus: assistantMessage.botStatus, thinking: singleAgentResponse?.thinking, tokens, durationSec, agent: responseAgent, ...(responseModel ? { model: responseModel } : {}), title: finalTitle, choices: surfacedChoices, userQuestion: agentUserQuestion, fallback: singleAgentResponse?.fallback, ...(teamTurnId ? { teamTurnId } : {}) });
+      sink({ type: 'done', chatId, response: doneResponse, channelText: output, ...(outputImages.length ? { attachments: outputImages } : {}), memoryUsed: assistantMessage.memoryUsed, bot: assistantMessage.bot, botStatus: assistantMessage.botStatus, thinking: singleAgentResponse?.thinking, tokens, durationSec, agent: responseAgent, ...(responseModel ? { model: responseModel } : {}), title: finalTitle, choices: surfacedChoices, userQuestion: agentUserQuestion, fallback: singleAgentResponse?.fallback, ...(teamTurnId ? { teamTurnId } : {}) });
 
       // ── Skills: post-run pass (fire-and-forget, response already delivered) ──
       // Skip the whole pass when this turn ended PAUSED — i.e. the team run

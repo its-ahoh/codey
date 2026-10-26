@@ -53,4 +53,30 @@ describe('gateway channel media delivery', () => {
     expect(sent.filter(item => item.startsWith('text:')).length).toBeGreaterThan(1)
     expect(sent.at(-1)).toBe('image')
   })
+
+  it('sends the team channel text with images to the origin channel', async () => {
+    const sendResponse = vi.fn(async () => {})
+    const gateway = Object.assign(Object.create(Codey.prototype), {
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      sendResponse,
+      sendToChat: vi.fn(async (_id: string, _text: string, sink: (ev: unknown) => void) => {
+        sink({ type: 'done', chatId: 'c', response: '', channelText: 'Aide summary', attachments: [image], teamTurnId: 't' })
+      }),
+    })
+    await gateway.runChannelTurnViaChat({ chatId: 'channel1', channel: 'discord', userId: 'u', id: 'm', text: 'hi' }, { prompt: 'hi' }, 'c')
+    expect(sendResponse).toHaveBeenCalledWith(expect.objectContaining({ text: 'Aide summary', attachments: [image] }))
+  })
+
+  it('skips the origin send when a team turn has no text and no images', async () => {
+    const sendResponse = vi.fn(async () => {})
+    const gateway = Object.assign(Object.create(Codey.prototype), {
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      sendResponse,
+      sendToChat: vi.fn(async (_id: string, _text: string, sink: (ev: unknown) => void) => {
+        sink({ type: 'done', chatId: 'c', response: '', teamTurnId: 't' })
+      }),
+    })
+    await gateway.runChannelTurnViaChat({ chatId: 'channel1', channel: 'discord', userId: 'u', id: 'm', text: 'hi' }, { prompt: 'hi' }, 'c')
+    expect(sendResponse).not.toHaveBeenCalled()
+  })
 })
