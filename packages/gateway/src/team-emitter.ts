@@ -1,4 +1,4 @@
-import { AgentResponse, BlackboardSnapshot, ChannelType, CodingAgent } from '@codey/core';
+import { AgentResponse, BlackboardSnapshot, ChannelType, CodingAgent, type FileAttachment } from '@codey/core';
 import type { EndBotMeta, BotMessageEmitter } from './bot-message-emitter';
 
 /** Result of one bot step, returned by every `runOneBot` closure. */
@@ -16,7 +16,9 @@ export interface BotRunResult {
 export interface TeamEmitter {
   /** A discrete status / result / ASK_USER message to the user. */
   permissionDenials?(denials: NonNullable<AgentResponse['permissionDenials']>): void;
-  notify(text: string, choices?: string[]): Promise<void>;
+  notify(text: string, choices?: string[], attachments?: FileAttachment[]): Promise<void>;
+  /** Directory the team ran in; set on surfaces that snapshot images in the final. */
+  readonly workingDir?: string;
   /** An ephemeral progress line ("step 2: architect is working"). Never a
    * message: chat shows it as a transient info event, channels have no
    * transient surface and drop it. A team run's messages are the bot
@@ -87,14 +89,15 @@ export class ChannelEmitter implements TeamEmitter {
   termination(_reason: string): void { /* Channel status is emitted separately. */ }
   private _choices: string[] | undefined;
   constructor(
-    private send: (r: { chatId: string; channel: ChannelType; text: string; choices?: string[] }) => Promise<void>,
+    private send: (r: { chatId: string; channel: ChannelType; text: string; choices?: string[]; attachments?: FileAttachment[] }) => Promise<void>,
     private streamText: ((text: string) => void) | undefined,
     private chatId: string,
     private channel: ChannelType,
+    readonly workingDir?: string,
   ) {}
-  async notify(text: string, choices?: string[]): Promise<void> {
+  async notify(text: string, choices?: string[], attachments?: FileAttachment[]): Promise<void> {
     this._choices = choices;
-    await this.send({ chatId: this.chatId, channel: this.channel, text, choices });
+    await this.send({ chatId: this.chatId, channel: this.channel, text, choices, ...(attachments?.length ? { attachments } : {}) });
   }
   async status(_text: string): Promise<void> { /* no transient surface on a channel */ }
   onStream(token: string): void { this.streamText?.(token); }

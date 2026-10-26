@@ -4304,10 +4304,19 @@ Example: /model gpt-4.1 write a Python script`;
   ): Promise<void> {
     if (emitter.rendersBotBubbles) return;
     const teamTurnId = `channel:${teamName}`;
+    const workingDir = emitter.workingDir;
+    // Snapshot member images up front so the summary's Image lines carry them
+    // and the final text reuses the same copies.
+    const mediaCache = new Map<string, FileAttachment>();
+    const records = teamStepRecords(steps, teamTurnId, teamName).map(record => {
+      if (!workingDir) return record;
+      const media = extractOutputImages(record.content, { workingDir, cache: mediaCache });
+      return media.images.length ? { ...record, content: media.text, attachments: media.images } : record;
+    });
     const final = await composeTeamFinal({
       teamTurnId,
       teamName,
-      messages: teamStepRecords(steps, teamTurnId, teamName),
+      messages: records,
       advisorSummary,
       task,
       signal,
@@ -4316,7 +4325,10 @@ Example: /model gpt-4.1 write a Python script`;
         : undefined,
     });
     const text = final?.content.trim();
-    if (text) await emitter.notify(text);
+    if (!text) return;
+    if (!workingDir) { await emitter.notify(text); return; }
+    const media = extractOutputImages(text, { workingDir, cache: mediaCache });
+    await emitter.notify(media.text, undefined, media.images);
   }
 
   private async runTeamTask(
@@ -4422,7 +4434,7 @@ Example: /model gpt-4.1 write a Python script`;
           channel,
           text: `⚠️ Auto-routing failed (${result.fallbackReason}), running all members.`,
         });
-        const fbEmitter = new ChannelEmitter((r) => this.sendResponse(r), handler?.streamText ? (t: string) => handler.streamText!(t) : undefined, message.chatId, message.channel);
+        const fbEmitter = new ChannelEmitter((r) => this.sendResponse(r), handler?.streamText ? (t: string) => handler.streamText!(t) : undefined, message.chatId, message.channel, workingDir);
         await this.runAllMembersInOrder(fbEmitter, stateChatId, baseConv, teamName, members, task, runOneBot, { teamTurnId: turnTeamTurnId });
         return;
       }
@@ -4468,7 +4480,7 @@ Example: /model gpt-4.1 write a Python script`;
       }
 
       // Same closing contract as every other surface: the Aide final only.
-      const finalEmitter = new ChannelEmitter((r) => this.sendResponse(r), undefined, chatId, channel);
+      const finalEmitter = new ChannelEmitter((r) => this.sendResponse(r), undefined, chatId, channel, workingDir);
       await this.notifyTeamFinal(
         finalEmitter, teamName, task,
         result.parts.map(p => ({ step: p.step, bot: p.bot, output: p.output })),
@@ -4488,7 +4500,7 @@ Example: /model gpt-4.1 write a Python script`;
           channel,
           text: `Direct answer via **${fastPath.bot}** — ${fastPath.reason}`,
         });
-        const directEmitter = new ChannelEmitter((r) => this.sendResponse(r), handler?.streamText ? (t: string) => handler.streamText!(t) : undefined, message.chatId, message.channel);
+        const directEmitter = new ChannelEmitter((r) => this.sendResponse(r), handler?.streamText ? (t: string) => handler.streamText!(t) : undefined, message.chatId, message.channel, workingDir);
         await this.runAllMembersInOrder(directEmitter, stateChatId, baseConv, teamName, [fastPath.bot], task, runOneBot, { teamTurnId: turnTeamTurnId });
         return;
       }
@@ -4496,7 +4508,7 @@ Example: /model gpt-4.1 write a Python script`;
 
     // dispatch === 'sequential' OR forceAll: full workflow path
     if (!opts.forceAll && team.graph) {
-      await this.runSequentialGraphForChat(message, teamName, team.graph, task, runOneBot, turnTeamTurnId, { chatId: stateChatId, baseConv });
+      await this.runSequentialGraphForChat(message, teamName, team.graph, task, runOneBot, turnTeamTurnId, { chatId: stateChatId, baseConv, workingDir });
       return;
     }
     const headerSuffix = opts.forceAll ? ' [--all override]' : '';
@@ -4505,7 +4517,7 @@ Example: /model gpt-4.1 write a Python script`;
       channel,
       text: `👥 Running team **${teamName}** (${members.join(' → ')})${headerSuffix}\nTask: ${task.substring(0, 100)}${task.length > 100 ? '...' : ''}`,
     });
-    const allEmitter = new ChannelEmitter((r) => this.sendResponse(r), handler?.streamText ? (t: string) => handler.streamText!(t) : undefined, message.chatId, message.channel);
+    const allEmitter = new ChannelEmitter((r) => this.sendResponse(r), handler?.streamText ? (t: string) => handler.streamText!(t) : undefined, message.chatId, message.channel, workingDir);
     await this.runAllMembersInOrder(allEmitter, stateChatId, baseConv, teamName, members, task, runOneBot, { teamTurnId: turnTeamTurnId });
   }
 
@@ -4947,13 +4959,13 @@ Example: /model gpt-4.1 write a Python script`;
       blackboard: TeamBlackboard,
     ) => Promise<BotRunResult>,
     teamTurnId?: string,
-    binding?: { chatId: string; baseConv: string },
+    binding?: { chatId: string; baseConv: string; workingDir?: string },
   ): Promise<void> {
     const handler = this.handlers.get(message.channel);
     const emitter = new ChannelEmitter(
       (r) => this.sendResponse(r),
       handler?.streamText ? (t: string) => handler.streamText!(t) : undefined,
-      message.chatId, message.channel,
+      message.chatId, message.channel, binding?.workingDir,
     );
     const convBase = binding?.baseConv ?? `${message.channel}-${message.chatId}`;
     const blackboard = new TeamBlackboard();

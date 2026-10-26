@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { FileAttachment } from '@codey/core'
+import * as fs from 'fs'
+import * as os from 'os'
+import * as path from 'path'
 import { Codey } from './gateway'
+import { ChannelEmitter } from './team-emitter'
 
 const image: FileAttachment = {
   id: 'image',
@@ -78,5 +82,22 @@ describe('gateway channel media delivery', () => {
     })
     await gateway.runChannelTurnViaChat({ chatId: 'channel1', channel: 'discord', userId: 'u', id: 'm', text: 'hi' }, { prompt: 'hi' }, 'c')
     expect(sendResponse).not.toHaveBeenCalled()
+  })
+
+  it('attaches images from the channel team final', async () => {
+    const work = fs.mkdtempSync(path.join(os.tmpdir(), 'team-final-media-'))
+    try {
+      fs.writeFileSync(path.join(work, 'chart.png'), Buffer.from('89504e470d0a1a0a', 'hex'))
+      const sent: Array<{ text: string; attachments?: FileAttachment[] }> = []
+      const gateway = Object.assign(Object.create(Codey.prototype), { isAideConfigured: () => false })
+      const emitter = new ChannelEmitter(async r => { sent.push(r) }, undefined, 'c1', 'discord' as any, work)
+      await gateway.notifyTeamFinal(emitter, 'Team', 'Draw', [{ step: 1, bot: 'ben', output: 'Here ![c](chart.png)' }])
+      expect(sent).toHaveLength(1)
+      expect(sent[0].attachments).toHaveLength(1)
+      expect(sent[0].text).toContain(sent[0].attachments![0].path)
+      expect(fs.readdirSync(path.join(work, '.codey', 'uploads', 'outputs'))).toHaveLength(1)
+    } finally {
+      fs.rmSync(work, { recursive: true, force: true })
+    }
   })
 })
