@@ -28,3 +28,36 @@ describe('Markdown emphasis next to Chinese punctuation', () => {
     expect(render('a **bold** word')).toContain('>bold</strong>')
   })
 })
+
+describe('Markdown images', () => {
+  it('renders an upload snapshot as an img', () => {
+    const html = render('![Sales](</w/.codey/uploads/outputs/1-x-chart.png>)')
+    expect(html).toContain('<img')
+    expect(html).toContain('codey-asset://file/')
+  })
+
+  it('encodes a snapshot path with a space and a CJK name exactly once', () => {
+    const original = '/w/my dir/.codey/uploads/outputs/1-x-图表.png' // lint-allow-non-english
+    const html = render(`![c](<${original}>)`)
+    const src = /<img[^>]*src="([^"]*)"/.exec(html)?.[1]
+    expect(src).toBe(`codey-asset://file/${encodeURIComponent(original)}`)
+  })
+
+  it('renders a remote image as a link, not an img', () => {
+    const html = render('![r](https://e.com/x.png)')
+    expect(html).not.toContain('<img')
+    expect(html).toContain('href="https://e.com/x.png"')
+  })
+})
+
+describe('Markdown mermaid', () => {
+  it('server-renders the code fallback until mermaid has drawn the diagram', () => {
+    const html = render('```mermaid\ngraph TD\nA-->B\n```')
+    expect(html).toContain('data-mermaid-pending')
+    expect(html).toContain('graph TD')
+  })
+
+  it('leaves other code blocks alone', () => {
+    expect(render('```ts\nconst a = 1\n```')).not.toContain('data-mermaid-pending')
+  })
+})

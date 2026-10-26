@@ -1,4 +1,4 @@
-import { UserMessage, GatewayResponse, ChatRoute } from '@codey/core';
+import { UserMessage, GatewayResponse, ChatRoute, FileAttachment } from '@codey/core';
 
 export interface ChannelHandler {
   name: string;
@@ -8,6 +8,8 @@ export interface ChannelHandler {
   onMessage(callback: (message: UserMessage) => Promise<void>): void;
   streamText?(text: string): void;
   sendToRoute?(route: ChatRoute, text: string): Promise<void>;
+  /** Send image files to a chat/channel id. Resolves with the names that failed. */
+  sendImages?(target: string, images: FileAttachment[]): Promise<string[]>;
 }
 
 // Base class for channel handlers

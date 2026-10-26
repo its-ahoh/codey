@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import type { BlackboardSnapshot, ChatMessage, ToolCallEntry, WriteDiff } from '@codey/core';
+import type { BlackboardSnapshot, ChatMessage, FileAttachment, ToolCallEntry, WriteDiff } from '@codey/core';
 import type { ChatStreamEvent } from './chat-runner';
 
 type Sink = (e: ChatStreamEvent) => void;
@@ -46,7 +46,13 @@ export class BotMessageEmitter {
     private sink: Sink,
     private store: BotMessageStore,
     private chatId: string,
-    private meta: { teamTurnId: string; teamName: string; mode: ChatMessage['teamMode']; taskId?: string },
+    private meta: {
+      teamTurnId: string;
+      teamName: string;
+      mode: ChatMessage['teamMode'];
+      taskId?: string;
+      rewriteContent?: (content: string) => { content: string; attachments: FileAttachment[] };
+    },
     private newId: () => string = randomUUID,
   ) {}
 
@@ -133,8 +139,14 @@ export class BotMessageEmitter {
     const buf = bot ? this.byBot.get(bot) : this.active;
     if (!buf) return;
     const identity = fallbackIdentity(extra?.fallback);
+    const media = this.meta.rewriteContent && buf.content
+      ? this.meta.rewriteContent(buf.content)
+      : { content: buf.content, attachments: [] };
+    const rewritten = media.content !== buf.content;
+    buf.content = media.content;
     this.store.updateMessage(this.chatId, buf.messageId, {
       content: buf.content,
+      ...(media.attachments.length ? { attachments: media.attachments } : {}),
       toolCalls: buf.toolCalls,
       thinking: buf.thinking || undefined,
       botStatus: status,
@@ -147,7 +159,7 @@ export class BotMessageEmitter {
       ...(extra?.failureReason ? { botFailureReason: extra.failureReason } : {}),
       ...(extra?.nextUserAction ? { botNextUserAction: extra.nextUserAction } : {}),
     });
-    this.sink({ type: 'bot_end', chatId: this.chatId, messageId: buf.messageId, step: buf.step, status, tokens: extra?.tokens, durationSec: extra?.durationSec, failureReason: extra?.failureReason, nextUserAction: extra?.nextUserAction, agent: identity.agent, model: identity.model, fallback: extra?.fallback });
+    this.sink({ type: 'bot_end', chatId: this.chatId, messageId: buf.messageId, step: buf.step, status, ...(rewritten ? { content: buf.content } : {}), tokens: extra?.tokens, durationSec: extra?.durationSec, failureReason: extra?.failureReason, nextUserAction: extra?.nextUserAction, agent: identity.agent, model: identity.model, fallback: extra?.fallback });
     if (buf === this.active) this.active = null;
     if (bot) this.byBot.delete(bot);
   }

@@ -1,6 +1,6 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, Client, GatewayIntentBits, Interaction, Message, TextChannel } from 'discord.js';
 import { BaseChannelHandler } from './base';
-import { UserMessage, GatewayResponse, ChatRoute } from '@codey/core';
+import { UserMessage, GatewayResponse, ChatRoute, FileAttachment } from '@codey/core';
 
 export class DiscordHandler extends BaseChannelHandler {
   name = 'discord';
@@ -112,4 +112,55 @@ export class DiscordHandler extends BaseChannelHandler {
       await channel.send(text);
     }
   }
+
+  async sendImages(target: string, images: FileAttachment[]): Promise<string[]> {
+    const names = images.map(i => i.name);
+    if (!this.client) return names;
+    const channel = await this.client.channels.fetch(target).catch(() => null);
+    if (!(channel instanceof TextChannel)) return names;
+    const send = async (batch: FileAttachment[]): Promise<boolean> => {
+      try {
+        await channel.send({ files: batch.map(i => ({ attachment: i.path, name: i.name })) });
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const failed: string[] = [];
+    for (const batch of batchAttachments(images)) {
+      if (await send(batch)) continue;
+      // One oversized or rejected file should not sink the rest of its batch.
+      if (batch.length === 1) { failed.push(batch[0].name); continue; }
+      for (const img of batch) {
+        if (!(await send([img]))) failed.push(img.name);
+      }
+    }
+    return failed;
+  }
+}
+
+/** Discord caps a message at 10 attachments and limits the total upload size. */
+const MAX_FILES_PER_MESSAGE = 10;
+const MAX_BYTES_PER_MESSAGE = 8 * 1024 * 1024;
+
+/**
+ * Groups images into batches of at most 10 files whose summed size stays
+ * within 8 MiB. A single file larger than the cap goes alone in its own batch.
+ */
+export function batchAttachments(images: FileAttachment[]): FileAttachment[][] {
+  const batches: FileAttachment[][] = [];
+  let current: FileAttachment[] = [];
+  let bytes = 0;
+  for (const img of images) {
+    const full = current.length >= MAX_FILES_PER_MESSAGE || bytes + img.size > MAX_BYTES_PER_MESSAGE;
+    if (current.length > 0 && full) {
+      batches.push(current);
+      current = [];
+      bytes = 0;
+    }
+    current.push(img);
+    bytes += img.size;
+  }
+  if (current.length > 0) batches.push(current);
+  return batches;
 }

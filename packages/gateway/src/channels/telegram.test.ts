@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { rewriteStartPairCommand, markdownToTelegramHtml } from './telegram';
+import { describe, it, expect, vi } from 'vitest';
+import { rewriteStartPairCommand, markdownToTelegramHtml, TelegramHandler } from './telegram';
 
 describe('rewriteStartPairCommand', () => {
   it('rewrites a QR deep-link start payload into /pair', () => {
@@ -72,5 +72,37 @@ describe('markdownToTelegramHtml — headings, links, lists, strikethrough', () 
   it('leaves markdown inside code blocks alone', () => {
     expect(markdownToTelegramHtml('```\n# not a heading\n- not a bullet\n```'))
       .toBe('<pre><code># not a heading\n- not a bullet</code></pre>');
+  });
+});
+
+describe('TelegramHandler.sendImages', () => {
+  const att = (name: string, mimeType: string) => ({ id: name, name, path: `/w/${name}`, mimeType, size: 1 });
+
+  it('sends raster images as photos and svg as documents, reporting failures', async () => {
+    const bot = {
+      sendPhoto: vi.fn(async () => ({})),
+      sendDocument: vi.fn(async () => { throw new Error('too big'); }),
+    };
+    const h = new TelegramHandler();
+    (h as any).bot = bot;
+    const failed = await h.sendImages('42', [att('a.png', 'image/png'), att('b.svg', 'image/svg+xml')]);
+    expect(bot.sendPhoto).toHaveBeenCalledWith('42', '/w/a.png', {}, { filename: 'a.png', contentType: 'image/png' });
+    expect(bot.sendDocument).toHaveBeenCalledWith('42', '/w/b.svg', {}, { filename: 'b.svg', contentType: 'image/svg+xml' });
+    expect(failed).toEqual(['b.svg']);
+  });
+
+  it('falls back to a document when sendPhoto is rejected', async () => {
+    const bot = {
+      sendPhoto: vi.fn(async () => { throw new Error('PHOTO_INVALID_DIMENSIONS'); }),
+      sendDocument: vi.fn(async () => ({})),
+    };
+    const h = new TelegramHandler();
+    (h as any).bot = bot;
+    expect(await h.sendImages('42', [att('tall.png', 'image/png')])).toEqual([]);
+    expect(bot.sendDocument).toHaveBeenCalledWith('42', '/w/tall.png', {}, { filename: 'tall.png', contentType: 'image/png' });
+  });
+
+  it('reports everything as failed when the bot is not running', async () => {
+    expect(await new TelegramHandler().sendImages('42', [att('a.png', 'image/png')])).toEqual(['a.png']);
   });
 });
