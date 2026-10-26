@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { BotManager, TeamBlackboard, ContextManager, type Chat, type AgentRequest } from '@codey/core';
+import { BotManager, TeamBlackboard, ContextManager, extractOutputImages, type Chat, type AgentRequest } from '@codey/core';
 import { ChatManager } from './chats';
 import { Codey } from './gateway';
 import { RunSemaphore } from './chat-runner';
@@ -506,6 +506,33 @@ describe('mention execution contexts', () => {
     expect(resume.mock.calls[0][3]).toBe('Blue');
     expect(chat.pendingTeam).toBeUndefined();
     expect(chat.messages.filter(m => m.id !== 'unrelated').every(m => m.taskId === a)).toBe(true);
+  });
+
+  it('snapshots an image once when the member message and the final output both reference it', async () => {
+    const { root, chat, gateway, manager, dispatch } = await harness();
+    const png = Buffer.from('89504e470d0a1a0a', 'hex');
+    dispatch.mockImplementationOnce(async (name, team, _prompt, dir, sink, id, _chat, _signal, opts) => {
+      fs.writeFileSync(path.join(dir, 'chart.png'), png);
+      const emitter = new BotMessageEmitter(sink, manager, id, {
+        teamTurnId: 'media-turn', teamName: name, mode: 'sequential', taskId: opts.taskId,
+        rewriteContent: (content: string) => {
+          const media = extractOutputImages(content, { workingDir: dir, cache: opts.mediaCache });
+          return { content: media.text, attachments: media.images };
+        },
+      });
+      emitter.teamStart(team.members.map((bot: string, index: number) => ({ bot, step: index + 1 })));
+      emitter.beginBot({ bot: team.members[0], step: 1 });
+      emitter.onStream('Here ![c](chart.png)');
+      emitter.endBot('done');
+      return { response: 'Here ![c](chart.png)', teamTurnId: 'media-turn' };
+    });
+    const events: any[] = [];
+    await gateway.sendToChat(chat.id, '@ben Draw', e => { events.push(e); });
+    const outputs = fs.readdirSync(path.join(root, '.codey', 'uploads', 'outputs'));
+    expect(outputs).toHaveLength(1);
+    const member = chat.messages.find(m => m.teamTurnId === 'media-turn' && m.bot);
+    const done = events.find(e => e.type === 'done');
+    expect(done.attachments[0].path).toBe(member?.attachments?.[0].path);
   });
 
   it('keeps a self mention in the direct Bot context', async () => {

@@ -72,6 +72,11 @@ const ensureOutputsDir = (workRoot: string): string | null => {
 export interface ExtractOptions {
   workingDir: string;
   now?: () => number;
+  /**
+   * Source realpath → snapshot, shared across calls (e.g. one chat turn) so the
+   * same file referenced in several messages is copied once.
+   */
+  cache?: Map<string, FileAttachment>;
 }
 
 /**
@@ -93,7 +98,12 @@ export function extractOutputImages(
   const roots = [workRoot, realpathOrNull(os.tmpdir()), process.platform !== 'win32' ? realpathOrNull('/tmp') : null]
     .filter((r): r is string => !!r);
   const images: FileAttachment[] = [];
-  const bySource = new Map<string, FileAttachment>();
+  const bySource = opts.cache ?? new Map<string, FileAttachment>();
+  const pushed = new Set<FileAttachment>();
+  const take = (att: FileAttachment): FileAttachment => {
+    if (!pushed.has(att)) { pushed.add(att); images.push(att); }
+    return att;
+  };
   const existing = realpathOrNull(path.join(workRoot, '.codey', 'uploads', 'outputs'));
   let outputsReal: string | null = existing && isInside(existing, workRoot) ? existing : null;
 
@@ -104,7 +114,7 @@ export function extractOutputImages(
     const mimeType = IMAGE_MIME[ext];
     if (!mimeType) return null;
     const cached = bySource.get(real);
-    if (cached) return cached;
+    if (cached) return take(cached);
     let dest = real;
     let size: number;
     try {
@@ -123,8 +133,7 @@ export function extractOutputImages(
     }
     const att: FileAttachment = { id: randomUUID(), name: path.basename(real), path: dest, mimeType, size };
     bySource.set(real, att);
-    images.push(att);
-    return att;
+    return take(att);
   };
 
   const out = mapOutsideFences(text, part => part.replace(IMAGE_RE, (whole, alt: string, target: string) => {

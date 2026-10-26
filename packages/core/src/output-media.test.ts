@@ -129,6 +129,18 @@ describe('extractOutputImages', () => {
     expect(fs.readdirSync(outputsDir()).filter(f => f.endsWith('.png'))).toHaveLength(1);
   });
 
+  it('shares snapshots across calls through a cache', () => {
+    fs.writeFileSync(path.join(work, 'chart.png'), PNG);
+    const cache = new Map();
+    const a = extractOutputImages('![a](chart.png)', { workingDir: work, cache });
+    const b = extractOutputImages('again ![b](chart.png) ![c](chart.png)', { workingDir: work, cache });
+    expect(a.images).toHaveLength(1);
+    expect(b.images).toHaveLength(1);
+    expect(b.images[0].path).toBe(a.images[0].path);
+    expect(b.text).toBe(`again ![b](<${a.images[0].path}>) ![c](<${a.images[0].path}>)`);
+    expect(fs.readdirSync(outputsDir())).toHaveLength(1);
+  });
+
   it('keeps uploads out of git', () => {
     fs.writeFileSync(path.join(work, 'chart.png'), PNG);
     extractOutputImages('![c](chart.png)', { workingDir: work });

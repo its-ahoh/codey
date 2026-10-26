@@ -5170,7 +5170,7 @@ Example: /model gpt-4.1 write a Python script`;
     chatId: string,
     chat: Chat,
     signal?: AbortSignal,
-    opts: { forceAll?: boolean; routingTask?: string; taskId?: string } = {},
+    opts: { forceAll?: boolean; routingTask?: string; taskId?: string; mediaCache?: Map<string, FileAttachment> } = {},
     chatAgent?: CodingAgent,
     chatModel?: ModelConfig,
   ): Promise<{ response: string; tokens?: number; choices?: string[]; thinkingByStep?: Record<number, string>; teamTurnId?: string; advisorSummary?: string }> {
@@ -5199,7 +5199,7 @@ Example: /model gpt-4.1 write a Python script`;
         mode: teamMode,
         taskId: opts.taskId,
         rewriteContent: content => {
-          const media = extractOutputImages(content, { workingDir });
+          const media = extractOutputImages(content, { workingDir, cache: opts.mediaCache });
           return { content: media.text, attachments: media.images };
         },
       },
@@ -6859,6 +6859,9 @@ Example: /model gpt-4.1 write a Python script`;
     try {
       let output = '';
       let outputImages: FileAttachment[] = [];
+      // One source → snapshot map per turn, so a file a team member referenced
+      // and the final output references again is copied once.
+      const turnMediaCache = new Map<string, FileAttachment>();
       let tokens: number | undefined;
       let teamChoices: string[] | undefined;
       let teamThinkingByStep: Record<number, string> | undefined;
@@ -6882,7 +6885,7 @@ Example: /model gpt-4.1 write a Python script`;
             teamName: pendingTeam.teamName,
             mode: pendingTeam.mode === 'graph' ? 'graph' : pendingTeam.mode,
             rewriteContent: content => {
-              const media = extractOutputImages(content, { workingDir });
+              const media = extractOutputImages(content, { workingDir, cache: turnMediaCache });
               return { content: media.text, attachments: media.images };
             },
           },
@@ -6916,7 +6919,7 @@ Example: /model gpt-4.1 write a Python script`;
           : team.members.length > 1
             ? `Ad-hoc team from mentions: ${team.members.join(', ')} (Advisor dispatches)`
             : `Routing to bot ${team.members[0]}` });
-        const r = await this.runTeamForChat(teamName, team, teamPrompt, workingDir, sink, chatId, contextChat, abortController.signal, { routingTask: userText, taskId }, agent, model);
+        const r = await this.runTeamForChat(teamName, team, teamPrompt, workingDir, sink, chatId, contextChat, abortController.signal, { routingTask: userText, taskId, mediaCache: turnMediaCache }, agent, model);
         output = r.response;
         tokens = r.tokens;
         teamChoices = r.choices;
@@ -6959,7 +6962,7 @@ Example: /model gpt-4.1 write a Python script`;
         }
         const team: TeamConfig = wsTeam ?? fallbackTeam;
         this.logger.info(`[parallel-debug] teamName=${teamName} dispatch=${team.dispatch} hasRoundtable=${!!team.roundtable} wsTeam=${!!wsTeam} fallbackDispatch=${fallbackDispatch} members=${team.members.join(',')}`);
-        const r = await this.runTeamForChat(teamName, team, prompt, workingDir, sink, chatId, contextChat, abortController.signal, { routingTask: userText, taskId }, agent, model);
+        const r = await this.runTeamForChat(teamName, team, prompt, workingDir, sink, chatId, contextChat, abortController.signal, { routingTask: userText, taskId, mediaCache: turnMediaCache }, agent, model);
         output = r.response;
         tokens = r.tokens;
         teamChoices = r.choices;
@@ -7129,7 +7132,7 @@ Example: /model gpt-4.1 write a Python script`;
         ? finalizeTeamRunSummary(terminalTeamMessages) ?? undefined
         : undefined;
       if (output) {
-        const media = extractOutputImages(output, { workingDir });
+        const media = extractOutputImages(output, { workingDir, cache: turnMediaCache });
         output = media.text;
         outputImages = media.images;
       }
