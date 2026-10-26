@@ -46,6 +46,17 @@ describe('Aide terminal message', () => {
     expect(run.mock.calls[0][0]).toContain('![chart.png](</w/.codey/uploads/outputs/chart.png>)');
     expect(run.mock.calls[0][0]).toContain('Keep Markdown image references');
   });
+  it('keeps image references out of the clipped Result lines', async () => {
+    const att = { id: 'image', name: 'chart.png', path: '/w/.codey/uploads/outputs/1-a b.png', mimeType: 'image/png', size: 1 };
+    const content = `Chart ![chart](<${att.path}>) ${'y'.repeat(220)}`;
+    const message = await composeTeamFinal({ ...input(), messages: [bot('done', { content, attachments: [att] })] });
+    const result = message!.content.split('\n').find(line => line.startsWith('Result —'))!;
+    expect(result).not.toContain('](');
+    expect(result).not.toContain('uploads');
+    expect(result).not.toContain('.png');
+    expect(result).toContain('y'.repeat(220));
+    expect(message!.content).toContain(`Image — Alice: ![chart.png](<${att.path}>)`);
+  });
   it.each(['Flow reached maximum hops', 'Flow stopped: no matching next step'])('preserves termination reason: %s', async reason => {
     const message = await composeTeamFinal({ ...input(), reason });
     expect(message!.content).toContain(reason);

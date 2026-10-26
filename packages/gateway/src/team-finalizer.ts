@@ -69,6 +69,10 @@ export function teamStepRecords(steps: TeamStepRecord[], teamTurnId: string, tea
   }));
 }
 
+/** `![alt](dest)` with a bare or `<...>` destination. The clipped Result
+ *  lines drop these so a slice can't cut one in half; Image lines carry them. */
+const MARKDOWN_IMAGE = /!\[[^\]\n]*\]\(\s*(?:<[^>\n]*>|[^)\s]*)(?:\s+"[^"\n]*")?\s*\)/g;
+
 /** One stable final message per logical team run, including resumed runs. */
 export async function composeTeamFinal(input: TeamFinalInput): Promise<ChatMessage | null> {
   if (input.paused && !input.stopped) return null;
@@ -83,7 +87,7 @@ export async function composeTeamFinal(input: TeamFinalInput): Promise<ChatMessa
   const facts = [
     `Outcome: ${reason}.`,
     done.length ? `Completed steps: ${done.length} (${names(done)}).` : 'No bot step was recorded as completed.',
-    ...done.map(m => `Result — ${m.bot}: ${m.content.replace(/\s+/g, ' ').trim().slice(-240) || 'No result text was recorded.'}`),
+    ...done.map(m => `Result — ${m.bot}: ${m.content.replace(MARKDOWN_IMAGE, ' ').replace(/\s+/g, ' ').trim().slice(-240) || 'No result text was recorded.'}`),
     ...done.flatMap(m => (m.attachments ?? []).map(a => `Image — ${m.bot}: ![${a.name}](<${a.path}>)`)),
     ...failed.map(m => `Failure — ${m.bot}: ${m.botFailureReason || 'No detailed reason was recorded.'}`),
     pending.length ? `Not completed or not selected: ${names(pending)}.` : 'No remaining bot steps are recorded.',
