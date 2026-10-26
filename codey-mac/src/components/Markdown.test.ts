@@ -36,6 +36,13 @@ describe('Markdown images', () => {
     expect(html).toContain('codey-asset://file/')
   })
 
+  it('encodes a snapshot path with a space and a CJK name exactly once', () => {
+    const original = '/w/my dir/.codey/uploads/outputs/1-x-图表.png' // lint-allow-non-english
+    const html = render(`![c](<${original}>)`)
+    const src = /<img[^>]*src="([^"]*)"/.exec(html)?.[1]
+    expect(src).toBe(`codey-asset://file/${encodeURIComponent(original)}`)
+  })
+
   it('renders a remote image as a link, not an img', () => {
     const html = render('![r](https://e.com/x.png)')
     expect(html).not.toContain('<img')

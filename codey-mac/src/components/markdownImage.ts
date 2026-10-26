@@ -7,8 +7,11 @@ export type MarkdownImageSource =
 export const markdownImageSource = (src: string | undefined): MarkdownImageSource => {
   if (!src) return { kind: 'none' }
   if (/^https?:\/\//i.test(src)) return { kind: 'remote', url: src }
-  if (src.startsWith('/') && src.includes('/.codey/uploads/')) {
-    return { kind: 'asset', url: `codey-asset://file/${encodeURIComponent(src)}` }
+  // react-markdown percent-encodes URLs before they reach the img component.
+  let p = src
+  try { p = decodeURIComponent(src) } catch { /* keep the raw value */ }
+  if (p.startsWith('/') && p.includes('/.codey/uploads/')) {
+    return { kind: 'asset', url: `codey-asset://file/${encodeURIComponent(p)}` }
   }
   return { kind: 'none' }
 }
