@@ -39,7 +39,7 @@ export class CoMemoClient {
   private launch() {
     return {
       node: this.options.node ?? process.env.CO_MEMO_NODE ?? process.execPath,
-      cli: this.options.cli ?? process.env.CO_MEMO_CLI ?? path.join(path.dirname(require.resolve('@ahoh.tech/co-memo/package.json')), 'dist', 'cli.js'),
+      cli: this.options.cli ?? process.env.CO_MEMO_CLI ?? path.join(path.dirname(require.resolve('co-memo/package.json')), 'dist', 'cli.js'),
       launcher: path.join(__dirname, '..', 'co-memo-launcher.cjs'),
       home: this.options.home ?? process.env.CO_MEMO_HOME,
       // A home directory may itself be registered by an older Co-memo setup.

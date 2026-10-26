@@ -11,8 +11,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@ahoh.tech/co-memo": "0.8.2",
     "@modelcontextprotocol/sdk": "1.30.0",
+    "co-memo": "0.8.2",
     "undici": "^5.28.0"
   },
   "devDependencies": {
