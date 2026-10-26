@@ -61,7 +61,7 @@ export interface SkillPackInfo {
 }
 
 export type SkillPackInstallResult =
-  | { installed: true; id: string; skills: string[]; dir: string }
+  | { installed: true; id: string; skills: string[]; dir: string; single?: true }
   | { installed: false; conflict: 'user-copy'; id: string; dir: string; names: string[] }
 
 export interface SkillPackUpdateCheck {
