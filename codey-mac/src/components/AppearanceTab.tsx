@@ -258,36 +258,6 @@ export const AppearanceTab: React.FC = () => {
 
           <div style={styles.settingRow}>
             <div style={{ ...styles.label, width: 'auto', flex: 1 }}>
-              <div>Turn-end sound</div>
-              <div style={styles.settingDesc}>
-                Play a short sound each time a reply finishes, errors, or needs your input — even while Codey is in front.
-              </div>
-            </div>
-            <Toggle on={turnSound} onChange={toggleTurnSound}/>
-          </div>
-
-          {turnSound && (
-            <div style={styles.settingRow}>
-              <div style={{ ...styles.label, width: 'auto', flex: 1, minWidth: 0 }}>
-                <div>Sound</div>
-                <div style={{ ...styles.settingDesc, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={soundFile || undefined}>
-                  {soundFile
-                    ? soundFile.split('/').pop()
-                    : 'System default — different sounds for finished, needs input, and error.'}
-                </div>
-              </div>
-              <div style={styles.stepper}>
-                <button onClick={() => { void pickSoundFile() }} style={{ ...styles.stepValue, color: C.fg }}>Choose…</button>
-                <button onClick={() => { void window.codey?.sound?.preview?.(soundFile) }} style={styles.stepValue}>Play</button>
-                {soundFile && (
-                  <button onClick={() => changeSoundFile('')} style={styles.stepValue} title="Go back to the system sounds">Reset</button>
-                )}
-              </div>
-            </div>
-          )}
-
-          <div style={styles.settingRow}>
-            <div style={{ ...styles.label, width: 'auto', flex: 1 }}>
               <div>Quick capture hotkey</div>
               <div style={styles.settingDesc}>
                 Summon a floating composer from anywhere to send Codey a task. Clear to disable.
@@ -325,6 +295,40 @@ export const AppearanceTab: React.FC = () => {
             </div>
             <Toggle on={dockless} onChange={toggleDockless}/>
           </div>
+          </div>
+
+          <Section title="Sound" description="Choose the sound Codey plays when a turn ends." />
+          <div style={styles.settingsGroup}>
+          <div style={{ ...styles.settingRow, borderTop: 'none' }}>
+            <div style={{ ...styles.label, width: 'auto', flex: 1 }}>
+              <div>Turn-end sound</div>
+              <div style={styles.settingDesc}>
+                Play a short sound each time a reply finishes, errors, or needs your input — even while Codey is in front.
+              </div>
+            </div>
+            <Toggle on={turnSound} onChange={toggleTurnSound}/>
+          </div>
+
+          {turnSound && (
+            <div style={styles.settingRow}>
+              <div style={{ ...styles.label, width: 'auto', flex: 1, minWidth: 0 }}>
+                <div>Sound</div>
+                <div style={{ ...styles.settingDesc, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={soundFile || undefined}>
+                  {soundFile
+                    ? soundFile.split('/').pop()
+                    : 'System default — different sounds for finished, needs input, and error.'}
+                </div>
+              </div>
+              <div style={styles.stepper}>
+                <button onClick={() => { void pickSoundFile() }} style={{ ...styles.stepValue, color: C.fg }}>Choose…</button>
+                <button onClick={() => { void window.codey?.sound?.preview?.(soundFile) }} style={styles.stepValue}>Play</button>
+                {soundFile && (
+                  <button onClick={() => changeSoundFile('')} style={styles.stepValue} title="Go back to the system sounds">Reset</button>
+                )}
+              </div>
+            </div>
+          )}
+
           </div>
         </>
       )}
