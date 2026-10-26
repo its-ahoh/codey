@@ -5,6 +5,7 @@ type Mermaid = typeof import('mermaid').default
 let loader: Promise<Mermaid> | null = null
 const loadMermaid = (): Promise<Mermaid> => (loader ??= import('mermaid').then(module => module.default))
 let sequence = 0
+const RENDER_DELAY_MS = 300
 
 /**
  * Draws a Mermaid code block. The ordinary code block stays visible while the
@@ -16,22 +17,26 @@ export const MermaidBlock: React.FC<{ code: string; fallback: React.ReactNode }>
   React.useEffect(() => {
     let active = true
     setSvg(null)
-    loadMermaid()
-      .then(mermaid => {
-        mermaid.initialize({
-          startOnLoad: false,
-          securityLevel: 'strict',
-          suppressErrorRendering: true,
-          theme: document.documentElement.dataset.theme === 'dark' ? 'dark' : 'default',
+    // Streaming changes `code` per token; draw only once the source settles.
+    const timer = setTimeout(() => {
+      loadMermaid()
+        .then(mermaid => {
+          if (!active) return null
+          mermaid.initialize({
+            startOnLoad: false,
+            securityLevel: 'strict',
+            suppressErrorRendering: true,
+            theme: document.documentElement.dataset.theme === 'dark' ? 'dark' : 'default',
+          })
+          return mermaid.render(`codey-mermaid-${++sequence}`, code)
         })
-        return mermaid.render(`codey-mermaid-${++sequence}`, code)
-      })
-      .then(result => {
-        if (active) setSvg(result.svg)
-      })
-      .catch(() => { /* Keep the code fallback when parsing or rendering fails. */ })
+        .then(result => {
+          if (active && result) setSvg(result.svg)
+        })
+        .catch(() => { /* Keep the code fallback when parsing or rendering fails. */ })
+    }, RENDER_DELAY_MS)
 
-    return () => { active = false }
+    return () => { active = false; clearTimeout(timer) }
   }, [code])
 
   if (!svg) return <div data-mermaid-pending="">{fallback}</div>
