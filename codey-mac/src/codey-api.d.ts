@@ -1,3 +1,4 @@
+import type { ComputerApp, ComputerControlState, ComputerCommand, ComputerReply, ComputerPreview, ComputerDesktop } from '../electron/computer-control'
 import type { CoMemoConflictView, CoMemoDetails } from '@codey/core'
 export type { CoMemoConflictView, CoMemoDetails }
 import type { Chat, ChatSelection } from '../../packages/core/src/types/chat'
@@ -334,6 +335,21 @@ export interface ChromePageSnapshot {
 declare global {
   interface Window {
     codey: {
+      computer: {
+        status(): Promise<IpcResult<ComputerControlState>>
+        armStream(sessionId: string, window: string): Promise<IpcResult<string>>
+        streamStopped(streamId: string): Promise<IpcResult<void>>
+        handoff(sessionId: string, window: string, human: boolean, streamId: string): Promise<IpcResult<ComputerDesktop>>
+        input(sessionId: string, window: string, args: Record<string, unknown>, streamId: string, controlVersion: number): Promise<IpcResult<ComputerReply>>
+        preview(): Promise<IpcResult<ComputerPreview | null>>
+        view(command: ComputerCommand): Promise<IpcResult<ComputerReply>>
+        configure(enabled: boolean, apps: ComputerApp[]): Promise<IpcResult<ComputerControlState>>
+        permissions(): Promise<IpcResult<ComputerControlState>>
+        pickApp(): Promise<IpcResult<ComputerApp | null>>
+        stop(): Promise<IpcResult<ComputerControlState>>
+        onChanged(handler: (state: ComputerControlState) => void): () => void
+      }
+
       bots: {
         list: () => Promise<IpcResult<any[]>>
         get: (name: string) => Promise<IpcResult<any>>
