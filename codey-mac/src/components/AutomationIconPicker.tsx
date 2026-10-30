@@ -155,7 +155,7 @@ const popover: React.CSSProperties = {
   padding: 13, borderRadius: 12, border: `1px solid ${C.border}`,
   background: C.surface, boxShadow: '0 14px 35px rgba(0,0,0,.28)',
 }
-const pickerTitle: React.CSSProperties = { color: C.fg, fontSize: 12.5, fontWeight: 750 }
+const pickerTitle: React.CSSProperties = { color: C.fg, fontSize: 12.5, fontWeight: 750, marginBottom: 11 }
 const emojiGrid: React.CSSProperties = { display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 5 }
 const emojiChoice = (active: boolean): React.CSSProperties => ({
   height: 31, borderRadius: 8, border: `1px solid ${active ? C.accent : C.border}`,
