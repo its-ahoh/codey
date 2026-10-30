@@ -481,7 +481,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
         </select>
       </div>
 
-      <Section title="Models" description="Models available to agents and routing settings." right={
+      <Section title="Models" right={
         <button onClick={() => setCreating(true)} style={pillButton('primary')} disabled={creating}>+ Add</button>
       }/>
       {creating && (
@@ -500,7 +500,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
         .sort((a, b) => a.apiType.localeCompare(b.apiType) || a.model.localeCompare(b.model))
         .map(m => <ModelRow key={m.model} entry={m} apis={apis} onSave={saveModel} onDelete={deleteModel}/>)}
 
-      <Section title="Agent fallback" description="Default agent order and fallback behavior." right={
+      <Section title="Agent fallback" right={
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ color: C.fg3, fontSize: 11 }}>{fallback.enabled ? 'Enabled' : 'Disabled'}</span>
           <Toggle on={fallback.enabled} onChange={enabled => updateFallback({ ...fallback, enabled })}/>

@@ -206,7 +206,7 @@ const AutomationList: React.FC<ListProps> = ({ automations, loading, onRefresh, 
   return (
     <div style={styles.list}>
       <div style={styles.listTop}>
-        <div><div style={styles.listTitle}>Your automations</div><div style={styles.listSub}>Scheduled and manual workflows managed in one place.</div></div>
+        <div style={styles.listTitle}>Your automations</div>
         {automations.length > 0 && (
           <button style={{ ...pillButton('primary'), display: 'inline-flex', alignItems: 'center', gap: 6 }} onClick={onNew}><UIIcon name="add" size={15} />New automation</button>
         )}
@@ -365,7 +365,6 @@ const styles: Record<string, React.CSSProperties> = {
   list: { padding: '22px 24px', flex: 1, overflowY: 'auto', background: C.bg },
   listTop: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 20 },
   listTitle: { color: C.fg, fontSize: 17, fontWeight: 750, letterSpacing: '-0.02em' },
-  listSub: { color: C.fg3, fontSize: 12, marginTop: 4 },
   listSummary: { display: 'inline-flex', alignItems: 'center', border: `1px solid ${C.border}`, borderRadius: 10, background: C.surface, overflow: 'hidden', marginBottom: 12 },
   cardList: { display: 'flex', flexDirection: 'column', gap: 8 },
   loading: { color: C.fg3, fontSize: 13, textAlign: 'center', paddingTop: 46 },

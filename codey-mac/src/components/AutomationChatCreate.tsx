@@ -260,7 +260,7 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
             {draft.schedule && <span style={summaryPill}>{scheduleSummary(draft.schedule)}</span>}
           </div>
 
-          <SetupSection title="Basics" description="A clear name and the workspace where this runs.">
+          <SetupSection title="Basics">
             <Field label="Name" required>
               <input
                 value={draft.name ?? ''} disabled={locked} style={wideInput}
@@ -438,11 +438,11 @@ export const AutomationChatCreate: React.FC<Props> = ({ mode, automationId, onDo
   )
 }
 
-const SetupSection: React.FC<{ title: string; description: string; children: React.ReactNode }> = ({ title, description, children }) => (
+const SetupSection: React.FC<{ title: string; description?: string; children: React.ReactNode }> = ({ title, description, children }) => (
   <div style={sectionCard}>
     <div style={{ marginBottom: 12 }}>
       <div style={sectionTitle}>{title}</div>
-      <div style={sectionDescription}>{description}</div>
+      {description && <div style={sectionDescription}>{description}</div>}
     </div>
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>{children}</div>
   </div>

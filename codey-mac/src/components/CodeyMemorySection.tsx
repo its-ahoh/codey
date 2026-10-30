@@ -37,7 +37,7 @@ function EntryRow({ entry, disabled, onHistory, onSave, onRemove }: {
   </article>
 }
 
-interface PanelProps { scope: MemoryPanelScope; workspace?: string; title?: string; description: string }
+interface PanelProps { scope: MemoryPanelScope; workspace?: string; title?: string; description?: string }
 export function MemoryPanel({ scope, workspace, title, description }: PanelProps) {
   const composerId = useId()
   const [entries, setEntries] = useState<CodeyMemoryItem[]>([])
@@ -93,7 +93,7 @@ export function MemoryPanel({ scope, workspace, title, description }: PanelProps
   const visibleArchive = archived.filter(e => matches(e.content))
   const visibleConflicts = conflicts.filter(c => [c.currentContent, ...c.proposals.map(p => p.content), ...c.candidates.map(p => p.content)].some(content => matches(content ?? '')))
   return <section className="memory-panel" aria-label={title ?? 'Personal memory'}>
-    <div className="memory-header"><div><h3 className="memory-title">{title ?? 'Personal memory'}</h3><p className="memory-hint">{description}</p></div><button className="memory-button quiet" disabled={loading || busy} onClick={() => void reload()}><UIIcon name="refresh" size={13} />{loading ? 'Loading…' : 'Refresh'}</button></div>
+    <div className="memory-header"><div><h3 className="memory-title">{title ?? 'Personal memory'}</h3>{description && <p className="memory-hint">{description}</p>}</div><button className="memory-button quiet" disabled={loading || busy} onClick={() => void reload()}><UIIcon name="refresh" size={13} />{loading ? 'Loading…' : 'Refresh'}</button></div>
     {error && <div className="memory-alert" role="alert">{error}</div>}
     {paused ? <div className="memory-notice">Memory is paused. Your saved notes are kept.
       {pausedByUser ? <p className="memory-hint">Resume memory in Settings → Memory.</p> : <div className="memory-actions"><button className="memory-button" disabled={busy} onClick={() => void run(async () => { unwrap(await window.codey.memory.codey.setPaused(scope, workspace, false)) })}>Resume project memory</button></div>}
@@ -129,7 +129,7 @@ export function CodeyMemorySection({ workspace }: { workspace: string }) {
   return <div>
     {error && <div className="memory-alert" role="alert">{error}</div>}
     <div className="memory-project"><label htmlFor={`memory-directory-${workspace}`}>Project directory</label><select id={`memory-directory-${workspace}`} value={selected} onChange={e => setSelected(e.target.value)}>{!targets.length && <option value={workspace}>{workspace}</option>}{targets.map(t => <option key={t.id} value={t.id}>{t.label} — {t.path}</option>)}</select></div>
-    <MemoryPanel key={`${workspace}:${selected}`} scope="workspace" workspace={selected} title="Project memory" description={target?.path ?? 'Facts and decisions for this project.'} />
+    <MemoryPanel key={`${workspace}:${selected}`} scope="workspace" workspace={selected} title="Project memory" description={target?.path} />
   </div>
 }
 
@@ -148,7 +148,7 @@ export function CodeyMemorySettings() {
   }
   return <section className="memory-panel" style={{ marginBottom: 12 }} aria-label="Memory settings">
     {error && <div className="memory-alert" role="alert">{error}</div>}
-    <div className="memory-header"><div><h3 className="memory-title">Memory settings</h3><p className="memory-hint">Choose how Codey remembers and uses what it learns.</p></div><button className="memory-button" disabled={busy} onClick={() => void patch({ paused: !settings.paused })}>{settings.paused ? 'Resume memory' : 'Pause memory'}</button></div>
+    <div className="memory-header"><div><h3 className="memory-title">Memory settings</h3></div><button className="memory-button" disabled={busy} onClick={() => void patch({ paused: !settings.paused })}>{settings.paused ? 'Resume memory' : 'Pause memory'}</button></div>
     {settings.paused && <div className="memory-notice">Memory is paused. Reading and saving will resume when you turn it back on.</div>}
     <div aria-busy={busy} style={{ opacity: busy || settings.paused ? .5 : 1, pointerEvents: busy || settings.paused ? 'none' : undefined }}>
       <div className="memory-setting"><div><div>Use memory in conversations</div><p className="memory-hint">Include relevant preferences and project facts in new prompts.</p></div><MemoryToggle disabled={busy || settings.paused} on={settings.enabled} label="Use memory in conversations" onChange={enabled => { if (!busy && !settings.paused) void patch({ enabled }) }} /></div>

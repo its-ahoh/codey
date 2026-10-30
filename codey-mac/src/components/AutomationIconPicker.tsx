@@ -74,7 +74,6 @@ export const AutomationIconPicker: React.FC<PickerProps> = ({ icon, saving, onSa
       {open && (
         <div style={popover}>
           <div style={pickerTitle}>Automation icon</div>
-          <div style={pickerHint}>Choose an emoji and background color.</div>
           <div style={emojiGrid}>
             {EMOJIS.map(emoji => (
               <button
@@ -157,7 +156,6 @@ const popover: React.CSSProperties = {
   background: C.surface, boxShadow: '0 14px 35px rgba(0,0,0,.28)',
 }
 const pickerTitle: React.CSSProperties = { color: C.fg, fontSize: 12.5, fontWeight: 750 }
-const pickerHint: React.CSSProperties = { color: C.fg3, fontSize: 10.5, marginTop: 2, marginBottom: 11 }
 const emojiGrid: React.CSSProperties = { display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 5 }
 const emojiChoice = (active: boolean): React.CSSProperties => ({
   height: 31, borderRadius: 8, border: `1px solid ${active ? C.accent : C.border}`,

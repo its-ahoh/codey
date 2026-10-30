@@ -4,7 +4,7 @@ import './memory.css'
 
 export function MemoryHistory({ details, onClose }: { details: CoMemoDetails; onClose: () => void }) {
   return <section className="memory-detail" aria-label="Memory history">
-    <div className="memory-header"><div><h4 className="memory-title">Version history</h4><p className="memory-hint">Previous versions are kept for reference.</p></div><button className="memory-button quiet" onClick={onClose}>Close</button></div>
+    <div className="memory-header"><div><h4 className="memory-title">Version history</h4></div><button className="memory-button quiet" onClick={onClose}>Close</button></div>
     <div className="memory-versions">{[...details.history].sort((a, b) => b.version - a.version).map(note => <article className="memory-version" key={note.version}>
       <div className="memory-meta"><strong>Version {note.version}</strong>{note.deleted && <span className="memory-badge">Archived</span>}<span>{new Date(note.updatedAt).toLocaleString()}</span></div>
       <p className="memory-body">{note.content}</p>

@@ -190,7 +190,7 @@ export const ApiKeysTab: React.FC<Props> = ({ isGatewayRunning, autoCreatePurpos
 
       <div style={pageIntroStyle}>Store credentials once, then select them from Models or Voice settings. Secrets are not duplicated into those feature configs.</div>
 
-      <Section first title="Voice" description="Credentials for transcription and spoken replies." right={
+      <Section first title="Voice" right={
         <button onClick={() => setCreating('voice')} style={pillButton('primary')} disabled={creating !== null}>+ Add</button>
       } />
       {creating === 'voice' && (
@@ -209,7 +209,7 @@ export const ApiKeysTab: React.FC<Props> = ({ isGatewayRunning, autoCreatePurpos
         .sort((a, b) => a.name.localeCompare(b.name))
         .map(a => <ApiRow key={a.name} entry={a} onSave={saveApiKey} onDelete={deleteApiKey} />)}
 
-      <Section title="Model & Agent" description="Reusable credentials for AI models and agents." right={
+      <Section title="Model & Agent" right={
         <button onClick={() => setCreating('general')} style={pillButton('primary')} disabled={creating !== null}>+ Add</button>
       } />
       {creating === 'general' && (

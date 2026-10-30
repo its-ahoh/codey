@@ -145,7 +145,6 @@ export const WorkspacesTab: React.FC<WorkspacesTabProps> = ({ isGatewayRunning }
   return (
     <div style={styles.container}>
       <div style={styles.header}>
-        <span style={{ color: C.fg3, fontSize: 11, lineHeight: 1.5 }}>Manage project folders and their project memory.</span>
         <button
           onClick={pickAndCreate}
           disabled={creating}
@@ -239,7 +238,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex', flex: 1, alignItems: 'center', justifyContent: 'center', height: '100%',
   },
   header: {
-    display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16,
+    display: 'flex', alignItems: 'center', justifyContent: 'flex-end', marginBottom: 16,
   },
   newBtn: {
     display: 'flex', alignItems: 'center', gap: 6,

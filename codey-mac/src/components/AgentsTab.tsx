@@ -169,7 +169,7 @@ export const AgentsTab: React.FC<Props> = ({ isGatewayRunning }) => {
         />
       )}
 
-      <Section first title="Installed agents" description="CLI availability, thinking effort, and environment for each coding agent." right={
+      <Section first title="Installed agents" right={
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           {/* Same download icon as the per-agent button, because it does the
               same thing — just to every agent that is offering an update. */}
