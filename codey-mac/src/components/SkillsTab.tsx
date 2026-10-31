@@ -364,7 +364,7 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
           />
         </span>
         <span style={{
-          fontSize: 9, fontWeight: 600, letterSpacing: 0.3,
+          fontSize: 11, fontWeight: 600, letterSpacing: 0.3,
           padding: '2px 6px', borderRadius: 4, flexShrink: 0,
           background: skill.scope === 'user' ? C.accentDim : C.surface3,
           color: skill.scope === 'user' ? C.accent : C.fg3,
@@ -419,7 +419,7 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-          <span style={{ color: C.fg, fontSize: 15, fontWeight: 700, flex: 1, minWidth: 0 }}>{skillDisplayName(skill)}</span>
+          <span style={{ color: C.fg, fontSize: 15, fontWeight: 600, flex: 1, minWidth: 0 }}>{skillDisplayName(skill)}</span>
           <div
             style={{
               opacity: busyDirs.has(skill.dir) ? 0.5 : 1,
@@ -434,7 +434,7 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
             />
           </div>
           <span style={{
-            fontSize: 10, fontWeight: 600, letterSpacing: 0.3,
+            fontSize: 11, fontWeight: 600, letterSpacing: 0.3,
             padding: '2px 6px', borderRadius: 4,
             background: skill.scope === 'user' ? C.accentDim : C.surface3,
             color: skill.scope === 'user' ? C.accent : C.fg3,
@@ -451,12 +451,12 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
         )}
 
         {skill.managedBy && !skill.enabled && (
-          <div style={{ color: C.fg3, fontSize: 11, lineHeight: 1.5, marginBottom: 14 }}>
+          <div style={{ color: C.fg3, fontSize: 12, lineHeight: 1.5, marginBottom: 14 }}>
             Plugin updates may restore this skill.
           </div>
         )}
 
-        <div style={{ color: C.fg3, fontSize: 11, marginBottom: 18 }}>
+        <div style={{ color: C.fg3, fontSize: 12, marginBottom: 18 }}>
           <div style={{ fontWeight: 600, marginBottom: 2, opacity: 0.7 }}>Location</div>
           <div style={{ wordBreak: 'break-all', fontFamily: 'monospace' }}>{skill.dir}</div>
         </div>
@@ -465,7 +465,7 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
 
         {!codey && copyState && (
           <div style={{
-            fontSize: 11, marginBottom: 12,
+            fontSize: 12, marginBottom: 12,
             color: copyState.status === 'error' ? C.red : copyState.status === 'done' ? C.accent : C.fg3,
           }}>
             {copyState.status === 'copying' && `Copying to ${copyState.label}…`}
@@ -502,7 +502,7 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
                 background: C.surface2 ?? C.surface, border: `1px solid ${C.border}`, borderRadius: 8,
                 padding: 4, minWidth: 180, boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
               }}>
-                <div style={{ color: C.fg3, fontSize: 10, fontWeight: 600, opacity: 0.7, padding: '4px 10px 2px' }}>
+                <div style={{ color: C.fg3, fontSize: 11, fontWeight: 600, opacity: 0.7, padding: '4px 10px 2px' }}>
                   COPY TO
                 </div>
                 {AGENTS.filter(a => a.key !== agentFilter).map(a => (
@@ -712,15 +712,15 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
         <div style={styles.loadingState}><span style={styles.loadingDot} />Scanning skill directories…</div>
       ) : data.skills.length === 0 ? (
         <div style={styles.emptyState}>
-          <div style={{ width: 52, height: 52, margin: '0 auto 12px', borderRadius: 16, display: 'grid', placeItems: 'center', background: C.accentDim, color: C.accent }}><UIIcon name="sparkle" size={24} /></div>
-          <div style={{ fontWeight: 650, color: C.fg, marginBottom: 5 }}>{codey ? 'No Codey skills found' : `No skills found for ${AGENTS.find(a => a.key === agentFilter)?.label}`}</div>
+          <div style={{ width: 52, height: 52, margin: '0 auto 12px', borderRadius: 14, display: 'grid', placeItems: 'center', background: C.accentDim, color: C.accent }}><UIIcon name="sparkle" size={24} /></div>
+          <div style={{ fontWeight: 600, color: C.fg, marginBottom: 5 }}>{codey ? 'No Codey skills found' : `No skills found for ${AGENTS.find(a => a.key === agentFilter)?.label}`}</div>
           <div style={{ fontSize: 12, lineHeight: 1.55 }}>
             Add a skill or place one in <code style={styles.inlineCode}>{codey ? CODEY_GLOBAL_SKILLS_HINT : AGENT_SKILL_HINTS[agentFilter]}</code>
           </div>
         </div>
       ) : filteredSkills.length === 0 ? (
         <div style={styles.emptyState}>
-          <div style={{ fontWeight: 650, color: C.fg, marginBottom: 5 }}>No matching skills</div>
+          <div style={{ fontWeight: 600, color: C.fg, marginBottom: 5 }}>No matching skills</div>
           <div style={{ fontSize: 12 }}>Try a different name or description keyword.</div>
         </div>
       ) : (
@@ -776,10 +776,10 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 10, background: C.surface, border: `1px solid ${C.border}`,
   },
   agentButton: {
-    minHeight: 32, padding: '6px 12px', borderRadius: 7, border: 'none',
+    minHeight: 32, padding: '6px 12px', borderRadius: 8, border: 'none',
     display: 'inline-flex', alignItems: 'center', gap: 6,
     color: C.fg3, background: 'transparent', cursor: 'pointer',
-    fontSize: 12, fontWeight: 650,
+    fontSize: 12, fontWeight: 600,
   },
   agentButtonSelected: {
     color: C.fg, background: C.surface3, boxShadow: `inset 0 0 0 1px ${C.border2}`,
@@ -791,10 +791,10 @@ const styles: Record<string, React.CSSProperties> = {
   switcherDivider: {
     width: 1, alignSelf: 'stretch', margin: '4px 4px', background: C.border2, flexShrink: 0,
   },
-  sourceHint: { color: C.fg3, fontSize: 11, marginTop: 7 },
+  sourceHint: { color: C.fg3, fontSize: 12, marginTop: 7 },
   agentMeta: {
     display: 'flex', alignItems: 'center', gap: 8, color: C.fg3,
-    fontSize: 11, paddingBottom: 1,
+    fontSize: 12, paddingBottom: 1,
   },
   iconButton: {
     width: 30, height: 30, borderRadius: 8, border: `1px solid ${C.border}`,
@@ -803,7 +803,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   errorBanner: {
     background: C.dangerBg, color: C.dangerFg, border: `1px solid ${C.dangerBorder}`,
-    padding: '9px 11px', borderRadius: 9, marginBottom: 14, fontSize: 12,
+    padding: '9px 11px', borderRadius: 8, marginBottom: 14, fontSize: 12,
   },
   installCard: {
     background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12,
@@ -813,8 +813,8 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
     gap: 12, marginBottom: 15,
   },
-  installTitle: { color: C.fg, fontSize: 13, fontWeight: 720, marginBottom: 3 },
-  installSubtitle: { color: C.fg3, fontSize: 11 },
+  installTitle: { color: C.fg, fontSize: 13, fontWeight: 600, marginBottom: 3 },
+  installSubtitle: { color: C.fg3, fontSize: 12 },
   smallSwitcher: {
     display: 'inline-flex', alignItems: 'center', padding: 2, gap: 2,
     borderRadius: 8, background: C.bg, border: `1px solid ${C.border}`,
@@ -822,17 +822,17 @@ const styles: Record<string, React.CSSProperties> = {
   smallSwitchButton: {
     minHeight: 27, border: 'none', borderRadius: 6, padding: '4px 10px',
     background: 'transparent', color: C.fg3, cursor: 'pointer',
-    fontSize: 11, fontWeight: 650,
+    fontSize: 12, fontWeight: 600,
   },
   smallSwitchButtonSelected: { background: C.accentDim, color: C.accent },
   pathLabel: {
-    display: 'block', color: C.fg3, fontSize: 10, fontWeight: 700,
+    display: 'block', color: C.fg3, fontSize: 11, fontWeight: 600,
     letterSpacing: 0.25, marginBottom: 6,
   },
   installInputRow: { display: 'flex', gap: 9, alignItems: 'stretch', flexWrap: 'wrap' },
   pathInputShell: {
     display: 'flex', alignItems: 'center', flex: 1, minWidth: 0,
-    border: `1px solid ${C.border2}`, borderRadius: 9, background: C.bg,
+    border: `1px solid ${C.border2}`, borderRadius: 8, background: C.bg,
     overflow: 'hidden', minHeight: 38,
   },
   pathInputWrap: { position: 'relative', display: 'flex', flex: '1 1 420px', minWidth: 220 },
@@ -851,20 +851,20 @@ const styles: Record<string, React.CSSProperties> = {
     color: C.fg, fontSize: 12, padding: '9px 10px', fontFamily: 'inherit',
   },
   installButton: {
-    minHeight: 38, border: 'none', borderRadius: 9, padding: '8px 14px',
+    minHeight: 38, border: 'none', borderRadius: 8, padding: '8px 14px',
     display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
     background: C.accent, color: C.onAccent, cursor: 'pointer',
-    fontSize: 12, fontWeight: 750, flexShrink: 0,
+    fontSize: 12, fontWeight: 600, flexShrink: 0,
   },
-  destinationHint: { marginTop: 8, color: C.fg3, fontSize: 10, lineHeight: 1.5 },
+  destinationHint: { marginTop: 8, color: C.fg3, fontSize: 11, lineHeight: 1.5 },
   packList: {
     background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12,
     padding: '10px 14px', marginBottom: 14,
   },
-  packListTitle: { color: C.fg3, fontSize: 10, fontWeight: 700, letterSpacing: 0.25, marginBottom: 4 },
+  packListTitle: { color: C.fg3, fontSize: 11, fontWeight: 600, letterSpacing: 0.25, marginBottom: 4 },
   packRow: { display: 'flex', alignItems: 'center', gap: 9, padding: '7px 0' },
-  packName: { color: C.fg, fontSize: 12, fontWeight: 700 },
-  packMeta: { color: C.fg3, fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  packName: { color: C.fg, fontSize: 12, fontWeight: 600 },
+  packMeta: { color: C.fg3, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   inlineCode: {
     background: C.surface3, color: C.fg2, padding: '2px 5px',
     borderRadius: 4, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
@@ -884,9 +884,9 @@ const styles: Record<string, React.CSSProperties> = {
   usageRow: {
     display: 'inline-flex', alignItems: 'center', gap: 8,
     marginTop: 'auto', paddingTop: 10, color: C.fg3,
-    fontSize: 10, lineHeight: 1, fontVariantNumeric: 'tabular-nums',
+    fontSize: 11, lineHeight: 1, fontVariantNumeric: 'tabular-nums',
   },
   usageItem: { display: 'inline-flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' },
-  usageCount: { color: C.fg2, fontSize: 11, fontWeight: 720 },
+  usageCount: { color: C.fg2, fontSize: 12, fontWeight: 600 },
   usageDivider: { width: 1, height: 11, background: C.border2, flexShrink: 0 },
 }

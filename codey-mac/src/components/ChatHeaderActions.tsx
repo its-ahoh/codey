@@ -26,7 +26,8 @@ export function ChatHeaderActions({ compact, children, onDismiss }: {
     {compact && <button ref={trigger} type="button" className="chat-header-actions-trigger" aria-label="Chat actions" aria-expanded={open} aria-haspopup="dialog"
       onClick={() => { setOpen(value => !value); if (open) dismiss.current() }}><UIIcon name="more" size={17} /></button>}
     {compact && open && <div className="chat-header-actions-backdrop" onClick={() => { setOpen(false); dismiss.current(); trigger.current?.focus() }} />}
-    <div ref={content} className="chat-header-actions-content" hidden={compact && !open} role={compact ? 'dialog' : undefined} aria-label={compact ? 'Chat actions' : undefined}>
+    <div ref={content} className="chat-header-actions-content" hidden={compact && !open} role={compact ? 'dialog' : undefined} aria-label={compact ? 'Chat actions' : undefined}
+      onClick={event => { if (compact && (event.target as HTMLElement).closest('button[data-action-label]')) { setOpen(false); dismiss.current() } }}>
       {children}
     </div>
   </div>

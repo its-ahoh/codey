@@ -11,7 +11,7 @@ export function BotMembers({ chat }: { chat: Chat }) {
   const [open, setOpen] = useState(false)
   const memberCount = (chat.botChat?.pendingMembers ?? chat.botChat?.members ?? []).length
   return <>
-    <button type="button" onClick={() => setOpen(true)} style={{ background: 'transparent', border: `1px solid ${C.border}`, borderRadius: 7, color: C.fg2, padding: '5px 9px', cursor: 'pointer', fontSize: 11 }}>
+    <button type="button" onClick={() => setOpen(true)} style={{ background: 'transparent', border: `1px solid ${C.border}`, borderRadius: 8, color: C.fg2, padding: '5px 9px', cursor: 'pointer', fontSize: 12 }}>
       {chat.botChat?.kind === 'group' ? `${memberCount} ${memberCount === 1 ? 'member' : 'members'}` : '+ Invite Bot'}
     </button>
     {open && <MembersDialog chat={chat} onClose={() => setOpen(false)} />}
@@ -68,17 +68,17 @@ function MembersDialog({ chat, onClose }: { chat: Chat; onClose: () => void }) {
         if (e.shiftKey && (document.activeElement === first || document.activeElement === panel.current)) { e.preventDefault(); last.focus() }
         else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
       }
-    }} style={{ width: 'min(640px, calc(100vw - 32px))', minWidth: 0, boxSizing: 'border-box', flexShrink: 0, maxHeight: 'min(780px, calc(100dvh - 32px))', overflow: 'hidden', background: C.bg, color: C.fg, border: `1px solid ${C.border}`, borderRadius: 18, boxShadow: '0 24px 80px #0004', display: 'flex', flexDirection: 'column', fontSize: 13 }}>
+    }} style={{ width: 'min(640px, calc(100vw - 32px))', minWidth: 0, boxSizing: 'border-box', flexShrink: 0, maxHeight: 'min(780px, calc(100dvh - 32px))', overflow: 'hidden', background: C.bg, color: C.fg, border: `1px solid ${C.border}`, borderRadius: 14, boxShadow: '0 24px 80px #0004', display: 'flex', flexDirection: 'column', fontSize: 13 }}>
       <div style={{ padding: '20px 22px 16px', borderBottom: `1px solid ${C.border}`, flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
           <TeamAvatar name={direct ? title : chat.title} members={members} bots={bots} size={34} />
-          <strong style={{ fontSize: 17 }}>{direct ? 'Create a group' : 'Group members'}</strong>
+          <strong style={{ fontSize: 18 }}>{direct ? 'Create a group' : 'Group members'}</strong>
         </div>
         <div style={{ color: C.fg2, lineHeight: 1.5, fontSize: 12 }}>{direct ? 'Only the context you add is shared. Your private chat stays private.' : 'Changes apply to the next task. New members can read the group’s history.'}</div>
       </div>
       {error && <div role="alert" style={{ color: C.red, fontSize: 12, padding: '10px 22px', flexShrink: 0, overflowWrap: 'anywhere' }}>
         {error.trim() === errorSummary ? errorSummary : <details>
-          <summary style={{ cursor: 'pointer' }}>{errorSummary} <span style={{ fontSize: 11 }}>· Details</span></summary>
+          <summary style={{ cursor: 'pointer' }}>{errorSummary} <span style={{ fontSize: 12 }}>· Details</span></summary>
           <div style={{ maxHeight: 96, overflowY: 'auto', overflowX: 'hidden', overflowWrap: 'anywhere', whiteSpace: 'pre-wrap', marginTop: 6 }}>{error}</div>
         </details>}
       </div>}
@@ -87,12 +87,12 @@ function MembersDialog({ chat, onClose }: { chat: Chat; onClose: () => void }) {
         <section aria-label="Choose Bots" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
             <strong style={{ fontSize: 12 }}>Members</strong>
-            <span aria-live="polite" style={{ color: C.fg3, fontSize: 11 }}>{members.length} selected · minimum 2</span>
+            <span aria-live="polite" style={{ color: C.fg3, fontSize: 12 }}>{members.length} selected · minimum 2</span>
           </div>
           {members.length > 0 && <div aria-label="Selected Bots" style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
             {members.map(name => <span key={name} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, maxWidth: '100%', minWidth: 0, boxSizing: 'border-box', padding: '4px 8px 4px 4px', borderRadius: 20, background: C.surface2, border: `1px solid ${C.border}` }}>
               <BotAvatar name={name} config={botsByName.get(name.toLowerCase())?.config.avatar} size={24} />
-              <span style={{ fontSize: 11, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{botsByName.get(name.toLowerCase())?.config.displayName || name}</span>
+              <span style={{ fontSize: 12, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{botsByName.get(name.toLowerCase())?.config.displayName || name}</span>
             </span>)}
           </div>}
           <input type="search" aria-label="Search Bots" placeholder="Search by name or role…" value={search} disabled={loading || busy} onChange={e => setSearch(e.target.value)} style={field} />
@@ -102,11 +102,11 @@ function MembersDialog({ chat, onClose }: { chat: Chat; onClose: () => void }) {
               const selected = members.includes(name)
               const original = direct && chat.botChat!.members.includes(name)
               const disabled = busy || original || (!bot && !selected)
-              return <label key={name} title={`${name}${original ? ' · Included' : !bot ? ' · Profile unavailable' : ''}`} style={{ display: 'flex', minWidth: 0, gap: 7, alignItems: 'center', padding: '7px 10px', border: `1px solid ${selected ? C.accent : C.border}`, borderRadius: 11, background: selected ? C.accentDim : C.surface2, cursor: disabled ? 'default' : 'pointer', opacity: !bot ? 0.65 : 1 }}>
+              return <label key={name} title={`${name}${original ? ' · Included' : !bot ? ' · Profile unavailable' : ''}`} style={{ display: 'flex', minWidth: 0, gap: 7, alignItems: 'center', padding: '7px 10px', border: `1px solid ${selected ? C.accent : C.border}`, borderRadius: 10, background: selected ? C.accentDim : C.surface2, cursor: disabled ? 'default' : 'pointer', opacity: !bot ? 0.65 : 1 }}>
                 <BotAvatar name={name} config={bot?.config.avatar} size={30} />
                 <span style={{ flex: 1, minWidth: 0 }}>
                   <span style={{ display: 'block', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{botsByName.get(name.toLowerCase())?.config.displayName || name}</span>
-                  {!bot && <span style={{ color: C.fg3, fontSize: 11 }}>Profile unavailable</span>}
+                  {!bot && <span style={{ color: C.fg3, fontSize: 12 }}>Profile unavailable</span>}
                 </span>
                 <input type="checkbox" aria-label={`Include ${bot?.config.displayName || name}`} checked={selected} disabled={disabled} onChange={e => setMembers(current => e.target.checked ? [...current, name] : current.filter(n => n !== name))} style={{ accentColor: C.accent, width: 16, height: 16, flexShrink: 0, margin: 0 }} />
               </label>

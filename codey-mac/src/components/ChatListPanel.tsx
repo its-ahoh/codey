@@ -1,4 +1,4 @@
-import { SidebarNavigation, SidebarFooter, SidebarAction, type SidebarCommonProps } from './SidebarNavigation'
+import { SidebarFooter, SidebarAction, SidebarSearch, type SidebarCommonProps } from './SidebarNavigation'
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useChats } from '../hooks/useChats'
@@ -100,7 +100,7 @@ const ContextMenu: React.FC<{ x: number; y: number; children: React.ReactNode }>
   )
 }
 
-export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomations, onOpenBrowser, onOpenTools, onSelectChat, automationsUnseenCount, activeChatId }) => {
+export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomations, onOpenTools, onSelectChat, automationsUnseenCount, activeChatId, modeTabs }) => {
   const { state, createChat, selectChat, renameChat, deleteChat, toggleWorkspace, refreshWorkspaces, refreshChats, linkChannel, unlinkChannel } = useChats()
   const voice = useVoiceTurn()
   const [addingWorkspace, setAddingWorkspace] = useState(false)
@@ -410,23 +410,21 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
 
   return (
     <div style={styles.root}>
-      <div style={styles.brandArea}>
-        <button
-          style={styles.newChatBtn}
-          onClick={() => handleNewChat()}
-          disabled={!newChatWorkspace}
-          title={newChatWorkspace ? `New chat in ${newChatWorkspace}` : 'No workspace available'}
-        >
-          <UIIcon name="add" size={16} strokeWidth={2.1} />
-          <span>New chat</span>
-          {newChatWorkspace && <span style={styles.newChatWorkspace}>{newChatWorkspace}</span>}
-        </button>
-      </div>
-        <SidebarNavigation onOpenAutomations={onOpenAutomations} onOpenBrowser={onOpenBrowser} onOpenTools={onOpenTools} automationsUnseenCount={automationsUnseenCount} />
-      <input type="search" aria-label="Search chats" placeholder={`search in ${totalChats} chats`} value={search}
+      <SidebarAction
+        icon="add"
+        hint="⌘N"
+        onClick={() => handleNewChat()}
+        disabled={!newChatWorkspace}
+        title={newChatWorkspace ? `New chat in ${newChatWorkspace}` : 'No workspace available'}
+      >New chat</SidebarAction>
+      <SidebarSearch aria-label="Search chats" placeholder="Search" title={`Search in ${totalChats} chats`} value={search}
         onChange={e => { setSearch(e.target.value); closeHoverCard() }}
-        onKeyDown={e => { if (e.key === 'Escape') setSearch('') }}
-        style={{ width: '100%', boxSizing: 'border-box', flexShrink: 0, background: C.bg, color: C.fg, border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 9px', fontFamily: 'inherit', fontSize: 12 }} />
+        onKeyDown={e => { if (e.key === 'Escape') setSearch('') }} />
+      <div style={styles.listHeader}>
+        {modeTabs}
+        <button type="button" style={styles.addWorkspaceBtn} onClick={handleAddWorkspace} disabled={addingWorkspace}
+          title="Pick a folder and create a new workspace + chat" aria-label="Add workspace"><UIIcon name="add" size={14} /></button>
+      </div>
       <div style={styles.chatSection}>
         <div style={styles.scroll} onScroll={closeHoverCard}>
         {groupNames.length === 0 && (
@@ -451,6 +449,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
           return (
             <div key={ws}>
               <div
+                className="sidebar-group"
                 style={{
                   ...styles.groupHeader,
                   ...(dragOverWs === ws && draggingWs && draggingWs !== ws ? styles.groupHeaderDropTarget : null),
@@ -482,8 +481,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
                 }}
                 onDragEnd={() => { setDraggingWs(null); setDragOverWs(null) }}
               >
-                <span style={{ ...styles.chevron, transform: collapsed ? 'rotate(0deg)' : 'rotate(90deg)' }}><UIIcon name="chevron" size={13} /></span>
-                <span style={styles.workspaceIcon}><UIIcon name={collapsed ? 'folder' : 'folder-open'} size={16} /></span>
+                <span style={{ ...styles.chevron, transform: collapsed ? 'rotate(0deg)' : 'rotate(90deg)' }}><UIIcon name="chevron" size={11} /></span>
                 {renamingWs === ws ? (
                   <input
                     autoFocus
@@ -531,6 +529,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
                   >{unreadCount}</span>
                 )}
                 <button
+                  className="sidebar-group-add"
                   style={styles.groupAddBtn}
                   onClick={(e) => { e.stopPropagation(); handleNewChat(ws) }}
                   title={`New chat in "${ws}"`}
@@ -546,8 +545,10 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
                   <div
                     key={chat.id}
                     tabIndex={0}
+                    className="sidebar-row"
+                    data-active={active || undefined}
                     title={orphaned ? 'Workspace deleted' : undefined}
-                    style={{ ...styles.item, background: active ? C.accentDim : 'transparent', borderColor: active ? C.accent : 'transparent', opacity: orphaned ? 0.5 : 1 }}
+                    style={{ ...styles.item, background: active ? C.surface3 : 'transparent', color: active ? C.fg : C.fg2, opacity: orphaned ? 0.5 : 1 }}
                     onClick={() => {
                       if (isRenaming) return
                       closeHoverCard()
@@ -670,10 +671,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
         })}
         </div>
       </div>
-      <SidebarFooter onOpenSettings={onOpenSettings}>
-        <SidebarAction icon="workspace" onClick={handleAddWorkspace} disabled={addingWorkspace}
-          title="Pick a folder and create a new workspace + chat">{addingWorkspace ? 'Picking…' : 'Add workspace'}</SidebarAction>
-      </SidebarFooter>
+      <SidebarFooter onOpenSettings={onOpenSettings} onOpenAutomations={onOpenAutomations} onOpenTools={onOpenTools} automationsUnseenCount={automationsUnseenCount} />
       {hoverCard && hoverCardChat && !wsMenu && !chatMenu && renamingId !== hoverCard.chatId && (
         <ChatHoverCard
           view={buildChatHoverCard(hoverCardChat, {
@@ -793,23 +791,20 @@ const styles: Record<string, React.CSSProperties> = {
     width: '100%',
     height: '100%',
     background: C.sidebarBg,
-    borderRight: `1px solid ${C.sidebarBorder}`,
     display: 'flex',
     flexDirection: 'column',
     flexShrink: 0,
-    gap: 8,
-    padding: 8,
-    backdropFilter: 'blur(22px) saturate(1.2)',
-    WebkitBackdropFilter: 'blur(22px) saturate(1.2)',
+    gap: 1,
+    padding: '0 8px 8px',
   },
   brandArea: { padding: '4px', position: 'relative' },
   newChatBtn: {
-    minWidth: 0, width: '100%', border: 'none', borderRadius: 9, padding: '9px 10px',
-    background: C.accent, color: C.onAccent, cursor: 'pointer', fontSize: 12, fontWeight: 700,
-    display: 'flex', alignItems: 'center', gap: 7, boxShadow: `0 6px 16px ${C.accentDim}`,
+    minWidth: 0, width: '100%', border: 'none', borderRadius: 8, padding: '9px 10px',
+    background: C.accent, color: C.onAccent, cursor: 'pointer', fontSize: 12, fontWeight: 600,
+    display: 'flex', alignItems: 'center', gap: 7, boxShadow: 'none',
   },
-  newChatWorkspace: { marginLeft: 'auto', minWidth: 0, maxWidth: 92, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.72, fontWeight: 550, fontSize: 10 },
-  deliveryBadge: { position: 'relative', width: 16, height: 16, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: 5, background: C.surface3, border: `1px solid ${C.border2}`, fontSize: 14, lineHeight: 1, fontWeight: 700 },
+  newChatWorkspace: { marginLeft: 'auto', minWidth: 0, maxWidth: 92, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.72, fontWeight: 500, fontSize: 11 },
+  deliveryBadge: { position: 'relative', width: 16, height: 16, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: 6, background: C.surface3, border: `1px solid ${C.border2}`, fontSize: 14, lineHeight: 1, fontWeight: 600 },
   deliveryDot: { position: 'absolute', right: 1, bottom: 1, width: 4, height: 4, borderRadius: '50%', background: C.yellow, boxShadow: `0 0 0 1px ${C.surface3}` },
   header: { padding: '10px 12px', borderBottom: `1px solid ${C.border}` },
   newBtn: {
@@ -822,12 +817,14 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     fontSize: 12,
   },
-  chatSection: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', borderRadius: 12, background: C.surface2, border: `1px solid ${C.sidebarBorder}` },
-  scroll: { flex: 1, overflowY: 'auto', padding: 6 },
+  chatSection: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' },
+  scroll: { flex: 1, overflowY: 'auto' },
+  listHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0 6px', flexShrink: 0 },
+  addWorkspaceBtn: { width: 24, height: 24, display: 'grid', placeItems: 'center', padding: 0, border: 'none', borderRadius: 6, background: 'transparent', color: C.fg3, cursor: 'pointer' },
   empty: { color: C.fg3, fontSize: 12, padding: 12, textAlign: 'center' },
   groupHeader: {
     display: 'flex', alignItems: 'center', gap: 6,
-    padding: '6px 8px', color: C.fg3, fontSize: 13, fontWeight: 600,
+    padding: '8px 8px 4px', color: C.fg3, fontSize: 12, fontWeight: 500,
     cursor: 'pointer', userSelect: 'none',
   },
   workspaceIcon: { color: C.fg3, display: 'inline-flex', flexShrink: 0 },
@@ -836,19 +833,18 @@ const styles: Record<string, React.CSSProperties> = {
   groupIdentity: { flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 6 },
   groupName: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   groupAddBtn: {
-    background: C.surface3, border: `1px solid ${C.border2}`, color: C.fg2,
-    cursor: 'pointer', lineHeight: 1, padding: 3, borderRadius: 5, display: 'inline-flex',
+    background: 'transparent', border: 'none', color: C.fg3,
+    cursor: 'pointer', lineHeight: 1, padding: 3, borderRadius: 6, display: 'inline-flex',
   },
   gatewayBadge: {
-    color: C.accent, background: C.accentDim, border: `1px solid ${C.accent}55`,
-    borderRadius: 5, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-    height: 18, padding: '0 5px', fontSize: 10, fontWeight: 600, lineHeight: 1,
+    color: C.fg3, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    height: 18, padding: 0, fontSize: 12, fontWeight: 400, lineHeight: 1,
     boxSizing: 'border-box', flexShrink: 0,
   },
   attentionBadge: {
-    width: 16, height: 16, borderRadius: 5, display: 'inline-flex', alignItems: 'center',
-    justifyContent: 'center', background: `${C.red}22`, color: C.red, fontSize: 11,
-    fontWeight: 800, flexShrink: 0,
+    width: 16, height: 16, borderRadius: 6, display: 'inline-flex', alignItems: 'center',
+    justifyContent: 'center', background: `${C.red}22`, color: C.red, fontSize: 12,
+    fontWeight: 600, flexShrink: 0,
   },
   runningBadge: {
     width: 7, height: 7, borderRadius: '50%', background: C.green,
@@ -857,19 +853,19 @@ const styles: Record<string, React.CSSProperties> = {
   workspaceUnreadBadge: {
     minWidth: 16, height: 16, borderRadius: 8, padding: '0 4px', boxSizing: 'border-box',
     display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-    background: C.accent, color: C.onAccent, fontSize: 9, fontWeight: 750, flexShrink: 0,
+    background: C.surface3, color: C.fg2, fontSize: 11, fontWeight: 600, flexShrink: 0,
   },
   chevron: { display: 'inline-flex', color: C.fg3, transition: 'transform 0.15s ease' },
   item: {
     display: 'flex', alignItems: 'center', gap: 6,
-    padding: '7px 9px', borderRadius: 8, cursor: 'pointer',
-    fontSize: 12, color: C.fg2, margin: '2px 2px 2px 20px', border: '1px solid transparent',
+    padding: '6px 8px', borderRadius: 8, cursor: 'pointer',
+    fontSize: 13, color: C.fg2, margin: '1px 0 1px 4px',
   },
   showMoreBtn: {
     display: 'block', width: 'calc(100% - 22px)', textAlign: 'left',
-    padding: '5px 9px', margin: '2px 2px 4px 20px', borderRadius: 8,
+    padding: '5px 8px', margin: '1px 0 4px 4px', borderRadius: 8,
     background: 'transparent', border: '1px solid transparent',
-    color: C.fg3, fontSize: 11, fontWeight: 600, cursor: 'pointer',
+    color: C.fg3, fontSize: 12, fontWeight: 600, cursor: 'pointer',
   },
   activitySlot: { width: 8, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' },
   titleGroup: { flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 5 },
@@ -899,7 +895,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex', flexDirection: 'column',
   },
   menuHeader: {
-    padding: '4px 10px 6px', fontSize: 11, color: C.fg3,
+    padding: '4px 10px 6px', fontSize: 12, color: C.fg3,
     borderBottom: `1px solid ${C.border}`, marginBottom: 4,
     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
   },

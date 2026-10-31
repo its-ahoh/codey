@@ -2,11 +2,11 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { C } from '../theme'
 
 const inputStyle: React.CSSProperties = {
-  background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 7,
+  background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 8,
   color: C.fg, fontSize: 13, padding: '6px 10px', outline: 'none', width: 180,
 }
 const pillButton = (variant: 'primary' | 'danger' | 'ghost'): React.CSSProperties => ({
-  padding: '6px 12px', borderRadius: 7, fontSize: 12, fontWeight: 600,
+  padding: '6px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600,
   border: 'none', cursor: 'pointer',
   background: variant === 'primary' ? C.accent : variant === 'danger' ? C.red + '22' : C.surface3,
   color: variant === 'primary' ? C.onAccent : variant === 'danger' ? C.red : C.fg2,
@@ -133,7 +133,7 @@ export const HotkeyRecorder: React.FC<{
         </button>
       )}
       {recording && (
-        <span style={{ color: C.fg3, fontSize: 11 }}>Esc to cancel</span>
+        <span style={{ color: C.fg3, fontSize: 12 }}>Esc to cancel</span>
       )}
       <style>{`
         @keyframes pulse {

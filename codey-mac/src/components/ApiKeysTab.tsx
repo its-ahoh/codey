@@ -58,7 +58,7 @@ const ApiRow: React.FC<{
     const hasAnyUrl = hasAnthropicUrl || hasOpenaiUrl
     const keyTail = entry.apiKey.trim().slice(-4)
     const urlLineStyle: React.CSSProperties = {
-      color: C.fg3, fontSize: 11,
+      color: C.fg3, fontSize: 12,
       overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
     }
     const labelStyle: React.CSSProperties = { color: C.fg3, opacity: 0.7, marginRight: 4 }
@@ -71,12 +71,12 @@ const ApiRow: React.FC<{
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontWeight: 600, fontSize: 13 }}>
             {entry.name}
-            {isVoice && <span style={{ color: C.accent, fontSize: 10, marginLeft: 7 }}>VOICE</span>}
+            {isVoice && <span style={{ color: C.accent, fontSize: 11, marginLeft: 7 }}>VOICE</span>}
           </div>
           <div
             style={{
-              color: C.fg3, fontSize: 11, marginTop: 6, display: 'inline-flex', alignItems: 'center', gap: 6,
-              padding: '3px 7px', borderRadius: 7, background: C.surface3, border: `1px solid ${C.border2}`,
+              color: C.fg3, fontSize: 12, marginTop: 6, display: 'inline-flex', alignItems: 'center', gap: 6,
+              padding: '3px 7px', borderRadius: 8, background: C.surface3, border: `1px solid ${C.border2}`,
             }}
             title={keyTail ? `API key ending in ${keyTail}` : 'API key saved'}
           >

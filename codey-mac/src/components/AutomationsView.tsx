@@ -267,7 +267,7 @@ const AutomationList: React.FC<ListProps> = ({ automations, loading, onRefresh, 
                 <div style={cardAside}>
                   <div style={runRecency}>
                     <span style={runRecencyLabel}>{last ? 'Last run' : 'Run history'}</span>
-                    <strong style={{ color: last?.status === 'failed' ? C.red : C.fg2, fontSize: 10.5 }}>
+                    <strong style={{ color: last?.status === 'failed' ? C.red : C.fg2, fontSize: 12 }}>
                       {last ? runStatusText(last) : 'Not run yet'}
                     </strong>
                     {last && <span style={runDate}>{new Date(last.startedAt).toLocaleString()}</span>}
@@ -314,7 +314,7 @@ function runStatusText(run: AutomationRun): string {
 
 const rowStyle: React.CSSProperties = {
   display: 'flex', alignItems: 'stretch', position: 'relative', overflow: 'hidden',
-  background: C.surface, border: `1px solid ${C.border}`, borderRadius: 13,
+  background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12,
   boxShadow: '0 5px 14px rgba(0,0,0,0.05)',
 }
 const statusRail: React.CSSProperties = { width: 3, flexShrink: 0 }
@@ -322,39 +322,39 @@ const cardMain: React.CSSProperties = { flex: 1, minWidth: 0, display: 'flex', a
 const automationIconFallback = (enabled: boolean): React.CSSProperties => ({ color: enabled ? C.accent : C.fg3, display: 'grid', placeItems: 'center' })
 const cardCopy: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }
 const nameRow: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }
-const automationName: React.CSSProperties = { color: C.fg, fontSize: 13, fontWeight: 720, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
-const statusPill = (color: string): React.CSSProperties => ({ display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0, padding: '2px 6px', borderRadius: 999, color, background: C.surface3, fontSize: 9, fontWeight: 700 })
+const automationName: React.CSSProperties = { color: C.fg, fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
+const statusPill = (color: string): React.CSSProperties => ({ display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0, padding: '2px 6px', borderRadius: 999, color, background: C.surface3, fontSize: 11, fontWeight: 600 })
 const gapsMarker: React.CSSProperties = {
   width: 15, height: 15, borderRadius: 999, flexShrink: 0,
   display: 'grid', placeItems: 'center',
-  background: C.yellow, color: C.bg, fontSize: 10, fontWeight: 800,
+  background: C.yellow, color: C.bg, fontSize: 11, fontWeight: 600,
 }
 const statusDot: React.CSSProperties = { width: 5, height: 5, borderRadius: 999 }
-const targetLine: React.CSSProperties = { color: C.fg3, fontSize: 10, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
+const targetLine: React.CSSProperties = { color: C.fg3, fontSize: 11, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
 const metaRow: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }
 const schedulePill: React.CSSProperties = {
   display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0,
   padding: '2px 7px', borderRadius: 999, background: C.accentDim, color: C.accent,
-  fontSize: 9.5, fontWeight: 700, whiteSpace: 'nowrap',
+  fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap',
 }
 const manualPill: React.CSSProperties = {
   display: 'inline-flex', alignItems: 'center', flexShrink: 0, padding: '2px 7px', borderRadius: 999,
-  background: C.surface3, color: C.fg3, fontSize: 9.5, fontWeight: 700,
+  background: C.surface3, color: C.fg3, fontSize: 11, fontWeight: 600,
 }
 const nextHint: React.CSSProperties = { color: C.fg3, fontWeight: 600 }
 const cardAside: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0, padding: '10px 11px 10px 6px' }
 const runRecency: React.CSSProperties = { width: 130, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 1, paddingRight: 5 }
-const runRecencyLabel: React.CSSProperties = { color: C.fg3, fontSize: 8.5, fontWeight: 750, textTransform: 'uppercase', letterSpacing: .45 }
-const runDate: React.CSSProperties = { color: C.fg3, fontSize: 8.5, whiteSpace: 'nowrap' }
+const runRecencyLabel: React.CSSProperties = { color: C.fg3, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: .45 }
+const runDate: React.CSSProperties = { color: C.fg3, fontSize: 11, whiteSpace: 'nowrap' }
 const modeToggle = (scheduled: boolean): React.CSSProperties => ({
-  padding: '6px 8px', borderRadius: 8, fontSize: 9.5, fontWeight: 650, cursor: 'pointer',
+  padding: '6px 8px', borderRadius: 8, fontSize: 11, fontWeight: 600, cursor: 'pointer',
   border: `1px solid ${scheduled ? C.accent : C.border}`,
   background: scheduled ? C.accentDim : C.surface3,
   color: scheduled ? C.accent : C.fg2,
 })
-const runButton: React.CSSProperties = { ...pillButton('ghost'), display: 'inline-flex', alignItems: 'center', gap: 4, padding: '6px 9px', fontSize: 10.5 }
+const runButton: React.CSSProperties = { ...pillButton('ghost'), display: 'inline-flex', alignItems: 'center', gap: 4, padding: '6px 9px', fontSize: 12 }
 const openButton: React.CSSProperties = { width: 28, height: 28, display: 'grid', placeItems: 'center', border: 'none', borderRadius: 8, background: 'transparent', color: C.fg3, cursor: 'pointer' }
-const listStat: React.CSSProperties = { display: 'flex', alignItems: 'baseline', gap: 6, color: C.fg3, fontSize: 10.5, padding: '7px 11px', borderRight: `1px solid ${C.border}` }
+const listStat: React.CSSProperties = { display: 'flex', alignItems: 'baseline', gap: 6, color: C.fg3, fontSize: 12, padding: '7px 11px', borderRight: `1px solid ${C.border}` }
 
 const styles: Record<string, React.CSSProperties> = {
   body: { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' },
@@ -364,12 +364,12 @@ const styles: Record<string, React.CSSProperties> = {
   },
   list: { padding: '22px 24px', flex: 1, overflowY: 'auto', background: C.bg },
   listTop: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 20 },
-  listTitle: { color: C.fg, fontSize: 17, fontWeight: 750, letterSpacing: '-0.02em' },
+  listTitle: { color: C.fg, fontSize: 18, fontWeight: 600, letterSpacing: '-0.02em' },
   listSummary: { display: 'inline-flex', alignItems: 'center', border: `1px solid ${C.border}`, borderRadius: 10, background: C.surface, overflow: 'hidden', marginBottom: 12 },
   cardList: { display: 'flex', flexDirection: 'column', gap: 8 },
   loading: { color: C.fg3, fontSize: 13, textAlign: 'center', paddingTop: 46 },
   emptyState: { display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', maxWidth: 320, margin: '70px auto 0' },
-  emptyIcon: { width: 60, height: 60, display: 'grid', placeItems: 'center', borderRadius: 18, background: C.accentDim, color: C.accent, border: `1px solid ${C.accent}` },
-  emptyTitle: { color: C.fg, fontSize: 15, fontWeight: 700, marginTop: 15 },
+  emptyIcon: { width: 60, height: 60, display: 'grid', placeItems: 'center', borderRadius: 14, background: C.accentDim, color: C.accent, border: `1px solid ${C.accent}` },
+  emptyTitle: { color: C.fg, fontSize: 15, fontWeight: 600, marginTop: 15 },
   emptyText: { color: C.fg2, fontSize: 12, lineHeight: 1.55, marginTop: 6 },
 }

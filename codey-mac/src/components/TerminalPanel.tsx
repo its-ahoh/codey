@@ -542,7 +542,7 @@ const styles: Record<string, React.CSSProperties> = {
   tab: {
     height: 28, minWidth: 74, maxWidth: 180, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
     padding: '0 7px', color: C.fg3, background: 'transparent', border: 'none', borderRadius: 6, cursor: 'pointer',
-    fontSize: 10.5, fontWeight: 650,
+    fontSize: 12, fontWeight: 600,
   },
   tabActive: { color: C.fg, background: C.accentDim },
   tabTitle: { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
@@ -552,7 +552,7 @@ const styles: Record<string, React.CSSProperties> = {
     width: 27, height: 27, display: 'grid', placeItems: 'center', padding: 0,
     color: C.fg2, background: 'transparent', border: 'none', borderRadius: 6, cursor: 'pointer',
   },
-  error: { flexShrink: 0, padding: '6px 10px', color: C.dangerFg, background: C.dangerBg, fontSize: 11 },
+  error: { flexShrink: 0, padding: '6px 10px', color: C.dangerFg, background: C.dangerBg, fontSize: 12 },
   panes: { flex: 1, minHeight: 0, position: 'relative', display: 'flex', background: C.codeBg },
   pane: { flex: 1, minWidth: 0, minHeight: 0, position: 'relative', overflow: 'hidden', display: 'flex', flexDirection: 'column' },
   paneSplitLeft: { borderLeft: `1px solid ${C.border2}` },
@@ -561,10 +561,10 @@ const styles: Record<string, React.CSSProperties> = {
     height: 25, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6, padding: '0 6px 0 9px',
     background: C.surface2, color: C.fg2, borderBottom: `1px solid ${C.border2}`, cursor: 'grab', userSelect: 'none',
   },
-  paneTitle: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 10.5, fontWeight: 600 },
+  paneTitle: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, fontWeight: 600 },
   splitClose: {
     width: 19, height: 19, flexShrink: 0, padding: 0, display: 'grid', placeItems: 'center',
-    border: 'none', borderRadius: 5, background: C.surface3, color: C.fg2, cursor: 'pointer',
+    border: 'none', borderRadius: 6, background: C.surface3, color: C.fg2, cursor: 'pointer',
   },
   layoutPreview: {
     position: 'absolute', inset: 0, zIndex: 20, pointerEvents: 'none', overflow: 'hidden',
@@ -575,5 +575,5 @@ const styles: Record<string, React.CSSProperties> = {
     background: C.green, boxShadow: `inset 0 0 0 2px rgba(255,255,255,.3), 0 0 16px ${C.green}`,
   },
   terminal: { flex: 1, width: '100%', minHeight: 0, padding: '8px 6px 4px 9px', overflow: 'hidden', background: C.codeBg },
-  loading: { flex: 1, display: 'grid', placeItems: 'center', color: C.fg3, fontSize: 11 },
+  loading: { flex: 1, display: 'grid', placeItems: 'center', color: C.fg3, fontSize: 12 },
 }

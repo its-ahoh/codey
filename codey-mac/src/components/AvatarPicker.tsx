@@ -36,7 +36,7 @@ export function AvatarPicker({ value, onChange, name = 'Member', size = 56 }: {
       onCancel={event => { event.preventDefault(); setOpen(false) }}
       onClick={event => { if (event.target === event.currentTarget) setOpen(false) }}
       style={{ padding: 0, width: 360, maxWidth: 'calc(100vw - 40px)', maxHeight: 'calc(100vh - 48px)',
-        margin: 'auto', border: `1px solid ${C.border}`, borderRadius: 18, color: C.fg, background: C.bg,
+        margin: 'auto', border: `1px solid ${C.border}`, borderRadius: 14, color: C.fg, background: C.bg,
         boxShadow: '0 18px 70px rgba(0,0,0,.25)' }}>
       <div style={{ padding: 22 }}>
         <div role="group" aria-label="Shape">

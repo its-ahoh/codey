@@ -23,7 +23,7 @@ const DISPATCH: { id: DispatchMode; label: string; desc: string; detail: string;
   { id: 'roundtable', label: 'Roundtable', desc: 'Best for multiple perspectives.', detail: 'Bots contribute concurrently while the Advisor moderates the discussion, tracks shared progress, and decides when the team is done.', icon: 'users' },
 ]
 
-const labelStyle: CSSProperties = { fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5, color: C.fg3, marginBottom: 6 }
+const labelStyle: CSSProperties = { fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: C.fg3, marginBottom: 6 }
 
 function fromRaw(raw: TeamConfigRaw): TeamState {
   if (Array.isArray(raw)) return { members: raw, dispatch: 'sequential' }
@@ -176,7 +176,7 @@ export default function GlobalTeamsSection() {
                 return (
                   <button key={d.id} onClick={() => setDispatch(name, d.id)} style={{ ...styles.modeCard, ...(on ? styles.modeCardActive : {}) }}>
                     <span style={{ ...styles.modeIcon, color: on ? C.onAccent : C.accent, background: on ? 'rgba(255,255,255,0.16)' : C.accentDim }}><UIIcon name={d.icon} size={15} /></span>
-                    <span style={{ fontWeight: 700, color: on ? C.onAccent : C.fg2 }}>{d.label}</span>
+                    <span style={{ fontWeight: 600, color: on ? C.onAccent : C.fg2 }}>{d.label}</span>
                   </button>
                 )
               })}
@@ -214,16 +214,16 @@ export default function GlobalTeamsSection() {
                       onDragEnd={() => { setDrag(null); setDragOver(null) }}
                       style={{
                         display: 'inline-flex', alignItems: 'center', gap: 6, padding: showOrder ? '5px 9px 5px 5px' : '5px 9px 5px 6px',
-                        background: C.surface2, borderRadius: 16, fontSize: 12,
+                        background: C.surface2, borderRadius: 14, fontSize: 12,
                         cursor: 'grab', opacity: isDragging ? 0.4 : 1,
                         border: isOver ? `1px solid ${C.accent}` : `1px solid ${C.border}`,
                       }}
                     >
-                      <span style={{ color: C.fg3, cursor: 'grab', fontSize: 10 }}>⋮⋮</span>
+                      <span style={{ color: C.fg3, cursor: 'grab', fontSize: 11 }}>⋮⋮</span>
                       {showOrder && (
-                        <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, borderRadius: 9, background: C.accent, color: C.onAccent, fontSize: 10, fontWeight: 700 }}>{i + 1}</span>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, borderRadius: 8, background: C.accent, color: C.onAccent, fontSize: 11, fontWeight: 600 }}>{i + 1}</span>
                       )}
-                      <span style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.15 }}><span>{bots.find(w => w.name === m)?.config.displayName || m}</span>{bots.find(w => w.name === m)?.personality.role && <span style={{ color: C.fg3, fontSize: 9, maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{bots.find(w => w.name === m)?.personality.role}</span>}</span>
+                      <span style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.15 }}><span>{bots.find(w => w.name === m)?.config.displayName || m}</span>{bots.find(w => w.name === m)?.personality.role && <span style={{ color: C.fg3, fontSize: 11, maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{bots.find(w => w.name === m)?.personality.role}</span>}</span>
                       <button onClick={() => removeMember(name, i)} title="Remove" style={{ background: 'transparent', color: C.fg3, border: 'none', cursor: 'pointer', padding: 0, fontSize: 14, lineHeight: 1 }}>×</button>
                     </span>
                   </span>
@@ -236,7 +236,7 @@ export default function GlobalTeamsSection() {
                   else addMember(name, v)
                   e.target.value = ''
                 }}
-                style={{ background: C.accentDim, color: C.accent, border: `1px dashed ${C.accent}`, borderRadius: 16, padding: '6px 10px', fontSize: 12, cursor: 'pointer' }}>
+                style={{ background: C.accentDim, color: C.accent, border: `1px dashed ${C.accent}`, borderRadius: 14, padding: '6px 10px', fontSize: 12, cursor: 'pointer' }}>
                 <option value="">+ add bot</option>
                 {available(name).map(w => <option key={w.name} value={w.name}>{w.config.displayName || w.name}</option>)}
                 <option value="__create__">+ Create new bot…</option>
@@ -315,43 +315,43 @@ export default function GlobalTeamsSection() {
 
 const styles: Record<string, CSSProperties> = {
   topRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 14 },
-  libraryNote: { display: 'inline-flex', alignItems: 'center', gap: 7, color: C.fg3, fontSize: 11 },
+  libraryNote: { display: 'inline-flex', alignItems: 'center', gap: 7, color: C.fg3, fontSize: 12 },
   libraryDot: { width: 7, height: 7, borderRadius: '50%', background: C.green, boxShadow: `0 0 8px ${C.green}` },
   topActions: { display: 'flex', alignItems: 'center', gap: 10 },
-  saved: { color: C.green, fontSize: 11, fontWeight: 650, display: 'inline-flex', gap: 4 },
-  newTeamBtn: { display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 12px', fontSize: 12, fontWeight: 700, background: C.accent, color: C.onAccent, border: 'none', borderRadius: 9, cursor: 'pointer', boxShadow: `0 6px 16px ${C.accentDim}` },
-  error: { background: C.dangerBg, color: C.dangerFg, border: `1px solid ${C.dangerBorder}`, padding: '10px 12px', borderRadius: 9, fontSize: 12, marginBottom: 12 },
+  saved: { color: C.green, fontSize: 12, fontWeight: 600, display: 'inline-flex', gap: 4 },
+  newTeamBtn: { display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 12px', fontSize: 12, fontWeight: 600, background: C.accent, color: C.onAccent, border: 'none', borderRadius: 8, cursor: 'pointer', boxShadow: 'none' },
+  error: { background: C.dangerBg, color: C.dangerFg, border: `1px solid ${C.dangerBorder}`, padding: '10px 12px', borderRadius: 8, fontSize: 12, marginBottom: 12 },
   empty: { minHeight: 270, border: `1px dashed ${C.border2}`, borderRadius: 14, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: 24 },
-  emptyIcon: { width: 56, height: 56, borderRadius: 17, display: 'grid', placeItems: 'center', background: C.accentDim, color: C.accent },
-  emptyTitle: { color: C.fg, fontSize: 15, fontWeight: 750, marginTop: 14 },
+  emptyIcon: { width: 56, height: 56, borderRadius: 14, display: 'grid', placeItems: 'center', background: C.accentDim, color: C.accent },
+  emptyTitle: { color: C.fg, fontSize: 15, fontWeight: 600, marginTop: 14 },
   emptyText: { color: C.fg3, fontSize: 12, lineHeight: 1.5, maxWidth: 300, marginTop: 5 },
   teamCard: { marginBottom: 16, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, overflow: 'hidden', boxShadow: '0 6px 18px rgba(0,0,0,0.05)' },
   teamHeader: { display: 'flex', alignItems: 'center', gap: 9, padding: '13px 15px', borderBottom: `1px solid ${C.border}`, background: C.surface2 },
-  teamName: { flex: 1, background: 'transparent', color: C.fg, border: 'none', fontSize: 15, fontWeight: 750, outline: 'none' },
-  memberCount: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: C.fg3, background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 12, padding: '4px 7px' },
-  deleteBtn: { width: 28, height: 28, display: 'grid', placeItems: 'center', background: 'transparent', color: C.fg3, border: 'none', cursor: 'pointer', borderRadius: 7 },
+  teamName: { flex: 1, background: 'transparent', color: C.fg, border: 'none', fontSize: 15, fontWeight: 600, outline: 'none' },
+  memberCount: { display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, color: C.fg3, background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 12, padding: '4px 7px' },
+  deleteBtn: { width: 28, height: 28, display: 'grid', placeItems: 'center', background: 'transparent', color: C.fg3, border: 'none', cursor: 'pointer', borderRadius: 8 },
   cardBody: { padding: 15 },
   dispatchLabelRow: { display: 'flex', alignItems: 'center', gap: 6, marginBottom: 7 },
-  dispatchHelpBtn: { width: 18, height: 18, display: 'grid', placeItems: 'center', padding: 0, borderRadius: '50%', border: `1px solid ${C.border2}`, background: C.surface3, color: C.fg2, cursor: 'pointer', fontSize: 11, fontWeight: 750, lineHeight: 1 },
+  dispatchHelpBtn: { width: 18, height: 18, display: 'grid', placeItems: 'center', padding: 0, borderRadius: '50%', border: `1px solid ${C.border2}`, background: C.surface3, color: C.fg2, cursor: 'pointer', fontSize: 12, fontWeight: 600, lineHeight: 1 },
   modeGrid: { display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 7, marginBottom: 18 },
-  modeCard: { display: 'flex', alignItems: 'center', gap: 7, textAlign: 'left', padding: '7px 9px', minHeight: 42, background: C.surface2, color: C.fg2, border: `1px solid ${C.border}`, borderRadius: 9, cursor: 'pointer', fontSize: 11 },
-  modeCardActive: { background: C.accent, color: C.onAccent, borderColor: C.accent, boxShadow: `0 7px 15px ${C.accentDim}` },
-  modeIcon: { width: 25, height: 25, flexShrink: 0, borderRadius: 7, display: 'grid', placeItems: 'center' },
+  modeCard: { display: 'flex', alignItems: 'center', gap: 7, textAlign: 'left', padding: '7px 9px', minHeight: 42, background: C.surface2, color: C.fg2, border: `1px solid ${C.border}`, borderRadius: 8, cursor: 'pointer', fontSize: 12 },
+  modeCardActive: { background: C.accent, color: C.onAccent, borderColor: C.accent, boxShadow: 'none' },
+  modeIcon: { width: 25, height: 25, flexShrink: 0, borderRadius: 8, display: 'grid', placeItems: 'center' },
   memberHint: { color: C.fg3, fontSize: 12, padding: '5px 2px' },
   workflowRow: { marginTop: 14, paddingTop: 11, borderTop: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 8 },
-  workflowIcon: { width: 25, height: 25, borderRadius: 7, display: 'grid', placeItems: 'center', background: C.accentDim, color: C.accent },
-  workflowTitle: { color: C.fg2, fontSize: 11, fontWeight: 700 },
-  workflowSub: { color: C.fg3, fontSize: 10 },
-  workflowBtn: { display: 'inline-flex', alignItems: 'center', gap: 3, padding: '5px 7px', fontSize: 10, fontWeight: 680, color: C.accent, background: 'transparent', border: 'none', borderRadius: 7, cursor: 'pointer' },
+  workflowIcon: { width: 25, height: 25, borderRadius: 8, display: 'grid', placeItems: 'center', background: C.accentDim, color: C.accent },
+  workflowTitle: { color: C.fg2, fontSize: 12, fontWeight: 600 },
+  workflowSub: { color: C.fg3, fontSize: 11 },
+  workflowBtn: { display: 'inline-flex', alignItems: 'center', gap: 3, padding: '5px 7px', fontSize: 11, fontWeight: 600, color: C.accent, background: 'transparent', border: 'none', borderRadius: 8, cursor: 'pointer' },
   modalBackdrop: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.48)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, zIndex: 1000 },
   dispatchHelpDialog: { width: 'min(520px, 100%)', background: C.bg, border: `1px solid ${C.border}`, borderRadius: 14, boxShadow: '0 20px 60px rgba(0,0,0,0.28)', overflow: 'hidden' },
   dispatchHelpHeader: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, padding: '17px 18px 14px', borderBottom: `1px solid ${C.border}` },
-  dispatchHelpTitle: { color: C.fg, fontSize: 15, fontWeight: 750 },
+  dispatchHelpTitle: { color: C.fg, fontSize: 15, fontWeight: 600 },
   modalCloseBtn: { width: 28, height: 28, display: 'grid', placeItems: 'center', padding: 0, background: C.surface2, color: C.fg2, border: `1px solid ${C.border}`, borderRadius: 8, cursor: 'pointer' },
   dispatchHelpList: { display: 'flex', flexDirection: 'column', gap: 9, padding: 14 },
   dispatchHelpItem: { display: 'grid', gridTemplateColumns: '34px 1fr', gap: 10, padding: 11, background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10 },
-  dispatchHelpIcon: { width: 34, height: 34, display: 'grid', placeItems: 'center', borderRadius: 9, background: C.accentDim, color: C.accent },
-  dispatchHelpMode: { color: C.fg, fontSize: 12, fontWeight: 750 },
-  dispatchHelpDesc: { color: C.fg2, fontSize: 11, lineHeight: 1.45, marginTop: 3 },
-  dispatchHelpBest: { color: C.accent, fontSize: 10, fontWeight: 650, marginTop: 5 },
+  dispatchHelpIcon: { width: 34, height: 34, display: 'grid', placeItems: 'center', borderRadius: 8, background: C.accentDim, color: C.accent },
+  dispatchHelpMode: { color: C.fg, fontSize: 12, fontWeight: 600 },
+  dispatchHelpDesc: { color: C.fg2, fontSize: 12, lineHeight: 1.45, marginTop: 3 },
+  dispatchHelpBest: { color: C.accent, fontSize: 11, fontWeight: 600, marginTop: 5 },
 }

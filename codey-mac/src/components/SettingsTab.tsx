@@ -49,11 +49,11 @@ const AllEndpointsHint: React.FC<{ keyEntry?: ApiKeyEntry }> = ({ keyEntry }) =>
   const missing = missingAllEndpoints('all', keyEntry)
   const generic = 'Usable by every agent. Each protocol is wired up only if the selected API key defines its base URL — set both on the key to cover all agents.'
   if (!keyEntry || missing.length === 0) {
-    return <div style={{ color: C.fg3, fontSize: 11, lineHeight: 1.45 }}>{generic}</div>
+    return <div style={{ color: C.fg3, fontSize: 12, lineHeight: 1.45 }}>{generic}</div>
   }
   const stranded = missing.flatMap(agentsPinnedTo)
   return (
-    <div style={{ color: C.warningFg, fontSize: 11, lineHeight: 1.45 }}>
+    <div style={{ color: C.warningFg, fontSize: 12, lineHeight: 1.45 }}>
       Key "{keyEntry.name}" defines no {missing.join(' or ')} base URL
       {missing.length === 2
         ? ' at all, so nothing is wired up and every agent falls back to the ambient environment.'
@@ -100,12 +100,12 @@ const ModelRow: React.FC<{
       }}>
         <div style={{ minWidth: 0 }}>
           <div style={{ fontWeight: 600, fontSize: 13 }}>
-            {entry.model} <span style={{ color: C.fg3, fontWeight: 400, fontSize: 11, marginLeft: 6 }}>[{entry.apiType}]</span>
+            {entry.model} <span style={{ color: C.fg3, fontWeight: 400, fontSize: 12, marginLeft: 6 }}>[{entry.apiType}]</span>
           </div>
           {entry.apiKeyRef && (
             <div style={{
               color: C.fg3,
-              fontSize: 11, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+              fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
             }}>
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><UIIcon name="key" size={13} />{entry.apiKeyRef}</span>
             </div>
@@ -254,7 +254,7 @@ const FallbackList: React.FC<{
               <span style={{ color: C.fg3, fontSize: 14, cursor: 'grab', userSelect: 'none' }} title="Drag to reorder">⋮⋮</span>
               <span style={{
                 color: i === 0 ? C.accent : C.fg3,
-                fontSize: 11, fontWeight: i === 0 ? 600 : 400,
+                fontSize: 12, fontWeight: i === 0 ? 600 : 400,
                 width: 56, letterSpacing: 0.3,
               }}>{i === 0 ? 'DEFAULT' : `Step ${i + 1}`}</span>
               <select
@@ -280,7 +280,7 @@ const FallbackList: React.FC<{
                 <span style={{
                   width: 28, height: 28, flexShrink: 0,
                   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: 10, color: C.fg3,
+                  fontSize: 11, color: C.fg3,
                 }} title="The default agent — drag a row above to replace it">—</span>
               ) : (
                 <button onClick={() => remove(i)} style={{
@@ -502,11 +502,11 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
 
       <Section title="Agent fallback" right={
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ color: C.fg3, fontSize: 11 }}>{fallback.enabled ? 'Enabled' : 'Disabled'}</span>
+          <span style={{ color: C.fg3, fontSize: 12 }}>{fallback.enabled ? 'Enabled' : 'Disabled'}</span>
           <Toggle on={fallback.enabled} onChange={enabled => updateFallback({ ...fallback, enabled })}/>
         </div>
       }/>
-      <div style={{ color: C.fg3, fontSize: 11, marginBottom: 8 }}>
+      <div style={{ color: C.fg3, fontSize: 12, marginBottom: 8 }}>
         Row 1 is the default agent + model. When fallback is enabled and a request fails, the gateway tries each subsequent row in order. Drag to reorder.
       </div>
       <FallbackList
@@ -516,7 +516,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
         onChange={next => updateFallback({ ...fallback, order: next })}
       />
       {!fallback.enabled && (
-        <div style={{ color: C.fg3, fontSize: 11, padding: '8px 0' }}>
+        <div style={{ color: C.fg3, fontSize: 12, padding: '8px 0' }}>
           Fallback is off — only Row 1 (the default) will run. Failures surface as errors instead of trying the rest of the list.
         </div>
       )}

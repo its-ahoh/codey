@@ -13,8 +13,8 @@ import { UIIcon } from './UIIcons'
 
 const menuItemStyle = {
   width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '8px',
-  background: 'transparent', color: C.fg2, border: 'none', borderRadius: 7,
-  fontSize: 11, textAlign: 'left', cursor: 'pointer',
+  background: 'transparent', color: C.fg2, border: 'none', borderRadius: 8,
+  fontSize: 12, textAlign: 'left', cursor: 'pointer',
 } as const
 
 // ---------------------------------------------------------------------------
@@ -185,27 +185,27 @@ function FlowEditorInner({ teamName, botNames, botRoles = {}, graph, onSave, onC
 
   return (
     <div onClick={onClose} aria-modal="true" style={{ position: 'fixed', inset: 0, background: 'rgba(9,12,20,0.65)', backdropFilter: 'blur(10px)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div onClick={e => e.stopPropagation()} style={{ width: '92vw', height: '88vh', background: C.surface, border: `1px solid ${C.border2}`, borderRadius: 18, boxShadow: '0 30px 90px rgba(0,0,0,0.48)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: '92vw', height: '88vh', background: C.surface, border: `1px solid ${C.border2}`, borderRadius: 14, boxShadow: '0 30px 90px rgba(0,0,0,0.48)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 11, minHeight: 62, padding: '10px 14px 10px 16px', borderBottom: `1px solid ${C.border}`, background: C.surface }}>
-          <button onClick={onClose} aria-label="Close workflow editor" title="Close" style={{ width: 34, height: 34, display: 'grid', placeItems: 'center', padding: 0, borderRadius: 9, background: 'transparent', color: C.fg3, border: 'none', cursor: 'pointer' }}><UIIcon name="close" size={17} /></button>
+          <button onClick={onClose} aria-label="Close workflow editor" title="Close" style={{ width: 34, height: 34, display: 'grid', placeItems: 'center', padding: 0, borderRadius: 8, background: 'transparent', color: C.fg3, border: 'none', cursor: 'pointer' }}><UIIcon name="close" size={17} /></button>
           <span style={{ width: 34, height: 34, borderRadius: 10, display: 'grid', placeItems: 'center', background: C.accentDim, color: C.accent }}><UIIcon name="activity" size={17} /></span>
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontWeight: 760, color: C.fg, fontSize: 13 }}>{teamName}</div>
-            <div style={{ fontSize: 10, color: C.fg3, marginTop: 2 }}>Workflow editor</div>
+            <div style={{ fontWeight: 600, color: C.fg, fontSize: 13 }}>{teamName}</div>
+            <div style={{ fontSize: 11, color: C.fg3, marginTop: 2 }}>Workflow editor</div>
           </div>
-          <span style={{ marginLeft: 4, display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 8px', borderRadius: 12, fontSize: 10, fontWeight: 650, color: problems.length ? C.dangerFg : C.green, background: problems.length ? C.dangerBg : C.accentDim, border: `1px solid ${problems.length ? C.dangerBorder : C.border}` }}>
+          <span style={{ marginLeft: 4, display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 8px', borderRadius: 12, fontSize: 11, fontWeight: 600, color: problems.length ? C.dangerFg : C.green, background: problems.length ? C.dangerBg : C.accentDim, border: `1px solid ${problems.length ? C.dangerBorder : C.border}` }}>
             <span style={{ width: 5, height: 5, borderRadius: '50%', background: 'currentColor' }} />
             {problems.length ? `${problems.length} issue${problems.length === 1 ? '' : 's'}` : 'Ready'}
           </span>
           <div style={{ flex: 1 }} />
-          <button onClick={save} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 750, color: C.onAccent, background: C.accent, border: 'none', borderRadius: 9, padding: '8px 12px', cursor: 'pointer', minWidth: 70, justifyContent: 'center' }}>
+          <button onClick={save} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color: C.onAccent, background: C.accent, border: 'none', borderRadius: 8, padding: '8px 12px', cursor: 'pointer', minWidth: 70, justifyContent: 'center' }}>
             <UIIcon name={justSaved ? 'check' : 'archive'} size={14} />{justSaved ? 'Saved' : 'Save'}
           </button>
           <div style={{ position: 'relative' }}>
-            <button onClick={() => setToolbarMenuOpen(v => !v)} aria-label="Workflow options" title="Workflow options" style={{ width: 34, height: 34, display: 'grid', placeItems: 'center', padding: 0, borderRadius: 9, background: C.surface2, color: C.fg2, border: `1px solid ${C.border}`, cursor: 'pointer' }}><UIIcon name="more" size={16} /></button>
+            <button onClick={() => setToolbarMenuOpen(v => !v)} aria-label="Workflow options" title="Workflow options" style={{ width: 34, height: 34, display: 'grid', placeItems: 'center', padding: 0, borderRadius: 8, background: C.surface2, color: C.fg2, border: `1px solid ${C.border}`, cursor: 'pointer' }}><UIIcon name="more" size={16} /></button>
             {toolbarMenuOpen && (
-              <div style={{ position: 'absolute', top: 40, right: 0, zIndex: 20, width: 196, padding: 7, borderRadius: 11, background: C.surface, border: `1px solid ${C.border2}`, boxShadow: '0 14px 36px rgba(0,0,0,0.3)' }}>
-                <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '7px 8px', fontSize: 11, color: C.fg2 }}>
+              <div style={{ position: 'absolute', top: 40, right: 0, zIndex: 20, width: 196, padding: 7, borderRadius: 10, background: C.surface, border: `1px solid ${C.border2}`, boxShadow: '0 14px 36px rgba(0,0,0,0.3)' }}>
+                <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '7px 8px', fontSize: 12, color: C.fg2 }}>
                   Maximum hops
                   <input type="number" min={1} value={maxHops} onChange={e => setMaxHops(Math.max(1, Number(e.target.value) || 1))} style={{ width: 52, background: C.surface3, color: C.fg, border: `1px solid ${C.border2}`, borderRadius: 6, padding: '4px 6px', colorScheme: effectiveTheme, WebkitAppearance: 'textfield' }} />
                 </label>
@@ -217,25 +217,25 @@ function FlowEditorInner({ teamName, botNames, botRoles = {}, graph, onSave, onC
           </div>
         </div>
         {problems.length > 0 && (
-          <div style={{ background: C.dangerBg, color: C.dangerFg, borderBottom: `1px solid ${C.dangerBorder}`, fontSize: 10, lineHeight: 1.4, padding: '6px 16px' }}>{problems.join(' · ')}</div>
+          <div style={{ background: C.dangerBg, color: C.dangerFg, borderBottom: `1px solid ${C.dangerBorder}`, fontSize: 11, lineHeight: 1.4, padding: '6px 16px' }}>{problems.join(' · ')}</div>
         )}
         <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
           {!showRaw && (
             <div style={{ width: 178, borderRight: `1px solid ${C.border}`, padding: '13px 10px', overflowY: 'auto', background: C.surface2 }}>
-              <div style={{ padding: '0 3px', fontSize: 10, fontWeight: 720, letterSpacing: 0.65, textTransform: 'uppercase', color: C.fg3 }}>Steps</div>
-              <div style={{ padding: '3px 3px 10px', fontSize: 9, color: C.fg3 }}>Click or drag onto the canvas</div>
+              <div style={{ padding: '0 3px', fontSize: 11, fontWeight: 600, letterSpacing: 0.65, textTransform: 'uppercase', color: C.fg3 }}>Steps</div>
+              <div style={{ padding: '3px 3px 10px', fontSize: 11, color: C.fg3 }}>Click or drag onto the canvas</div>
               {botNames.map(w => (
                 <button key={w} draggable
                   onDragStart={e => e.dataTransfer.setData('application/codey-node', JSON.stringify({ kind: 'bot', bot: w }))}
                   onClick={() => addBot(w)}
-                  style={{ display: 'flex', width: '100%', alignItems: 'center', gap: 7, textAlign: 'left', marginBottom: 5, fontSize: 11, padding: '8px', background: C.surface, color: C.fg, border: `1px solid ${C.border}`, borderRadius: 8, cursor: 'grab' }}>
-                  <span style={{ color: C.accent, display: 'inline-flex' }}><UIIcon name="bot" size={13} /></span><span style={{ fontWeight: 680, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{w}</span>
+                  style={{ display: 'flex', width: '100%', alignItems: 'center', gap: 7, textAlign: 'left', marginBottom: 5, fontSize: 12, padding: '8px', background: C.surface, color: C.fg, border: `1px solid ${C.border}`, borderRadius: 8, cursor: 'grab' }}>
+                  <span style={{ color: C.accent, display: 'inline-flex' }}><UIIcon name="bot" size={13} /></span><span style={{ fontWeight: 600, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{w}</span>
                 </button>
               ))}
               <button draggable
                 onDragStart={e => e.dataTransfer.setData('application/codey-node', JSON.stringify({ kind: 'condition' }))}
                 onClick={() => addCondition()}
-                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, width: '100%', marginTop: 9, fontSize: 11, fontWeight: 680, padding: '8px', background: C.accentDim, color: C.accent, border: `1px dashed ${C.accent}`, borderRadius: 8, cursor: 'pointer' }}><UIIcon name="sparkle" size={13} />Decision</button>
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, width: '100%', marginTop: 9, fontSize: 12, fontWeight: 600, padding: '8px', background: C.accentDim, color: C.accent, border: `1px dashed ${C.accent}`, borderRadius: 8, cursor: 'pointer' }}><UIIcon name="sparkle" size={13} />Decision</button>
             </div>
           )}
           {showRaw ? (
@@ -252,14 +252,14 @@ function FlowEditorInner({ teamName, botNames, botRoles = {}, graph, onSave, onC
             <div style={{ width: 250, borderLeft: `1px solid ${C.border}`, padding: 15, overflowY: 'auto', background: C.surface2 }}>
               {selN.data?.type === 'bot' ? (
                 <>
-                  <div style={{ fontSize: 9, fontWeight: 720, letterSpacing: 0.65, textTransform: 'uppercase', color: C.fg3, marginBottom: 9 }}>Selected step</div>
+                  <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: 0.65, textTransform: 'uppercase', color: C.fg3, marginBottom: 9 }}>Selected step</div>
                   <span style={{ width: 30, height: 30, display: 'grid', placeItems: 'center', borderRadius: 8, background: C.accentDim, color: C.accent, marginBottom: 10 }}><UIIcon name="bot" size={15} /></span>
-                  <div style={{ fontSize: 13, color: C.fg, fontWeight: 720, marginBottom: 5 }}>{selN.data.bot}</div>
-                  <div style={{ fontSize: 10, lineHeight: 1.45, color: C.fg2, marginBottom: 14, whiteSpace: 'pre-wrap' }}>
+                  <div style={{ fontSize: 13, color: C.fg, fontWeight: 600, marginBottom: 5 }}>{selN.data.bot}</div>
+                  <div style={{ fontSize: 11, lineHeight: 1.45, color: C.fg2, marginBottom: 14, whiteSpace: 'pre-wrap' }}>
                     {botRoles[selN.data.bot] || 'No description.'}
                   </div>
                   {selfLoops && (
-                    <label style={{ fontSize: 10, color: C.fg2, display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: 10, borderTop: `1px solid ${C.border}` }}>
+                    <label style={{ fontSize: 11, color: C.fg2, display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: 10, borderTop: `1px solid ${C.border}` }}>
                       Max self-loops
                       <input type="number" min={1} value={selN.data.maxCalls ?? ''} placeholder="3"
                         onChange={e => updateNodeData(selN.id, { maxCalls: e.target.value === '' ? undefined : Math.max(1, Number(e.target.value) || 1) })}
@@ -269,19 +269,19 @@ function FlowEditorInner({ teamName, botNames, botRoles = {}, graph, onSave, onC
                 </>
               ) : (
                 <>
-                  <div style={{ fontSize: 9, fontWeight: 720, letterSpacing: 0.65, textTransform: 'uppercase', color: C.fg3, marginBottom: 9 }}>Selected decision</div>
-                  <div style={{ fontSize: 11, color: C.fg2, marginBottom: 6 }}>Question</div>
+                  <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: 0.65, textTransform: 'uppercase', color: C.fg3, marginBottom: 9 }}>Selected decision</div>
+                  <div style={{ fontSize: 12, color: C.fg2, marginBottom: 6 }}>Question</div>
                   <textarea value={selN.data.condition ?? ''} placeholder='e.g. "Did the tests pass?"'
                     onChange={e => updateNodeData(selN.id, { condition: e.target.value })}
-                    style={{ width: '100%', minHeight: 82, fontSize: 11, lineHeight: 1.4, padding: 9, background: C.surface, color: C.fg, border: `1px solid ${C.border2}`, borderRadius: 8, resize: 'vertical' }} />
-                  <div style={{ fontSize: 9, lineHeight: 1.4, color: C.fg3, marginTop: 7 }}>Connect two outgoing paths, then label them yes and no.</div>
+                    style={{ width: '100%', minHeight: 82, fontSize: 12, lineHeight: 1.4, padding: 9, background: C.surface, color: C.fg, border: `1px solid ${C.border2}`, borderRadius: 8, resize: 'vertical' }} />
+                  <div style={{ fontSize: 11, lineHeight: 1.4, color: C.fg3, marginTop: 7 }}>Connect two outgoing paths, then label them yes and no.</div>
                 </>
               )}
             </div>
           )}
           {!showRaw && !selN && sel && selIsBranch && (
             <div style={{ width: 240, borderLeft: `1px solid ${C.border}`, padding: 15, background: C.surface2 }}>
-              <div style={{ fontSize: 9, fontWeight: 720, letterSpacing: 0.65, textTransform: 'uppercase', color: C.fg3, marginBottom: 10 }}>Selected branch</div>
+              <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: 0.65, textTransform: 'uppercase', color: C.fg3, marginBottom: 10 }}>Selected branch</div>
               <div style={{ display: 'flex', gap: 6 }}>
                 {(['yes', 'no'] as const).map(b => (
                   <button key={b} onClick={() => updateEdgeBranch(sel.id, b)}
@@ -291,14 +291,14 @@ function FlowEditorInner({ teamName, botNames, botRoles = {}, graph, onSave, onC
                       border: `1px solid ${sel.data?.branch === b ? C.accent : C.border}` }}>{b}</button>
                 ))}
               </div>
-              {sel.data?.branch === undefined && <div style={{ fontSize: 10, color: C.dangerFg, marginTop: 6 }}>Unlabeled — pick yes or no.</div>}
+              {sel.data?.branch === undefined && <div style={{ fontSize: 11, color: C.dangerFg, marginTop: 6 }}>Unlabeled — pick yes or no.</div>}
               <button onClick={() => reverseEdge(sel.id)} style={{ marginTop: 10, width: '100%', fontSize: 12, padding: '6px 0', borderRadius: 6, cursor: 'pointer', background: C.surface2, color: C.fg, border: `1px solid ${C.border}` }}>⇄ Reverse direction</button>
             </div>
           )}
           {!showRaw && !selN && sel && !selIsBranch && (
             <div style={{ width: 240, borderLeft: `1px solid ${C.border}`, padding: 15, background: C.surface2 }}>
-              <div style={{ fontSize: 9, fontWeight: 720, letterSpacing: 0.65, textTransform: 'uppercase', color: C.fg3, marginBottom: 10 }}>Selected connection</div>
-              <textarea value={sel.data?.condition ?? ''} onChange={e => updateEdge(sel.id, { condition: e.target.value, isDefault: false })} placeholder='e.g. "tests pass"' style={{ width: '100%', minHeight: 78, fontSize: 11, padding: 9, background: C.surface, color: C.fg, border: `1px solid ${C.border2}`, borderRadius: 8 }} />
+              <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: 0.65, textTransform: 'uppercase', color: C.fg3, marginBottom: 10 }}>Selected connection</div>
+              <textarea value={sel.data?.condition ?? ''} onChange={e => updateEdge(sel.id, { condition: e.target.value, isDefault: false })} placeholder='e.g. "tests pass"' style={{ width: '100%', minHeight: 78, fontSize: 12, padding: 9, background: C.surface, color: C.fg, border: `1px solid ${C.border2}`, borderRadius: 8 }} />
               <label style={{ fontSize: 12, display: 'block', marginTop: 8 }}>
                 <input type="checkbox" checked={!!sel.data?.isDefault} onChange={e => updateEdge(sel.id, { isDefault: e.target.checked, condition: e.target.checked ? undefined : sel.data?.condition })} /> default (else) edge
               </label>

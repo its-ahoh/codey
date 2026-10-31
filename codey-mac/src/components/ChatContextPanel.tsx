@@ -297,7 +297,7 @@ const filesStyles: Record<string, React.CSSProperties> = {
   list: { display: 'flex', flexDirection: 'column', gap: 2 },
   row: {
     display: 'flex', alignItems: 'center', gap: 4,
-    padding: '2px 0', fontSize: 11,
+    padding: '2px 0', fontSize: 12,
   },
   path: {
     flex: 1, color: C.fg2, fontFamily: 'Menlo, Monaco, "Courier New", monospace',
@@ -356,7 +356,7 @@ const attStyles: Record<string, React.CSSProperties> = {
   },
   chip: {
     padding: '4px 8px', background: C.surface3, border: `1px solid ${C.border2}`,
-    borderRadius: 6, fontSize: 11, color: C.fg2, cursor: 'pointer',
+    borderRadius: 6, fontSize: 12, color: C.fg2, cursor: 'pointer',
     maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
   },
 }
@@ -383,8 +383,8 @@ const pendStyles: Record<string, React.CSSProperties> = {
     borderRadius: 6, padding: '8px 10px',
   },
   title: { color: C.fg, fontSize: 12, fontWeight: 600, marginBottom: 4 },
-  body: { color: C.fg2, fontSize: 11, marginBottom: 6, whiteSpace: 'pre-wrap' },
-  hint: { color: C.fg3, fontSize: 10, fontStyle: 'italic' },
+  body: { color: C.fg2, fontSize: 12, marginBottom: 6, whiteSpace: 'pre-wrap' },
+  hint: { color: C.fg3, fontSize: 11, fontStyle: 'italic' },
 }
 
 type FileChange = {
@@ -1117,28 +1117,28 @@ const treeStyles: Record<string, React.CSSProperties> = {
   },
   icon: { display: 'inline-flex', alignItems: 'center', flexShrink: 0 },
   name: {
-    flex: 1, minWidth: 0, fontSize: 11.5,
+    flex: 1, minWidth: 0, fontSize: 12,
     fontFamily: 'Menlo, Monaco, "Courier New", monospace',
     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
   },
-  nameChanged: { fontWeight: 700 },
+  nameChanged: { fontWeight: 600 },
   dot: { width: 6, height: 6, borderRadius: 3, flexShrink: 0 },
   counts: {
-    flexShrink: 0, fontSize: 10.5, fontWeight: 700, fontVariantNumeric: 'tabular-nums',
+    flexShrink: 0, fontSize: 12, fontWeight: 600, fontVariantNumeric: 'tabular-nums',
     fontFamily: 'Menlo, Monaco, "Courier New", monospace',
   },
   tag: {
     flexShrink: 0, color: C.fg2, background: C.surface3, border: `1px solid ${C.border2}`,
-    borderRadius: 999, fontSize: 9, fontWeight: 600, padding: '1px 6px',
+    borderRadius: 999, fontSize: 11, fontWeight: 600, padding: '1px 6px',
     textTransform: 'uppercase', letterSpacing: 0.4,
   },
   outsideHeader: {
-    color: C.fg3, fontSize: 10, fontWeight: 650, textTransform: 'uppercase', letterSpacing: 0.5,
+    color: C.fg3, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5,
     padding: '8px 8px 2px', borderTop: `1px solid ${C.border}`, marginTop: 4,
   },
   backBtn: {
     background: C.surface2, border: `1px solid ${C.border2}`, borderRadius: 6,
-    color: C.accent, fontSize: 11, fontWeight: 650, padding: '2px 8px', cursor: 'pointer', flexShrink: 0,
+    color: C.accent, fontSize: 12, fontWeight: 600, padding: '2px 8px', cursor: 'pointer', flexShrink: 0,
   },
 }
 
@@ -1165,7 +1165,7 @@ const fcStyles: Record<string, React.CSSProperties> = {
   searchInput: {
     flex: 1, minWidth: 0,
     background: 'transparent', border: 'none',
-    color: C.fg, fontSize: 11.5, padding: '4px 7px', outline: 'none',
+    color: C.fg, fontSize: 12, padding: '4px 7px', outline: 'none',
   },
   searchFilterBtn: {
     display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
@@ -1175,7 +1175,7 @@ const fcStyles: Record<string, React.CSSProperties> = {
   },
   searchFilterBtnActive: { background: C.accentDim, borderColor: C.accent, color: C.fg },
   searchCount: {
-    color: C.fg3, fontSize: 10.5, fontVariantNumeric: 'tabular-nums',
+    color: C.fg3, fontSize: 12, fontVariantNumeric: 'tabular-nums',
     whiteSpace: 'nowrap', flexShrink: 0,
   },
   searchNavBtn: {
@@ -1185,14 +1185,14 @@ const fcStyles: Record<string, React.CSSProperties> = {
   scopeGroup: { display: 'flex', gap: 4 },
   scopeBtn: {
     background: C.surface2, border: `1px solid ${C.border2}`,
-    color: C.fg2, fontSize: 10, fontWeight: 650,
+    color: C.fg2, fontSize: 11, fontWeight: 600,
     padding: '4px 9px', borderRadius: 6, cursor: 'pointer',
     textTransform: 'uppercase', letterSpacing: 0.4,
   },
   scopeBtnActive: {
     background: C.accentDim, color: C.fg, borderColor: C.accent,
   },
-  summary: { color: C.fg2, fontSize: 10.5, fontWeight: 500, textAlign: 'right' },
+  summary: { color: C.fg2, fontSize: 12, fontWeight: 500, textAlign: 'right' },
   fileGroup: {
     marginBottom: 12, border: `1px solid ${C.border2}`,
     borderRadius: 8, overflow: 'hidden', background: C.surface2,
@@ -1212,13 +1212,13 @@ const fcStyles: Record<string, React.CSSProperties> = {
     transformOrigin: 'center', transition: 'transform 0.15s ease',
   },
   filePath: {
-    flex: 1, color: C.fg, fontSize: 11.5, fontWeight: 600,
+    flex: 1, color: C.fg, fontSize: 12, fontWeight: 600,
     fontFamily: 'Menlo, Monaco, "Courier New", monospace',
     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0,
   },
   fileCount: {
     color: C.fg2, background: C.surface2, border: `1px solid ${C.border2}`,
-    borderRadius: 999, fontSize: 9.5, fontWeight: 600, padding: '2px 6px', flexShrink: 0,
+    borderRadius: 999, fontSize: 11, fontWeight: 600, padding: '2px 6px', flexShrink: 0,
   },
   iconBtn: {
     background: 'transparent', border: 'none', color: C.fg3,
@@ -1228,12 +1228,12 @@ const fcStyles: Record<string, React.CSSProperties> = {
     marginTop: 14, padding: '10px', background: C.surface2,
     border: `1px solid ${C.border}`, borderRadius: 8,
   },
-  readHeader: { color: C.fg2, fontSize: 10, fontWeight: 650, textTransform: 'uppercase' as const, letterSpacing: 0.5, marginBottom: 6 },
+  readHeader: { color: C.fg2, fontSize: 11, fontWeight: 600, textTransform: 'uppercase' as const, letterSpacing: 0.5, marginBottom: 6 },
   changeBody: { padding: 9, background: C.bg, display: 'flex', flexDirection: 'column', gap: 7 },
-  noNetChange: { color: C.fg3, fontSize: 11, fontStyle: 'italic' },
+  noNetChange: { color: C.fg3, fontSize: 12, fontStyle: 'italic' },
   changeItem: {},
   patchPre: {
-    margin: 0, fontSize: 11.5, color: C.fg,
+    margin: 0, fontSize: 12, color: C.fg,
     fontFamily: 'Menlo, Monaco, "Courier New", monospace',
     whiteSpace: 'pre-wrap', wordBreak: 'break-word',
   },
@@ -1271,27 +1271,25 @@ const styles: Record<string, React.CSSProperties> = {
   tabs: {
     display: 'flex', gap: 4,
     padding: '8px 10px',
-    borderBottom: `1px solid ${C.border}`,
-    flexShrink: 0, background: C.surface2,
+    flexShrink: 0,
   },
   tab: {
     flex: 1, minWidth: 0, textAlign: 'center', whiteSpace: 'nowrap',
     // Clip to ellipsis when the panel is narrow so labels never overlap.
     overflow: 'hidden', textOverflow: 'ellipsis',
     background: 'transparent', border: '1px solid transparent',
-    color: C.fg3, fontSize: 11, fontWeight: 600,
-    letterSpacing: 0.4, textTransform: 'uppercase',
-    padding: '7px 5px', cursor: 'pointer', borderRadius: 7,
+    color: C.fg3, fontSize: 13,
+    padding: '5px 5px', cursor: 'pointer', borderRadius: 8,
     // Persistent gray underline under every tab (visible from first open);
     // the active tab overrides the color with the accent.
     borderBottom: '1px solid transparent', marginBottom: 0,
   },
   tabActive: {
-    color: C.fg, background: C.accentDim,
+    color: C.fg, background: C.surface3,
   },
   followPill: {
     background: C.accent, color: C.onAccent, border: 'none',
-    borderRadius: 10, fontSize: 10, padding: '2px 8px', cursor: 'pointer',
+    borderRadius: 10, fontSize: 11, padding: '2px 8px', cursor: 'pointer',
   },
   closeBtn: {
     background: 'transparent', border: 'none', color: C.fg2,
@@ -1300,13 +1298,13 @@ const styles: Record<string, React.CSSProperties> = {
   body: { flex: 1, overflowY: 'auto', padding: '14px' },
   section: { marginBottom: 14 },
   sectionTitle: {
-    color: C.fg3, fontSize: 10, fontWeight: 600, letterSpacing: 0.6,
+    color: C.fg3, fontSize: 11, fontWeight: 600, letterSpacing: 0.6,
     textTransform: 'uppercase', marginBottom: 6,
   },
   whiteboardGroup: { marginBottom: 10 },
-  whiteboardGroupTitle: { fontSize: 10, fontWeight: 700, letterSpacing: 0.35, marginBottom: 4 },
-  whiteboardEntry: { padding: '7px 8px', marginBottom: 5, borderRadius: 7, background: C.surface2, border: `1px solid ${C.border}` },
+  whiteboardGroupTitle: { fontSize: 11, fontWeight: 600, letterSpacing: 0.35, marginBottom: 4 },
+  whiteboardEntry: { padding: '7px 8px', marginBottom: 5, borderRadius: 8, background: C.surface2, border: `1px solid ${C.border}` },
   whiteboardText: { color: C.fg, fontSize: 12, lineHeight: 1.4, overflowWrap: 'anywhere' },
-  whiteboardMeta: { color: C.fg3, fontSize: 10, marginTop: 3 },
-  emptyHint: { color: C.fg3, fontSize: 11, fontStyle: 'italic', padding: '12px 0' },
+  whiteboardMeta: { color: C.fg3, fontSize: 11, marginTop: 3 },
+  emptyHint: { color: C.fg3, fontSize: 12, fontStyle: 'italic', padding: '12px 0' },
 }

@@ -127,7 +127,7 @@ const styles: Record<string, React.CSSProperties> = {
   toolButton: {
     width: 31, height: 30, display: 'grid', placeItems: 'center',
     padding: 0, color: C.fg3, background: 'transparent', border: '1px solid transparent',
-    borderRadius: 7, cursor: 'pointer',
+    borderRadius: 8, cursor: 'pointer',
   },
   toolButtonActive: { color: C.fg, background: C.accentDim },
   spacer: { flex: 1 },

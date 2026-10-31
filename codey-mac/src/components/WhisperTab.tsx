@@ -195,16 +195,16 @@ const fieldStyle: React.CSSProperties = {
 const lastFieldStyle: React.CSSProperties = { ...settingRowStyle }
 const lastSettingBlockStyle: React.CSSProperties = { paddingBottom: 0, marginBottom: 0 }
 const inputStyle: React.CSSProperties = {
-  background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 7,
+  background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 8,
   color: C.fg, fontSize: 13, padding: '6px 10px', outline: 'none', width: 180,
 }
 const selectStyle: React.CSSProperties = { ...inputStyle, cursor: 'pointer' }
 const engineColHeadStyle: React.CSSProperties = {
-  fontSize: 11, fontWeight: 600, paddingBottom: 4,
+  fontSize: 12, fontWeight: 600, paddingBottom: 4,
   borderBottom: `1px solid ${C.border}`,
 }
 const pillButton = (variant: 'primary' | 'danger' | 'ghost'): React.CSSProperties => ({
-  padding: '6px 12px', borderRadius: 7, fontSize: 12, fontWeight: 600,
+  padding: '6px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600,
   border: 'none', cursor: 'pointer',
   background: variant === 'primary' ? C.accent : variant === 'danger' ? C.red + '22' : C.surface3,
   color: variant === 'primary' ? C.onAccent : variant === 'danger' ? C.red : C.fg2,
@@ -213,15 +213,15 @@ const pillButton = (variant: 'primary' | 'danger' | 'ghost'): React.CSSPropertie
 const Section: React.FC<{ title: string; description: string; right?: React.ReactNode }> = ({ title, description, right }) => (
   <div style={sectionStyle}>
     <div>
-      <div style={{ color: C.fg, fontSize: 14, fontWeight: 680 }}>{title}</div>
-      <div style={{ color: C.fg3, fontSize: 11, marginTop: 2 }}>{description}</div>
+      <div style={{ color: C.fg, fontSize: 14, fontWeight: 600 }}>{title}</div>
+      <div style={{ color: C.fg3, fontSize: 12, marginTop: 2 }}>{description}</div>
     </div>
     {right}
   </div>
 )
 
 const Subsection: React.FC<{ title: string }> = ({ title }) => (
-  <div style={{ color: C.fg2, fontSize: 11, fontWeight: 700, letterSpacing: 0.55, textTransform: 'uppercase', padding: '16px 0 7px' }}>
+  <div style={{ color: C.fg2, fontSize: 12, fontWeight: 600, letterSpacing: 0.55, textTransform: 'uppercase', padding: '16px 0 7px' }}>
     {title}
   </div>
 )
@@ -507,7 +507,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
       <div style={{ ...settingRowStyle, alignItems: 'flex-start' }}>
         <div>
           <div style={{ color: C.fg, fontSize: 13 }}>{label}</div>
-          <div style={{ color: C.fg3, fontSize: 11, marginTop: 3 }}>{description}</div>
+          <div style={{ color: C.fg3, fontSize: 12, marginTop: 3 }}>{description}</div>
         </div>
         <select
           value={value}
@@ -543,7 +543,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
     <div style={{ padding: 20, height: '100%', overflowY: 'auto' }}>
       {error && <div style={{ background: C.red + '22', color: C.red, padding: 10, borderRadius: 8, marginBottom: 10, fontSize: 12 }}>{error}</div>}
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, color: C.fg3, fontSize: 11, lineHeight: 1.5 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, color: C.fg3, fontSize: 12, lineHeight: 1.5 }}>
         <span>The switches control global hotkeys only; both composer actions remain available. Dictation and Conversation share the recognition settings below.</span>
         {savedMsg && <span style={{ color: C.green, flexShrink: 0 }}>Saved</span>}
       </div>
@@ -563,7 +563,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
             onClick={() => updateVoice({ hotkey: 'Fn' })}
             style={{
               ...pillButton(voice.hotkey === 'Fn' ? 'primary' : 'ghost'),
-              fontSize: 11,
+              fontSize: 12,
             }}
             title="Fn key cannot be captured from the browser — bundled helper monitors it directly"
           >
@@ -594,7 +594,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
           <span style={{ color: C.fg, fontSize: 13 }}>Polish the transcript</span>
           <Toggle on={voice.polish.enabled} onChange={enabled => updatePolish({ enabled })}/>
         </div>
-        <span style={{ color: C.fg3, fontSize: 11, lineHeight: 1.5 }}>
+        <span style={{ color: C.fg3, fontSize: 12, lineHeight: 1.5 }}>
           Drops filler and repeated words and fixes grammar before the text lands. Never
           translates, summarizes, or answers what you said &mdash; a result that drifts is
           thrown away and what you actually said goes in instead. Costs a moment after you
@@ -620,7 +620,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
                 resize: 'vertical', lineHeight: 1.5,
               }}
             />
-            <span style={{ color: C.fg3, fontSize: 11, lineHeight: 1.5 }}>
+            <span style={{ color: C.fg3, fontSize: 12, lineHeight: 1.5 }}>
               Added to the built-in instructions, not a replacement for them. Asking here for
               a summary, a translation, or an answer will not work: those are thrown away by
               the same check that protects your words, whatever the instructions say.
@@ -647,7 +647,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
               onClick={() => updateVoice({ converseHotkey: 'Shift+Fn' })}
               style={{
                 ...pillButton(voice.converseHotkey === 'Shift+Fn' ? 'primary' : 'ghost'),
-                fontSize: 11,
+                fontSize: 12,
               }}
               title="Use Control + Fn; Fn combinations cannot be captured in the browser"
             >
@@ -660,7 +660,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
             />
           </div>
         </div>
-        <div style={{ color: C.fg3, fontSize: 11 }}>
+        <div style={{ color: C.fg3, fontSize: 12 }}>
           Press once to start listening and again to send.
           {voice.converseHotkey.trim().toLowerCase().endsWith('fn') && ' Fn shortcuts require Accessibility permission.'}
         </div>
@@ -678,7 +678,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
             <option value="api">OpenAI</option>
           </select>
         </div>
-        <div style={{ color: C.fg3, fontSize: 11, marginTop: 8, lineHeight: 1.5 }}>
+        <div style={{ color: C.fg3, fontSize: 12, marginTop: 8, lineHeight: 1.5 }}>
           {voice.tts.enabled
             ? 'OpenAI synthesizes replies with the selected key and voice. Failures fall back to the saved system voice.'
             : 'Uses an installed macOS voice offline with no API key.'}
@@ -688,7 +688,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
           <div style={{ ...settingRowStyle, padding: '16px 0 0' }}>
               <div>
                 <div style={{ color: C.fg, fontSize: 13 }}>System voice</div>
-                <div style={{ color: C.fg3, fontSize: 11, marginTop: 3 }}>Installed macOS voices; Automatic follows the reply language.</div>
+                <div style={{ color: C.fg3, fontSize: 12, marginTop: 3 }}>Installed macOS voices; Automatic follows the reply language.</div>
               </div>
               <select
                 value={voice.tts.systemVoice}
@@ -755,7 +755,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
         <div style={settingRowStyle}>
           <div>
             <div style={{ color: C.fg, fontSize: 13 }}>Spoken reply length</div>
-            <div style={{ color: C.fg3, fontSize: 11, marginTop: 3 }}>
+            <div style={{ color: C.fg3, fontSize: 12, marginTop: 3 }}>
               Choose how much Codey reads aloud. Say &ldquo;more detail&rdquo; to hear the full response.
             </div>
           </div>
@@ -816,11 +816,11 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
             <div style={{ display: 'flex', gap: 6 }}>
               <button
                 onClick={() => updateVoice({ provider: 'local' })}
-                style={{ ...pillButton(voice.provider === 'local' ? 'primary' : 'ghost'), fontSize: 11 }}
+                style={{ ...pillButton(voice.provider === 'local' ? 'primary' : 'ghost'), fontSize: 12 }}
               >Whisper</button>
               <button
                 onClick={() => updateVoice({ provider: 'localStreaming' })}
-                style={{ ...pillButton(isStreaming ? 'primary' : 'ghost'), fontSize: 11 }}
+                style={{ ...pillButton(isStreaming ? 'primary' : 'ghost'), fontSize: 12 }}
               >Streaming</button>
             </div>
           </div>
@@ -831,16 +831,16 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
             <div style={{ display: 'flex', gap: 6 }}>
               <button
                 onClick={() => updateVoice({ provider: 'api' })}
-                style={{ ...pillButton(voice.provider === 'api' ? 'primary' : 'ghost'), fontSize: 11 }}
+                style={{ ...pillButton(voice.provider === 'api' ? 'primary' : 'ghost'), fontSize: 12 }}
               >Standard</button>
               <button
                 onClick={() => updateVoice({ provider: 'realtime' })}
-                style={{ ...pillButton(voice.provider === 'realtime' ? 'primary' : 'ghost'), fontSize: 11 }}
+                style={{ ...pillButton(voice.provider === 'realtime' ? 'primary' : 'ghost'), fontSize: 12 }}
               >Real-time</button>
             </div>
           </div>
         )}
-        <div style={{ color: C.fg3, fontSize: 11, lineHeight: 1.5, marginTop: 2 }}>
+        <div style={{ color: C.fg3, fontSize: 12, lineHeight: 1.5, marginTop: 2 }}>
           {ENGINE_GUIDE[voice.provider].summary}
         </div>
         {isOnDevice && (
@@ -851,7 +851,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
                 highlighted rather than being the only one rendered. */}
             <div style={{
               display: 'grid', gridTemplateColumns: '78px 1fr 1fr', gap: '0 10px',
-              fontSize: 11, lineHeight: 1.45,
+              fontSize: 12, lineHeight: 1.45,
             }}>
               <div />
               <div style={{ ...engineColHeadStyle, color: !isStreaming ? C.fg : C.fg3 }}>Whisper</div>
@@ -864,7 +864,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
                 </React.Fragment>
               ))}
             </div>
-            <div style={{ color: C.fg3, fontSize: 11, lineHeight: 1.5, marginTop: 8 }}>
+            <div style={{ color: C.fg3, fontSize: 12, lineHeight: 1.5, marginTop: 8 }}>
               {ENGINE_SHARED_NOTES.map((n, i) => (
                 <div key={i} style={{ paddingLeft: 10, textIndent: -10 }}>· {n}</div>
               ))}
@@ -973,7 +973,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
                 <style>{`@keyframes warmSlide { 0% { margin-left: -40%; } 100% { margin-left: 100%; } }`}</style>
               </div>
             )}
-            <div style={{ color: statusColor, fontSize: 11, lineHeight: 1.5, marginTop: 6 }}>
+            <div style={{ color: statusColor, fontSize: 12, lineHeight: 1.5, marginTop: 6 }}>
               {statusLine}
             </div>
           </div>
@@ -1002,7 +1002,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
           placeholder="https://api.openai.com/v1"
           style={{ ...inputStyle, width: '100%' }}
         />
-        <span style={{ color: C.fg3, fontSize: 11 }}>
+        <span style={{ color: C.fg3, fontSize: 12 }}>
           POSTs to <code>{voice.apiUrl || '&lt;base&gt;'}/audio/transcriptions</code>. Works with OpenAI, Groq, or any OpenAI-compatible server.
         </span>
       </div>
@@ -1030,7 +1030,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
           placeholder="wss://api.openai.com/v1/realtime?intent=transcription"
           style={{ ...inputStyle, width: '100%' }}
         />
-        <span style={{ color: C.fg3, fontSize: 11 }}>
+        <span style={{ color: C.fg3, fontSize: 12 }}>
           Connects via WebSocket to an OpenAI Realtime transcription endpoint. Requires <code>?intent=transcription</code>.
         </span>
       </div>
@@ -1045,7 +1045,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
             style={inputStyle}
           />
         </div>
-        <div style={{ color: C.fg3, fontSize: 11, lineHeight: 1.5, padding: '8px 12px', background: C.surface3, borderRadius: 7 }}>
+        <div style={{ color: C.fg3, fontSize: 12, lineHeight: 1.5, padding: '8px 12px', background: C.surface3, borderRadius: 8 }}>
           <strong style={{ color: C.fg2 }}>ℹ️ Cost notice:</strong> Realtime API is billed per minute of audio. See <a href="https://openai.com/pricing" target="_blank" rel="noopener noreferrer" style={{ color: C.accent }}>OpenAI pricing</a> for current rates. If the WebSocket connection fails mid-utterance, the helper falls back to batch API for that utterance.
         </div>
       </div>
@@ -1121,7 +1121,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
         const i = expandedVocabRow
         return (
           <div style={{
-            marginTop: 8, padding: 12, borderRadius: 9,
+            marginTop: 8, padding: 12, borderRadius: 8,
             background: C.surface3, border: `1px solid ${C.border2}`,
           }}>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -1147,7 +1147,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
         )
       })()}
 
-      <div style={{ ...lastSettingBlockStyle, paddingTop: 12, color: C.fg3, fontSize: 11 }}>
+      <div style={{ ...lastSettingBlockStyle, paddingTop: 12, color: C.fg3, fontSize: 12 }}>
         {vocabDraft.length === 0 ? '' : `${vocabDraft.length} word${vocabDraft.length === 1 ? '' : 's'}`}
       </div>
         </div>

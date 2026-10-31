@@ -32,8 +32,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
   button: {
     background: 'transparent', border: `1px solid ${C.dangerBorder}`,
-    color: C.dangerFg, borderRadius: 7, padding: '5px 10px',
+    color: C.dangerFg, borderRadius: 8, padding: '5px 10px',
     fontSize: 12, cursor: 'pointer', flexShrink: 0,
   },
-  warningIcon: { width: 17, height: 17, borderRadius: 6, display: 'grid', placeItems: 'center', flexShrink: 0, background: C.dangerFg, color: C.dangerBg, fontSize: 11, fontWeight: 800 },
+  warningIcon: { width: 17, height: 17, borderRadius: 6, display: 'grid', placeItems: 'center', flexShrink: 0, background: C.dangerFg, color: C.dangerBg, fontSize: 12, fontWeight: 600 },
 }

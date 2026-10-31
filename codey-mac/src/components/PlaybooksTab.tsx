@@ -72,8 +72,8 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
   const renderCurrentVersion = () => detail && (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-        <span style={{ color: C.fg, fontSize: 13, fontWeight: 650 }}>Current version</span>
-        <span style={{ color: C.accent, background: C.accentDim, borderRadius: 5, padding: '2px 6px', fontSize: 11, fontWeight: 650 }}>
+        <span style={{ color: C.fg, fontSize: 13, fontWeight: 600 }}>Current version</span>
+        <span style={{ color: C.accent, background: C.accentDim, borderRadius: 6, padding: '2px 6px', fontSize: 12, fontWeight: 600 }}>
           v{detail.version}
         </span>
       </div>
@@ -108,7 +108,7 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
 
   const renderTimeline = () => (
     <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 14, paddingTop: 12 }}>
-      <div style={{ color: C.fg, fontSize: 13, fontWeight: 650, marginBottom: 10 }}>Version history</div>
+      <div style={{ color: C.fg, fontSize: 13, fontWeight: 600, marginBottom: 10 }}>Version history</div>
       {trail.length === 0 ? (
         <div style={{ color: C.fg3, fontSize: 12 }}>No recorded evolution events yet.</div>
       ) : trail.map((row, i) => (
@@ -124,9 +124,9 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
             >
               {openSteps === i ? '▾' : '▸'} {row.label}
             </button>
-            <span style={{ color: C.fg3, fontSize: 11 }}>{row.when}</span>
+            <span style={{ color: C.fg3, fontSize: 12 }}>{row.when}</span>
             {row.trigger && (
-              <span style={{ color: C.fg3, fontSize: 11, fontStyle: 'italic', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <span style={{ color: C.fg3, fontSize: 12, fontStyle: 'italic', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 ← “{row.trigger}”
               </span>
             )}
@@ -134,7 +134,7 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
           {openSteps === i && (
             <pre style={{
               margin: '6px 0 0 14px', padding: '8px 10px', borderRadius: 6,
-              background: C.surface3, color: C.fg2, fontSize: 11, lineHeight: '1.5',
+              background: C.surface3, color: C.fg2, fontSize: 12, lineHeight: '1.5',
               fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
             }}>
               {row.steps}
@@ -175,7 +175,7 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
             </span>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 7, minHeight: 24 }}>
-                <span style={{ color: C.fg, fontSize: 15, fontWeight: 700, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <span style={{ color: C.fg, fontSize: 15, fontWeight: 600, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {s.name}
                 </span>
                 <span style={versionBadgeStyle}>v{s.version}</span>
@@ -252,7 +252,7 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
         <div style={{ color: C.fg3, fontSize: 13, textAlign: 'center', paddingTop: 20 }}>Loading…</div>
       ) : playbooks.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '36px 20px', color: C.fg3, fontSize: 13 }}>
-          <div style={{ width: 52, height: 52, margin: '0 auto 12px', borderRadius: 16, display: 'grid', placeItems: 'center', background: C.accentDim, color: C.accent }}><UIIcon name="archive" size={24} /></div>
+          <div style={{ width: 52, height: 52, margin: '0 auto 12px', borderRadius: 14, display: 'grid', placeItems: 'center', background: C.accentDim, color: C.accent }}><UIIcon name="archive" size={24} /></div>
           <div style={{ fontWeight: 500, color: C.fg2, marginBottom: 4 }}>No playbooks yet</div>
           <div style={{ fontSize: 12 }}>Playbooks crystallize from your repeated work patterns.</div>
         </div>
@@ -272,7 +272,7 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
 
 const DetailSection: React.FC<{ label: string; content: string; code?: boolean }> = ({ label, content, code = false }) => (
   <div>
-    <div style={{ color: C.fg3, fontSize: 11, fontWeight: 650, letterSpacing: 0.2, marginBottom: 5 }}>{label}</div>
+    <div style={{ color: C.fg3, fontSize: 12, fontWeight: 600, letterSpacing: 0.2, marginBottom: 5 }}>{label}</div>
     <div style={{
       margin: 0,
       padding: code ? '10px 12px' : 0,
@@ -305,8 +305,8 @@ const playbookIconStyle: React.CSSProperties = {
 }
 
 const versionBadgeStyle: React.CSSProperties = {
-  color: C.fg3, background: C.surface3, borderRadius: 5,
-  padding: '2px 6px', fontSize: 10, fontWeight: 700, flexShrink: 0,
+  color: C.fg3, background: C.surface3, borderRadius: 6,
+  padding: '2px 6px', fontSize: 11, fontWeight: 600, flexShrink: 0,
 }
 
 const neutralBadgeStyle: React.CSSProperties = {
@@ -321,7 +321,7 @@ const accentBadgeStyle: React.CSSProperties = {
 const metaChipStyle: React.CSSProperties = {
   display: 'inline-flex', alignItems: 'center', gap: 5, minWidth: 0,
   padding: '4px 7px', borderRadius: 6, background: C.surface2,
-  color: C.fg3, fontSize: 11, lineHeight: 1, whiteSpace: 'nowrap',
+  color: C.fg3, fontSize: 12, lineHeight: 1, whiteSpace: 'nowrap',
 }
 
 const expandedContentStyle: React.CSSProperties = {

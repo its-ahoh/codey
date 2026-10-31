@@ -260,7 +260,7 @@ const FallbackWarning: React.FC<{
 const styles: Record<string, React.CSSProperties> = {
   row: {
     display: 'flex', alignItems: 'center',
-    gap: 10, fontSize: 11, color: C.fg3, marginBottom: 4,
+    gap: 10, fontSize: 12, color: C.fg3, marginBottom: 4,
   },
   left: { display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 },
   // Baseline, not center: the bot's bold name and the monospace identity
@@ -308,17 +308,17 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'grid', gridTemplateColumns: 'max-content minmax(0, 1fr)',
     columnGap: 8, rowGap: 4, alignItems: 'baseline', marginBottom: 8,
   },
-  fallbackLabel: { color: C.fg3, fontSize: 10.5 },
+  fallbackLabel: { color: C.fg3, fontSize: 12 },
   fallbackIdentity: {
-    color: C.fg, fontFamily: 'SF Mono, Menlo, monospace', fontSize: 10.5,
+    color: C.fg, fontFamily: 'SF Mono, Menlo, monospace', fontSize: 12,
     overflowWrap: 'anywhere', userSelect: 'text', cursor: 'text',
   },
   fallbackErrorLabel: {
-    color: C.fg3, fontSize: 10.5, marginBottom: 3,
+    color: C.fg3, fontSize: 12, marginBottom: 3,
     borderTop: `1px solid ${C.border2}`, paddingTop: 8,
   },
   fallbackReason: {
-    fontFamily: 'SF Mono, Menlo, monospace', fontSize: 10.5, lineHeight: 1.45,
+    fontFamily: 'SF Mono, Menlo, monospace', fontSize: 12, lineHeight: 1.45,
     color: C.fg2, whiteSpace: 'pre-wrap',
     maxHeight: 200, overflowY: 'auto', overflowWrap: 'anywhere',
     userSelect: 'text', cursor: 'text',
@@ -330,8 +330,8 @@ const styles: Record<string, React.CSSProperties> = {
   fallbackAction: {
     appearance: 'none', background: 'transparent', color: C.fg2,
     border: `1px solid ${C.border2}`, borderRadius: 6,
-    padding: '3px 7px', fontSize: 10.5, lineHeight: 1.2,
+    padding: '3px 7px', fontSize: 12, lineHeight: 1.2,
     display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer',
   },
-  rule: { borderTop: `1px solid ${C.border2}`, marginBottom: 8 },
+  rule: { marginBottom: 6 },
 }

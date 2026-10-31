@@ -37,12 +37,12 @@ export const TaskHud: React.FC<Props> = ({ brief, loading, onAnswer }) => {
   const { head, rest } = splitTimeline(brief.timeline)
   const shownRest = timelineExpanded ? rest : rest.slice(0, TIMELINE_COLLAPSED)
 
-  const label = (t: string) => <div style={{ fontSize: 11, color: C.fg3, marginBottom: 8, fontWeight: 500 }}>{t}</div>
+  const label = (t: string) => <div style={{ fontSize: 12, color: C.fg3, marginBottom: 8, fontWeight: 500 }}>{t}</div>
   const sect: React.CSSProperties = { padding: '14px 16px', borderTop: `1px solid ${C.border}` }
 
   return (
     <div style={{ fontSize: 13, color: C.fg }}>
-      {loading && <div style={{ padding: '6px 16px', fontSize: 11, color: C.fg3 }}>Updating…</div>}
+      {loading && <div style={{ padding: '6px 16px', fontSize: 12, color: C.fg3 }}>Updating…</div>}
 
       {/* Goal (no title — the goal text is the panel's heading) */}
       <div style={{ ...sect, borderTop: 'none', paddingBottom: 12 }}>
@@ -68,10 +68,10 @@ export const TaskHud: React.FC<Props> = ({ brief, loading, onAnswer }) => {
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontWeight: 600, lineHeight: 1.45, ...clamp(3) }}>{brief.nextAction.text}</div>
-              {brief.nextAction.detail && <div style={{ fontSize: 11.5, color: C.fg2, marginTop: 5, lineHeight: 1.45, ...clamp(2) }}>{brief.nextAction.detail}</div>}
+              {brief.nextAction.detail && <div style={{ fontSize: 12, color: C.fg2, marginTop: 5, lineHeight: 1.45, ...clamp(2) }}>{brief.nextAction.detail}</div>}
             </div>
             <button onClick={() => onAnswer(brief.nextAction?.messageId)}
-              style={{ background: C.accent, color: C.onAccent, border: 'none', borderRadius: 7,
+              style={{ background: C.accent, color: C.onAccent, border: 'none', borderRadius: 8,
                 padding: '8px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap', flex: 'none' }}>
               Answer
             </button>
@@ -86,33 +86,33 @@ export const TaskHud: React.FC<Props> = ({ brief, loading, onAnswer }) => {
           <div style={{ background: C.surface2, border: `1px solid ${C.border2}`, borderRadius: 8, padding: '12px 13px', marginBottom: 12 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
               <b style={{ fontSize: 13 }}>Latest</b>
-              {head.when && <span style={{ fontSize: 10, color: C.accent }}>{formatAgo(head.when)}</span>}
+              {head.when && <span style={{ fontSize: 11, color: C.accent }}>{formatAgo(head.when)}</span>}
             </div>
             {head.detail?.length ? (
               <ul style={{ listStyle: 'none', margin: '9px 0 0', padding: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {head.detail.map((d, i) => <li key={i} style={{ fontSize: 12.5, color: C.fg2, lineHeight: 1.45, ...clamp(3) }}>· {d}</li>)}
+                {head.detail.map((d, i) => <li key={i} style={{ fontSize: 12, color: C.fg2, lineHeight: 1.45, ...clamp(3) }}>· {d}</li>)}
               </ul>
-            ) : <div style={{ fontSize: 12.5, color: C.fg2, marginTop: 6, lineHeight: 1.45, ...clamp(3) }}>{head.text}</div>}
+            ) : <div style={{ fontSize: 12, color: C.fg2, marginTop: 6, lineHeight: 1.45, ...clamp(3) }}>{head.text}</div>}
           </div>
         )}
         {shownRest.map((e, i) => (
-          <div key={i} style={{ display: 'flex', gap: 9, padding: '6px 0', fontSize: 12.5, lineHeight: 1.5 }}>
+          <div key={i} style={{ display: 'flex', gap: 9, padding: '6px 0', fontSize: 12, lineHeight: 1.5 }}>
             <span style={{ flex: 'none', width: 7, height: 7, borderRadius: '50%', marginTop: 6,
               background: e.kind === 'dropped' ? C.fg3 : e.kind === 'decision' ? C.accent : C.green }} />
             <div style={{ flex: 1 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
                 <span style={{ flex: 1, minWidth: 0, textDecoration: e.kind === 'dropped' ? 'line-through' : 'none',
                   color: e.kind === 'dropped' ? C.fg2 : C.fg, ...clamp(2) }}>{e.text}</span>
-                {e.when && <span style={{ color: C.fg3, fontSize: 10, whiteSpace: 'nowrap', flex: 'none' }}>{formatAgo(e.when)}</span>}
+                {e.when && <span style={{ color: C.fg3, fontSize: 11, whiteSpace: 'nowrap', flex: 'none' }}>{formatAgo(e.when)}</span>}
               </div>
-              {e.why && <div style={{ color: C.fg3, fontSize: 11.5, marginTop: 2, ...clamp(1) }}>{e.why}</div>}
+              {e.why && <div style={{ color: C.fg3, fontSize: 12, marginTop: 2, ...clamp(1) }}>{e.why}</div>}
             </div>
           </div>
         ))}
         {rest.length > TIMELINE_COLLAPSED && (
           <button
             onClick={() => setTimelineExpanded(v => !v)}
-            style={{ background: 'none', border: 'none', color: C.fg3, fontSize: 11, cursor: 'pointer',
+            style={{ background: 'none', border: 'none', color: C.fg3, fontSize: 12, cursor: 'pointer',
               padding: '4px 0', marginTop: 2 }}
           >{timelineExpanded ? 'Show less' : `Show all (${rest.length})`}</button>
         )}

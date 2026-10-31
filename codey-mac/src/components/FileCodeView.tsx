@@ -46,7 +46,7 @@ export const FileCodeView: React.FC<{ content: string; filePath: string }> = ({ 
 
 const styles: Record<string, React.CSSProperties> = {
   wrap: {
-    fontFamily: 'Menlo, Monaco, "Courier New", monospace', fontSize: 11.5, lineHeight: 1.55,
+    fontFamily: 'Menlo, Monaco, "Courier New", monospace', fontSize: 12, lineHeight: 1.55,
     borderRadius: 6, overflowX: 'auto', border: `1px solid ${C.border2}`, background: C.surface,
   },
   inner: { display: 'flex', flexDirection: 'column', width: 'max-content', minWidth: '100%' },
@@ -61,8 +61,8 @@ const styles: Record<string, React.CSSProperties> = {
     border: 'none', borderTop: `1px solid ${C.border}`,
     background: C.surface2, color: C.accent, cursor: 'pointer',
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    fontSize: 10.5, fontWeight: 600, textAlign: 'center', whiteSpace: 'nowrap',
+    fontSize: 12, fontWeight: 600, textAlign: 'center', whiteSpace: 'nowrap',
   },
   moreLabel: { position: 'sticky', left: 0, zIndex: 2, display: 'inline-block' },
-  empty: { color: C.fg3, fontSize: 11, fontStyle: 'italic', padding: '8px 10px' },
+  empty: { color: C.fg3, fontSize: 12, fontStyle: 'italic', padding: '8px 10px' },
 }
