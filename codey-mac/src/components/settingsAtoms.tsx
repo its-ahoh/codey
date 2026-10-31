@@ -3,12 +3,12 @@ import { C } from '../theme'
 
 export const sectionStyle: React.CSSProperties = {
   display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
-  color: C.fg, fontSize: 13, fontWeight: 700,
+  color: C.fg, fontSize: 13, fontWeight: 600,
   marginTop: 22, marginBottom: 10, paddingBottom: 8,
   borderBottom: `1px solid ${C.border}`,
 }
 export const pageStyle: React.CSSProperties = { padding: 20, height: '100%', overflowY: 'auto' }
-export const pageIntroStyle: React.CSSProperties = { color: C.fg3, fontSize: 11, lineHeight: 1.5, marginBottom: 14 }
+export const pageIntroStyle: React.CSSProperties = { color: C.fg3, fontSize: 12, lineHeight: 1.5, marginBottom: 14 }
 export const fieldStyle: React.CSSProperties = {
   display: 'flex', alignItems: 'center', justifyContent: 'space-between',
   padding: '13px 14px', border: `1px solid ${C.border}`,
@@ -21,7 +21,7 @@ export const inputStyle: React.CSSProperties = {
 export const selectStyle: React.CSSProperties = { ...inputStyle, cursor: 'pointer' }
 
 export const pillButton = (variant: 'primary' | 'danger' | 'ghost'): React.CSSProperties => ({
-  padding: '8px 12px', borderRadius: 8, fontSize: 12, fontWeight: 650,
+  padding: '8px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600,
   border: variant === 'ghost' ? `1px solid ${C.border2}` : '1px solid transparent', cursor: 'pointer',
   background: variant === 'primary' ? C.accent : variant === 'danger' ? C.red + '22' : C.surface3,
   color: variant === 'primary' ? C.onAccent : variant === 'danger' ? C.red : C.fg2,
@@ -31,7 +31,7 @@ export const Section: React.FC<{ title: string; description?: string; right?: Re
   <div style={{ ...sectionStyle, marginTop: first ? 0 : sectionStyle.marginTop }}>
     <div>
       <div>{title}</div>
-      {description && <div style={{ color: C.fg3, fontSize: 11, fontWeight: 400, marginTop: 2 }}>{description}</div>}
+      {description && <div style={{ color: C.fg3, fontSize: 12, fontWeight: 400, marginTop: 2 }}>{description}</div>}
     </div>
     {right}
   </div>

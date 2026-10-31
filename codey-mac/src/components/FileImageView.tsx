@@ -33,5 +33,5 @@ const styles: Record<string, React.CSSProperties> = {
     backgroundPosition: '0 0, 0 10px, 10px -10px, -10px 0px',
   },
   image: { display: 'block', maxWidth: '100%', maxHeight: '70vh', objectFit: 'contain' },
-  note: { color: C.fg3, fontSize: 11, fontStyle: 'italic', padding: '12px 10px' },
+  note: { color: C.fg3, fontSize: 12, fontStyle: 'italic', padding: '12px 10px' },
 }

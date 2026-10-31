@@ -134,8 +134,8 @@ export const AppearanceTab: React.FC = () => {
                 onClick={() => setMode(opt.value)}
                 style={{
                   ...styles.segBtn,
-                  background: active ? C.accent : 'transparent',
-                  color: active ? C.onAccent : C.fg2,
+                  background: active ? C.surface3 : 'transparent',
+                  color: active ? C.fg : C.fg2,
                 }}
               >
                 {opt.label}
@@ -348,7 +348,7 @@ const styles: Record<string, React.CSSProperties> = {
   // groups hide overflow for their rounded corners, their final rows were
   // clipped underneath the following section.
   wrap:  { display: 'block' },
-  row:   { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, padding: '13px 14px', borderRadius: 11, background: C.surface, border: `1px solid ${C.border}` },
+  row:   { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, padding: '13px 14px', borderRadius: 10, background: C.surface, border: `1px solid ${C.border}` },
   label: { fontSize: 13, color: C.fg, width: 80 },
   // Toggle/hotkey settings stacked with dividers so each row's label and
   // control read as a distinct line instead of a packed block.
@@ -362,7 +362,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex', alignItems: 'center', gap: 16,
     padding: '16px 16px', borderTop: `1px solid ${C.border}`,
   },
-  settingDesc: { fontSize: 11, color: C.fg3, fontWeight: 400, marginTop: 3, lineHeight: 1.4 },
+  settingDesc: { fontSize: 12, color: C.fg3, fontWeight: 400, marginTop: 3, lineHeight: 1.4 },
   segmented: {
     display: 'inline-flex',
     background: C.surface2,
@@ -400,14 +400,14 @@ const styles: Record<string, React.CSSProperties> = {
   },
   palettePreview: {
     width: 48, height: 36, flexShrink: 0, position: 'relative', overflow: 'hidden',
-    border: '1px solid', borderRadius: 7,
+    border: '1px solid', borderRadius: 8,
   },
   previewSidebar: { position: 'absolute', inset: '0 auto 0 0', width: 14 },
   previewLine: { position: 'absolute', left: 20, top: 10, width: 18, height: 3, borderRadius: 2, opacity: 0.72 },
   previewAccent: { position: 'absolute', left: 20, top: 19, width: 21, height: 8, borderRadius: 4 },
   paletteCopy: { minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 },
-  paletteName: { fontSize: 12, fontWeight: 650 },
-  paletteDescription: { color: C.fg3, fontSize: 10, lineHeight: 1.35 },
-  check: { marginLeft: 'auto', color: C.accent, fontSize: 12, fontWeight: 800 },
+  paletteName: { fontSize: 12, fontWeight: 600 },
+  paletteDescription: { color: C.fg3, fontSize: 11, lineHeight: 1.35 },
+  check: { marginLeft: 'auto', color: C.accent, fontSize: 12, fontWeight: 600 },
   value: { fontSize: 13, color: C.fg2, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' },
 }

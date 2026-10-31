@@ -29,6 +29,9 @@ import {
   paletteThemeCss,
 } from './theme'
 
+// Clears the traffic lights and the floating sidebar toggle when the sidebar is hidden.
+const COLLAPSED_HEADER_INSET = 118
+
 const clampLeftPanelWidth = (width: number) => {
   const max = Math.max(180, Math.min(480, window.innerWidth - 320))
   return Math.min(max, Math.max(180, width))
@@ -67,7 +70,7 @@ const Shell: React.FC = () => {
   )
   const [leftPanelWidth, setLeftPanelWidth] = useState<number>(() => {
     const stored = Number(localStorage.getItem('codey.leftPanelWidth'))
-    return clampLeftPanelWidth(Number.isFinite(stored) ? stored : 280)
+    return clampLeftPanelWidth(stored > 0 ? stored : 280)
   })
 
   const activeChat = state.selectedChatId ? state.chats[state.selectedChatId] : null
@@ -260,13 +263,6 @@ const Shell: React.FC = () => {
     setAutomationsOpen(true)
   }
 
-  const openBrowser = () => {
-    setSettingsOpen(false)
-    setAutomationsOpen(false)
-    setToolsOpen(false)
-    selectRightTool('browser')
-  }
-
   useEffect(() => {
     applyTheme(getStoredThemeMode())
     applyPalette(getStoredPalette())
@@ -281,51 +277,41 @@ const Shell: React.FC = () => {
     return () => mql.removeEventListener('change', onChange)
   }, [])
 
+  const sidebarToggle = (
+    <button
+      type="button"
+      onClick={toggleLeftPanel}
+      title={leftCollapsed ? 'Show sidebar (⌘\\)' : 'Hide sidebar (⌘\\)'}
+      aria-label={leftCollapsed ? 'Show sidebar' : 'Hide sidebar'}
+      style={styles.sidebarToggle}
+    >
+      <UIIcon name="panel" size={16} />
+    </button>
+  )
+
   const sidebarActions = {
     onOpenSettings: openSettings,
     onOpenAutomations: openAutomations,
-    onOpenBrowser: openBrowser,
+    modeTabs: (
+      <div role="group" aria-label="Navigation mode" style={styles.modeTabs}>
+        {(['bots', 'workspaces'] as const).map(mode => (
+          <button key={mode} type="button" aria-pressed={sidebarMode === mode} onClick={() => switchSidebarMode(mode)}
+            style={{ ...styles.modeTab, color: sidebarMode === mode ? C.fg : C.fg3, fontWeight: sidebarMode === mode ? 600 : 400 }}>
+            {mode === 'bots' ? 'Bots' : 'Workspaces'}
+          </button>
+        ))}
+      </div>
+    ),
     onOpenTools: () => { setRightTool(null); setToolsOpen(true) },
     automationsUnseenCount: unseenRunKeys.size,
   }
 
   return (
     <div style={styles.root}>
-      <div style={styles.titleBar}>
-          <div style={styles.titleBarDragArea}>
-            <div style={{ width: 76 }} />
-          <button
-            type="button"
-            onClick={toggleLeftPanel}
-            title={leftCollapsed ? 'Show sidebar (⌘\\)' : 'Hide sidebar (⌘\\)'}
-            aria-label={leftCollapsed ? 'Show sidebar' : 'Hide sidebar'}
-            style={styles.sidebarToggle}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="3" y="3" width="18" height="18" rx="2" />
-              <line x1="9" y1="3" x2="9" y2="21" />
-              {!leftCollapsed && <rect x="3" y="3" width="6" height="18" rx="0" fill="currentColor" stroke="none" />}
-            </svg>
-          </button>
-          <div style={styles.titleCenter}>
-            {(rightTool || activeChat) && (
-              <span style={styles.appName} title={activeChat?.title ?? (rightTool === 'browser' ? 'Browser' : 'Terminal')}>
-                {activeChat?.title ?? (rightTool === 'browser' ? 'Browser' : 'Terminal')}
-              </span>
-            )}
-          </div>
-        </div>
-        <NotificationCenter />
-      </div>
       <div style={styles.body}>
         {!leftCollapsed && (
           <div style={{ ...styles.sidebarShell, width: leftPanelWidth }}>
-            <div role="group" aria-label="Navigation mode" style={{ display: 'flex', gap: 3, padding: 5, margin: '10px 12px 4px', background: C.surface2, borderRadius: 10 }}>
-              {(['bots', 'workspaces'] as const).map(mode => <button key={mode} type="button" aria-pressed={sidebarMode === mode}
-                onClick={() => switchSidebarMode(mode)} style={{ flex: 1, display: 'flex', gap: 6, alignItems: 'center', justifyContent: 'center', padding: '7px 5px', border: `1px solid ${sidebarMode === mode ? C.accent : 'transparent'}`, borderRadius: 7, cursor: 'pointer', fontSize: 12, fontWeight: sidebarMode === mode ? 750 : 500, background: sidebarMode === mode ? C.accent : 'transparent', color: sidebarMode === mode ? C.onAccent : C.fg2 }}>
-                <UIIcon name={mode === 'bots' ? 'bot' : 'workspace'} size={14} />{mode === 'bots' ? 'Bots' : 'Workspaces'}
-              </button>)}
-            </div>
+            <div style={styles.sidebarStrip}>{sidebarToggle}</div>
             <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
             {sidebarMode === 'bots' ? <BotListPanel
               newBotRequested={newBotRequested} onNewBotHandled={() => setNewBotRequested(false)}
@@ -353,6 +339,7 @@ const Shell: React.FC = () => {
             />
           </div>
         )}
+        {leftCollapsed && <div style={styles.floatingToggle}>{sidebarToggle}</div>}
         <div style={styles.content}>
           <CoreOfflineBanner state={coreState} onRelaunch={relaunchApp} />
           {activeChat && (
@@ -362,6 +349,7 @@ const Shell: React.FC = () => {
             >
               <ChatTab
                 chatId={activeChat.id}
+                headerInset={leftCollapsed ? COLLAPSED_HEADER_INSET : undefined}
                 isGatewayRunning={isRunning}
                 coreFailed={coreState.phase === 'failed'}
                 rightPanelMode={rightTool}
@@ -374,6 +362,7 @@ const Shell: React.FC = () => {
               />
             </div>
           )}
+          {!activeChat && <div style={styles.emptyStrip}><NotificationCenter /></div>}
           {!activeChat && (
             <div style={styles.emptyMain}>
               <div style={styles.emptyCard}>
@@ -426,6 +415,10 @@ const Shell: React.FC = () => {
   input, select, textarea { color: ${C.fg}; }
   button { transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, transform 0.15s ease; }
   button:not(:disabled):active { transform: scale(0.97); }
+  .sidebar-row:hover:not([data-active]):not(:disabled) { background: ${C.surface2} !important; }
+  .sidebar-group-add, .bot-row-action { opacity: 0; }
+  .sidebar-group:hover .sidebar-group-add, .sidebar-group-add:focus-visible,
+  .bot-row:hover .bot-row-action, .bot-row-action:focus-visible, .bot-row-action[aria-pressed="true"] { opacity: 1; }
   button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid ${C.accent}; outline-offset: 2px; }
   @keyframes codey-pulse {
     0%, 100% { opacity: 1; transform: scale(1); }
@@ -450,26 +443,28 @@ const App: React.FC = () => (
 
 const styles: Record<string, React.CSSProperties> = {
   root: { display: 'flex', flexDirection: 'column', height: '100vh', background: C.bg, color: C.fg },
-  titleBar: {
-    height: 44, background: C.surface, borderBottom: `1px solid ${C.border}`,
-    display: 'flex', alignItems: 'center', padding: '0 14px 0 0', flexShrink: 0,
+  sidebarStrip: {
+    height: 44, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', padding: '0 8px',
     // @ts-ignore Electron
     WebkitAppRegion: 'drag',
   },
-  titleBarDragArea: { flex: 1, display: 'flex', alignItems: 'center', height: '100%' },
-  titleCenter: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, paddingLeft: 4, paddingRight: 4, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' },
-  productName: { color: C.fg, fontSize: 13, fontWeight: 700, letterSpacing: '-0.01em' },
-  titleDivider: { color: C.fg3, fontSize: 13 },
-  appName: { color: C.fg2, fontSize: 13, fontWeight: 500 },
   sidebarToggle: {
-    background: 'transparent', border: 'none', cursor: 'pointer',
-    color: C.fg3, padding: 4, marginLeft: 4, borderRadius: 4,
+    width: 28, height: 28, background: 'transparent', border: 'none', cursor: 'pointer',
+    color: C.fg3, padding: 0, borderRadius: 8,
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     // @ts-ignore Electron
     WebkitAppRegion: 'no-drag',
   },
+  floatingToggle: { position: 'absolute', top: 8, left: 82, zIndex: 20 },
+  modeTabs: { display: 'flex', gap: 14, padding: '0 8px' },
+  modeTab: { padding: 0, border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 12 },
+  emptyStrip: {
+    height: 44, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', padding: '0 8px',
+    // @ts-ignore Electron
+    WebkitAppRegion: 'drag',
+  },
   body: { flex: 1, display: 'flex', overflow: 'hidden', position: 'relative' },
-  sidebarShell: { position: 'relative', height: '100%', flexShrink: 0, display: 'flex', flexDirection: 'column', background: C.sidebarBg },
+  sidebarShell: { position: 'relative', height: '100%', flexShrink: 0, display: 'flex', flexDirection: 'column', background: C.sidebarBg, borderRight: `1px solid ${C.border}` },
   sidebarResizeHandle: {
     position: 'absolute', top: 0, right: -7, width: 14, height: '100%', zIndex: 5,
     cursor: 'col-resize',
@@ -477,8 +472,8 @@ const styles: Record<string, React.CSSProperties> = {
   content: { flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' },
   emptyMain: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.fg3, padding: 24 },
   emptyCard: { display: 'flex', flexDirection: 'column', alignItems: 'center', maxWidth: 270, textAlign: 'center' },
-  emptyIcon: { width: 62, height: 62, borderRadius: 20, display: 'grid', placeItems: 'center', color: C.accent, background: C.accentDim, border: `1px solid ${C.accent}` },
-  emptyTitle: { color: C.fg, fontSize: 16, fontWeight: 700, marginTop: 14 },
+  emptyIcon: { width: 62, height: 62, borderRadius: 20, display: 'grid', placeItems: 'center', color: C.fg3, background: C.surface2 },
+  emptyTitle: { color: C.fg, fontSize: 15, fontWeight: 600, marginTop: 14 },
   emptyCopy: { color: C.fg2, fontSize: 12, lineHeight: 1.5, marginTop: 6 },
 }
 

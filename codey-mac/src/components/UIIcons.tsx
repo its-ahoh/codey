@@ -93,7 +93,7 @@ export const UIIcon: React.FC<Props> = ({ name, size = 16, strokeWidth = 1.8, fi
 }
 
 export const CodeyMark: React.FC<{ size?: number }> = ({ size = 28 }) => (
-  <div style={{ width: size, height: size, borderRadius: Math.round(size * .3), background: 'var(--accent)', color: 'var(--onAccent)', display: 'grid', placeItems: 'center', boxShadow: '0 5px 14px var(--accentDim)', flexShrink: 0 }}>
+  <div style={{ width: size, height: size, borderRadius: Math.round(size * .3), background: 'var(--accent)', color: 'var(--onAccent)', display: 'grid', placeItems: 'center', boxShadow: 'none', flexShrink: 0 }}>
     <UIIcon name="code" size={Math.round(size * .65)} strokeWidth={2.15} />
   </div>
 )

@@ -276,14 +276,14 @@ export const QuickQuestionView: React.FC<Props> = ({ chatId, inputRef }) => {
 
 const qqStyles: Record<string, React.CSSProperties> = {
   root: { display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 },
-  hint: { color: C.fg3, fontSize: 10, fontStyle: 'italic', padding: '0 0 8px' },
+  hint: { color: C.fg3, fontSize: 11, fontStyle: 'italic', padding: '0 0 8px' },
   list: { flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0 },
-  empty: { color: C.fg3, fontSize: 11, fontStyle: 'italic', padding: '12px 0' },
+  empty: { color: C.fg3, fontSize: 12, fontStyle: 'italic', padding: '12px 0' },
   userMsg: { alignSelf: 'flex-end', maxWidth: '90%', background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 8, padding: '6px 8px' },
   userText: { color: C.fg, fontSize: 12, whiteSpace: 'pre-wrap' },
   asstMsg: { alignSelf: 'flex-start', maxWidth: '100%', fontSize: 12, color: C.fg2, minWidth: 0 },
   errText: { color: C.dangerFg ?? '#e66', fontSize: 12, whiteSpace: 'pre-wrap' },
-  activity: { fontSize: 11, padding: '2px 0' },
+  activity: { fontSize: 12, padding: '2px 0' },
 
   msgAttRow: { display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 },
   msgAttImg: { width: 64, height: 64, objectFit: 'cover', borderRadius: 6, border: `1px solid ${C.border2}`, cursor: 'pointer' },
@@ -292,9 +292,9 @@ const qqStyles: Record<string, React.CSSProperties> = {
     background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 6,
     padding: '3px 8px', maxWidth: 180,
   },
-  msgAttName: { color: C.fg2, fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  msgAttName: { color: C.fg2, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
 
-  uploadError: { color: C.dangerFg ?? '#e66', fontSize: 11, padding: '4px 2px' },
+  uploadError: { color: C.dangerFg ?? '#e66', fontSize: 12, padding: '4px 2px' },
 
   pendingRow: { display: 'flex', flexWrap: 'wrap', gap: 8, padding: '8px 8px 4px' },
   pendingImageWrap: { position: 'relative', width: 48, height: 48, borderRadius: 8, overflow: 'hidden', border: `1px solid ${C.border2}` },
@@ -308,7 +308,7 @@ const qqStyles: Record<string, React.CSSProperties> = {
     display: 'flex', alignItems: 'center', gap: 6, background: C.surface2,
     border: `1px solid ${C.border2}`, borderRadius: 8, padding: '4px 4px 4px 8px', height: 48, boxSizing: 'border-box',
   },
-  pendingFileName: { color: C.fg, fontSize: 11, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 110 },
+  pendingFileName: { color: C.fg, fontSize: 12, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 110 },
   pendingFileRemoveBtn: {
     width: 20, height: 20, borderRadius: 10, border: 'none', background: 'transparent', color: C.fg3,
     cursor: 'pointer', fontSize: 15, lineHeight: 1, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -323,7 +323,7 @@ const qqStyles: Record<string, React.CSSProperties> = {
   composerDragging: { borderColor: C.accent },
   composerRow: { display: 'flex', gap: 6, alignItems: 'flex-end', padding: 6 },
   attachBtn: {
-    width: 36, height: 36, borderRadius: 9, border: 'none', background: 'transparent',
+    width: 36, height: 36, borderRadius: 8, border: 'none', background: 'transparent',
     display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, cursor: 'pointer',
     transition: 'background 0.15s',
   },
@@ -334,7 +334,7 @@ const qqStyles: Record<string, React.CSSProperties> = {
     boxSizing: 'border-box',
   },
   sendBtn: {
-    width: 36, height: 36, borderRadius: 9, border: 'none',
+    width: 36, height: 36, borderRadius: 8, border: 'none',
     display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'background 0.15s',
   },
 }

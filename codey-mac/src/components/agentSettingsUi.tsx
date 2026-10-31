@@ -32,7 +32,7 @@ export const rowStyle: React.CSSProperties = {
 }
 export const lastRowStyle: React.CSSProperties = { ...rowStyle, borderBottom: 'none' }
 export const rowLabelStyle: React.CSSProperties = { color: C.fg, fontSize: 13 }
-export const rowHintStyle: React.CSSProperties = { color: C.fg3, fontSize: 11, lineHeight: 1.45, marginTop: 3 }
+export const rowHintStyle: React.CSSProperties = { color: C.fg3, fontSize: 12, lineHeight: 1.45, marginTop: 3 }
 
 /** Every action on this page is a square icon button; only the tint changes. */
 export const iconButtonStyle = (opts: { accent?: boolean; danger?: boolean; disabled?: boolean } = {}): React.CSSProperties => ({
@@ -54,7 +54,7 @@ export const AgentInstallChip: React.FC<{
   onInstall: () => void
 }> = ({ status, checking, onInstall }) => {
   if (!status) {
-    return <span style={{ color: C.fg3, fontSize: 11 }}>{checking ? 'checking…' : ''}</span>
+    return <span style={{ color: C.fg3, fontSize: 12 }}>{checking ? 'checking…' : ''}</span>
   }
   if (status.installed) {
     return (
@@ -62,7 +62,7 @@ export const AgentInstallChip: React.FC<{
         title={status.path ? `Found at ${status.path}` : undefined}
         style={{
           display: 'inline-flex', alignItems: 'center', gap: 6, height: 28, boxSizing: 'border-box',
-          color: C.green, fontSize: 11, fontWeight: 600, padding: '0 10px', borderRadius: 8,
+          color: C.green, fontSize: 12, fontWeight: 600, padding: '0 10px', borderRadius: 8,
           background: 'rgba(52,199,89,0.12)', border: '1px solid rgba(52,199,89,0.35)',
         }}
       >
@@ -77,7 +77,7 @@ export const AgentInstallChip: React.FC<{
       title="Open the install instructions in your browser"
       style={{
         display: 'inline-flex', alignItems: 'center', gap: 6, height: 28, boxSizing: 'border-box',
-        color: C.warningFg, fontSize: 11, fontWeight: 600, padding: '0 10px', borderRadius: 8,
+        color: C.warningFg, fontSize: 12, fontWeight: 600, padding: '0 10px', borderRadius: 8,
         background: 'rgba(255,159,10,0.12)', border: '1px solid rgba(255,159,10,0.35)',
         cursor: 'pointer',
       }}

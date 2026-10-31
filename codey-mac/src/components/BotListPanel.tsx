@@ -1,7 +1,7 @@
 import { TeamAvatar } from './TeamAvatar'
 import { BotCreationGuide } from './BotCreationGuide'
 import { BotMessageSearchCache, botConversationList, readBotPins } from './botConversationList'
-import { SidebarNavigation, SidebarFooter, SidebarAction, type SidebarCommonProps } from './SidebarNavigation'
+import { SidebarFooter, SidebarAction, SidebarSearch, type SidebarCommonProps } from './SidebarNavigation'
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { apiService, type BotDto } from '../services/api'
 import { useChats } from '../hooks/useChats'
@@ -91,11 +91,11 @@ export function BotListPanel(props: Props) {
       })
     } catch (err) { setError((err as Error).message) }
   }
-  const textButton = { background: 'transparent', color: C.fg2, border: 'none', borderRadius: 7, cursor: 'pointer', padding: '7px 9px', fontSize: 12 } as const
-  const field = { width: '100%', background: C.bg, color: C.fg, border: `1px solid ${C.border}`, borderRadius: 8, padding: 9, fontFamily: 'inherit', fontSize: 12 } as const
-  return <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, padding: 8, gap: 8, background: C.sidebarBg }}>
-    <SidebarNavigation {...props} />
-    <input type="search" aria-label="Search chats and messages" placeholder="Search chats and messages" value={search} onChange={e => setSearch(e.target.value)} onCompositionStart={() => setComposing(true)} onCompositionEnd={() => setComposing(false)} style={field} />
+  const textButton = { background: 'transparent', color: C.fg2, border: 'none', borderRadius: 8, cursor: 'pointer', padding: '7px 9px', fontSize: 12 } as const
+  return <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, padding: '0 8px 8px', gap: 1 }}>
+    <SidebarAction icon="add" hint="⌘N" disabled={busy} onClick={() => setForm(form === 'bot' ? null : 'bot')}>New Bot</SidebarAction>
+    <SidebarSearch aria-label="Search chats and messages" placeholder="Search" title="Search chats and messages" value={search} onChange={e => setSearch(e.target.value)} onCompositionStart={() => setComposing(true)} onCompositionEnd={() => setComposing(false)} />
+    <div style={{ padding: '10px 0 6px', flexShrink: 0 }}>{props.modeTabs}</div>
     {error && !form && <div role="alert" style={{ color: C.red, fontSize: 12 }}>{error}</div>}
     <div style={{ overflowY: 'auto', minHeight: 0, flex: 1 }}>
       {form && <div style={{ padding: 10, marginBottom: 14, border: `1px solid ${C.border}`, borderRadius: 10 }}>
@@ -114,24 +114,23 @@ export function BotListPanel(props: Props) {
           : unread && (unread === 'error' || last?.botStatus === 'failed') ? 'failed'
           : awaiting ? 'reply' : unread ? 'done' : 'idle'
         const pinned = pins.includes(key)
-        return <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 2, background: active ? C.accentDim : 'transparent', borderRadius: 10, marginBottom: 3 }}>
-          <button onClick={() => chat ? selectChat(chat.id) : bot && void open(bot.name)} disabled={!chat && opening !== null} aria-pressed={active} style={{ ...textButton, flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', textAlign: 'left', gap: 10, padding: '10px 7px' }}>
-            {chat?.botChat?.kind === 'group' ? <TeamAvatar name={title} members={chat.botChat.members} bots={bots} size={34} state={avatarState} /> : <BotAvatar name={title} config={bot?.config.avatar} size={34} state={avatarState} />}
+        const status = messageMatch?.snippet ?? (opening === bot?.name ? 'Opening…' : queued ? 'Queued' : running ? 'Working' : awaiting ? 'Waiting for you' : null)
+        return <div key={key} className="sidebar-row bot-row" data-active={active || undefined} style={{ display: 'flex', alignItems: 'center', gap: 2, background: active ? C.surface3 : 'transparent', borderRadius: 8, marginBottom: 1 }}>
+          <button onClick={() => chat ? selectChat(chat.id) : bot && void open(bot.name)} disabled={!chat && opening !== null} aria-pressed={active} style={{ ...textButton, flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', textAlign: 'left', gap: 9, padding: '6px 8px', fontSize: 13 }}>
+            {chat?.botChat?.kind === 'group' ? <TeamAvatar name={title} members={chat.botChat.members} bots={bots} size={26} state={avatarState} /> : <BotAvatar name={title} config={bot?.config.avatar} size={26} state={avatarState} />}
             <span style={{ minWidth: 0, flex: 1 }}>
-              <strong style={{ display: 'block', color: C.fg, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}{chat && state.unreadChats[chat.id] ? ' ·' : ''}</strong>
-              <span title={messageMatch?.snippet} style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11, color: C.fg3, marginTop: 4 }}>{messageMatch?.snippet ?? (opening === bot?.name ? 'Opening…' : queued ? 'Queued' : running ? 'Working' : awaiting ? 'Waiting for you' : last?.content || bot?.personality.role.split('\n')[0] || chat?.botChat?.members.join(', ') || 'Ready to chat')}</span>
-              {messageMatch && <span style={{ display: 'block', fontSize: 10, color: C.accent, marginTop: 3 }}>{messageMatch.count} matching {messageMatch.count === 1 ? 'message' : 'messages'}</span>}
+              <span style={{ display: 'block', color: active ? C.fg : C.fg2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}{chat && state.unreadChats[chat.id] ? ' ·' : ''}</span>
+              {status && <span title={messageMatch?.snippet} style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, color: C.fg3, marginTop: 1 }}>{status}</span>}
+              {messageMatch && <span style={{ display: 'block', fontSize: 11, color: C.accent, marginTop: 3 }}>{messageMatch.count} matching {messageMatch.count === 1 ? 'message' : 'messages'}</span>}
             </span>
           </button>
-          <button style={{ ...textButton, color: pinned ? C.accent : C.fg3 }} aria-label={`${pinned ? 'Unpin' : 'Pin'} ${title}`} title={pinned ? 'Unpin chat' : 'Pin chat'} aria-pressed={pinned} onClick={() => void togglePin(key, chat ? undefined : bot?.name)}>
+          <button className="bot-row-action" style={{ ...textButton, color: pinned ? C.fg2 : C.fg3 }} aria-label={`${pinned ? 'Unpin' : 'Pin'} ${title}`} title={pinned ? 'Unpin chat' : 'Pin chat'} aria-pressed={pinned} onClick={() => void togglePin(key, chat ? undefined : bot?.name)}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill={pinned ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.7"><path d="M8 3h8l-1 7 4 4v2H5v-2l4-4z" /><path d="M12 16v6" /></svg>
           </button>
-          {bot && <button style={textButton} aria-label={`Edit ${bot.config.displayName || bot.name}`} title="Bot profile" onClick={() => props.onOpenSettings(`bot:${bot.name}`)}><UIIcon name="settings" size={13} /></button>}
+          {bot && <button className="bot-row-action" style={textButton} aria-label={`Edit ${bot.config.displayName || bot.name}`} title="Bot profile" onClick={() => props.onOpenSettings(`bot:${bot.name}`)}><UIIcon name="settings" size={13} /></button>}
         </div>
       })}
     </div>
-    <SidebarFooter onOpenSettings={props.onOpenSettings}>
-      <SidebarAction icon="bot" disabled={busy} onClick={() => setForm(form === 'bot' ? null : 'bot')}>Add Bot</SidebarAction>
-    </SidebarFooter>
+    <SidebarFooter onOpenSettings={props.onOpenSettings} onOpenAutomations={props.onOpenAutomations} onOpenTools={props.onOpenTools} automationsUnseenCount={props.automationsUnseenCount} />
   </div>
 }

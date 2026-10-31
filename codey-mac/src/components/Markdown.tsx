@@ -46,7 +46,7 @@ const METRICS = {
     tableGap: 10,
     li: 2,
     hr: '10px 0',
-    h1: { fontSize: 17, margin: '8px 0 6px' },
+    h1: { fontSize: 18, margin: '8px 0 6px' },
     h2: { fontSize: 15, margin: '8px 0 6px' },
     h3: { fontSize: 14, margin: '8px 0 4px' },
     h4: { fontSize: 13, margin: '6px 0 4px' },
@@ -62,7 +62,7 @@ const METRICS = {
     li: 5,
     hr: '18px 0',
     h1: { fontSize: 20, margin: '22px 0 8px' },
-    h2: { fontSize: 17, margin: '20px 0 8px' },
+    h2: { fontSize: 18, margin: '20px 0 8px' },
     h3: { fontSize: 15, margin: '18px 0 6px' },
     h4: { fontSize: 14, margin: '16px 0 6px' },
   },
@@ -121,7 +121,7 @@ const CodeBlock: React.FC<{
           justifyContent: 'space-between',
           alignItems: 'center',
           padding: '4px 10px',
-          fontSize: 11,
+          fontSize: 12,
           color: metaColor,
           fontFamily: MONO,
           borderBottom: `1px solid ${borderColor}`,
@@ -138,7 +138,7 @@ const CodeBlock: React.FC<{
             color: copied ? C.green : metaColor,
             borderRadius: 4,
             padding: '1px 6px',
-            fontSize: 11,
+            fontSize: 12,
             fontWeight: copied ? 700 : 400,
             cursor: 'pointer',
             fontFamily: 'inherit',
@@ -245,17 +245,17 @@ const MarkdownInner: React.FC<MarkdownProps> = ({ children, variant = 'assistant
   // Inside a user bubble the fill is the accent, which is dark in some
   // palette/mode combinations and bright in others — a fixed black or white
   // overlay leaves the code text washed out in one of them. Tint towards
-  // `onAccent` instead: the panel always moves away from the bubble fill and
+  // `onUser` instead: the panel always moves away from the bubble fill and
   // towards the bubble's own text color, so contrast holds either way.
-  const onUserFill = (pct: number) => `color-mix(in srgb, ${C.onAccent} ${pct}%, ${C.userBg})`
+  const onUserFill = (pct: number) => `color-mix(in srgb, ${C.onUser} ${pct}%, ${C.userBg})`
   const inlineCodeBg = onUser ? onUserFill(16) : C.inlineCodeBg
-  const inlineCodeFg = onUser ? C.onAccent : C.inlineCodeFg
+  const inlineCodeFg = onUser ? C.onUser : C.inlineCodeFg
   const codeBlockBg = onUser ? onUserFill(12) : C.codeBg
   const codeBlockBorder = onUser ? onUserFill(30) : C.border2
   const codeBlockHeaderBg = onUser ? onUserFill(20) : 'rgba(0,0,0,0.08)'
   const codeBlockMeta = onUser ? onUserFill(72) : C.fg2
-  const codeBlockFg = onUser ? C.onAccent : C.codeFg
-  const linkColor = onUser ? C.onAccent : C.accent
+  const codeBlockFg = onUser ? C.onUser : C.codeFg
+  const linkColor = onUser ? C.onUser : C.accent
   const quoteBorder = onUser ? 'rgba(255,255,255,0.35)' : C.border2
   const quoteFg = onUser ? 'rgba(255,255,255,0.85)' : C.fg2
   const ruleColor = onUser ? 'rgba(255,255,255,0.2)' : C.border2
@@ -315,13 +315,13 @@ const MarkdownInner: React.FC<MarkdownProps> = ({ children, variant = 'assistant
             }
             return <span>{alt ? `[${alt}]` : ''}</span>
           },
-          strong: ({ children }) => <strong style={{ fontWeight: 700 }}>{children}</strong>,
+          strong: ({ children }) => <strong style={{ fontWeight: 600 }}>{children}</strong>,
           em: ({ children }) => <em style={{ fontStyle: 'italic' }}>{children}</em>,
           del: ({ children }) => <del style={{ opacity: 0.6 }}>{children}</del>,
-          h1: ({ children }) => <h1 style={{ fontSize: M.h1.fontSize, fontWeight: 700, margin: M.h1.margin }}>{children}</h1>,
-          h2: ({ children }) => <h2 style={{ fontSize: M.h2.fontSize, fontWeight: 700, margin: M.h2.margin }}>{children}</h2>,
-          h3: ({ children }) => <h3 style={{ fontSize: M.h3.fontSize, fontWeight: 700, margin: M.h3.margin }}>{children}</h3>,
-          h4: ({ children }) => <h4 style={{ fontSize: M.h4.fontSize, fontWeight: 700, margin: M.h4.margin }}>{children}</h4>,
+          h1: ({ children }) => <h1 style={{ fontSize: M.h1.fontSize, fontWeight: 600, margin: M.h1.margin }}>{children}</h1>,
+          h2: ({ children }) => <h2 style={{ fontSize: M.h2.fontSize, fontWeight: 600, margin: M.h2.margin }}>{children}</h2>,
+          h3: ({ children }) => <h3 style={{ fontSize: M.h3.fontSize, fontWeight: 600, margin: M.h3.margin }}>{children}</h3>,
+          h4: ({ children }) => <h4 style={{ fontSize: M.h4.fontSize, fontWeight: 600, margin: M.h4.margin }}>{children}</h4>,
           ul: ({ children }) => <ul style={{ margin: `0 0 ${M.blockGap}px 0`, paddingLeft: 20 }}>{children}</ul>,
           ol: ({ children }) => <ol style={{ margin: `0 0 ${M.blockGap}px 0`, paddingLeft: 20 }}>{children}</ol>,
           li: ({ children }) => <li style={{ marginBottom: M.li }}>{children}</li>,

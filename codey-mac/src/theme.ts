@@ -23,7 +23,8 @@ export interface Palette {
   red: string
   yellow: string
   userBg: string
-  onAccent: string  // readable text/icon color on top of accent / userBg fills
+  onAccent: string  // readable text/icon color on top of accent fills
+  onUser: string    // readable text on the neutral userBg fill
   aiBg: string
   scrollbar: string
   // danger / error surfaces (used by error toasts in many components)
@@ -60,15 +61,15 @@ export const classicDark: Palette = {
   border2:   '#343e4d',
   fg:        '#edf1f7',
   fg2:       '#aab4c2',
-  fg3:       '#737f90',
+  fg3:       '#8d95a1',
   accent:    '#74a7ff',
   accentDim: '#74a7ff20',
   green:     '#48c78e',
   purple:    '#b18cff',
   red:       '#ff7168',
   yellow:    '#e8bd61',
-  userBg:    '#74a7ff',
-  onAccent:  '#0a1626',
+  userBg:    '#242b36',
+  onAccent:  '#0a1626', onUser: '#edf1f7',
   aiBg:      '#171c24',
   scrollbar: '#374250',
   dangerBg:      '#351b1d',
@@ -95,15 +96,15 @@ export const classicLight: Palette = {
   border2:   '#cdd4dd',
   fg:        '#18202b',
   fg2:       '#546171',
-  fg3:       '#7d8997',
+  fg3:       '#606a77',
   accent:    '#3377d5',
   accentDim: '#3377d51a',
   green:     '#17865b',
   purple:    '#7557b7',
   red:       '#d84942',
   yellow:    '#a66f08',
-  userBg:    '#3377d5',
-  onAccent:  '#ffffff',
+  userBg:    '#e9edf2',
+  onAccent:  '#ffffff', onUser: '#18202b',
   aiBg:      '#ffffff',
   scrollbar: '#c5ccd5',
   dangerBg:      '#fbe9e8',
@@ -131,15 +132,15 @@ export const terminalDark: Palette = {
   border2:   '#3A362D',
   fg:        '#F4EFE5',
   fg2:       '#B6AE9E',
-  fg3:       '#837B6C',
+  fg3:       '#968e7e',
   accent:    '#2BE69B',
   accentDim: '#2BE69B22',
   green:     '#2BE69B',
   purple:    '#A371F7',
   red:       '#FF6B5E',
   yellow:    '#F5C451',
-  userBg:    '#2BE69B',
-  onAccent:  '#0A1A12',
+  userBg:    '#2B2820',
+  onAccent:  '#0A1A12', onUser: '#F4EFE5',
   aiBg:      '#1E1C17',
   scrollbar: '#3A362D',
   dangerBg:      '#3A1A16',
@@ -166,15 +167,15 @@ export const terminalLight: Palette = {
   border2:   '#D8CFBC',
   fg:        '#1A1712',
   fg2:       '#5B554A',
-  fg3:       '#8C8475',
+  fg3:       '#645d50',
   accent:    '#0C9E70',
   accentDim: '#0C9E7022',
   green:     '#0C9E70',
   purple:    '#8250DF',
   red:       '#DC4438',
   yellow:    '#B8841C',
-  userBg:    '#067A53',
-  onAccent:  '#FFFFFF',
+  userBg:    '#E2DAC8',
+  onAccent:  '#FFFFFF', onUser: '#1A1712',
   aiBg:      '#FFFFFF',
   scrollbar: '#D8CFBC',
   dangerBg:      '#FBE4E0',
@@ -195,9 +196,9 @@ export const terminalLight: Palette = {
 // ---- Ocean: deep navy surfaces with a crisp cyan signal color ----
 export const oceanDark: Palette = {
   bg: '#071219', surface: '#0c1a23', surface2: '#10232e', surface3: '#18303d',
-  border: '#19303c', border2: '#274756', fg: '#e8f4f7', fg2: '#9db9c2', fg3: '#668894',
+  border: '#19303c', border2: '#274756', fg: '#e8f4f7', fg2: '#9db9c2', fg3: '#7b9ca8',
   accent: '#4bc7e5', accentDim: '#4bc7e520', green: '#54d6a0', purple: '#a99af2', red: '#ff716f', yellow: '#e8c66a',
-  userBg: '#4bc7e5', onAccent: '#041b22', aiBg: '#0e202a', scrollbar: '#28505e',
+  userBg: '#18303d', onAccent: '#041b22', onUser: '#e8f4f7', aiBg: '#0e202a', scrollbar: '#28505e',
   dangerBg: '#351c20', dangerBorder: '#71333b', dangerFg: '#ff9692',
   codeBg: '#050d12', codeFg: '#d7e8ec', inlineCodeBg: '#142b36', inlineCodeFg: '#74d9ef', logBg: '#040b0f', logFg: '#57d9aa',
   warningBg: '#342c19', warningFg: '#ebcb79', sidebarBg: 'rgba(9, 25, 34, 0.84)', sidebarBorder: 'rgba(39, 71, 86, 0.64)',
@@ -205,9 +206,9 @@ export const oceanDark: Palette = {
 
 export const oceanLight: Palette = {
   bg: '#f1f8fa', surface: '#ffffff', surface2: '#f4fafb', surface3: '#e3f0f3',
-  border: '#d7e8ec', border2: '#bfd8de', fg: '#10272f', fg2: '#486873', fg3: '#78949d',
+  border: '#d7e8ec', border2: '#bfd8de', fg: '#10272f', fg2: '#486873', fg3: '#56717a',
   accent: '#087f9f', accentDim: '#087f9f18', green: '#16805a', purple: '#6658b1', red: '#cb4545', yellow: '#9a6b0d',
-  userBg: '#087f9f', onAccent: '#ffffff', aiBg: '#ffffff', scrollbar: '#b9d2d8',
+  userBg: '#e3f0f3', onAccent: '#ffffff', onUser: '#10272f', aiBg: '#ffffff', scrollbar: '#b9d2d8',
   dangerBg: '#fbe8e8', dangerBorder: '#efc0c0', dangerFg: '#a93434',
   codeBg: '#e8f2f4', codeFg: '#17323a', inlineCodeBg: '#deedf1', inlineCodeFg: '#076d88', logBg: '#eaf3f1', logFg: '#126b4d',
   warningBg: '#f7efd9', warningFg: '#7c5912', sidebarBg: 'rgba(247, 252, 253, 0.84)', sidebarBorder: 'rgba(191, 216, 222, 0.78)',
@@ -216,9 +217,9 @@ export const oceanLight: Palette = {
 // ---- Dusk: muted plum neutrals with a soft violet accent ----
 export const duskDark: Palette = {
   bg: '#15121b', surface: '#1c1824', surface2: '#241e2d', surface3: '#30273b',
-  border: '#30283a', border2: '#453951', fg: '#f1ebf5', fg2: '#b8a9c0', fg3: '#85748f',
+  border: '#30283a', border2: '#453951', fg: '#f1ebf5', fg2: '#b8a9c0', fg3: '#9a89a4',
   accent: '#c29af4', accentDim: '#c29af420', green: '#68ce9b', purple: '#c29af4', red: '#f27683', yellow: '#ddb96b',
-  userBg: '#c29af4', onAccent: '#21132c', aiBg: '#211b2a', scrollbar: '#493b55',
+  userBg: '#30273b', onAccent: '#21132c', onUser: '#f1ebf5', aiBg: '#211b2a', scrollbar: '#493b55',
   dangerBg: '#391d26', dangerBorder: '#6e3344', dangerFg: '#fa98a3',
   codeBg: '#100d14', codeFg: '#e8dfee', inlineCodeBg: '#2b2334', inlineCodeFg: '#d5b5fa', logBg: '#0d0a11', logFg: '#79d8a9',
   warningBg: '#382d1e', warningFg: '#e6c47b', sidebarBg: 'rgba(28, 24, 36, 0.84)', sidebarBorder: 'rgba(69, 57, 81, 0.64)',
@@ -226,9 +227,9 @@ export const duskDark: Palette = {
 
 export const duskLight: Palette = {
   bg: '#f8f4fa', surface: '#ffffff', surface2: '#fbf8fc', surface3: '#eee6f2',
-  border: '#e8dfec', border2: '#d7c9dd', fg: '#2b2031', fg2: '#67566f', fg3: '#94839c',
+  border: '#e8dfec', border2: '#d7c9dd', fg: '#2b2031', fg2: '#67566f', fg3: '#75647d',
   accent: '#7651aa', accentDim: '#7651aa18', green: '#287d58', purple: '#7651aa', red: '#bf4655', yellow: '#966711',
-  userBg: '#7651aa', onAccent: '#ffffff', aiBg: '#ffffff', scrollbar: '#d1c3d7',
+  userBg: '#eee6f2', onAccent: '#ffffff', onUser: '#2b2031', aiBg: '#ffffff', scrollbar: '#d1c3d7',
   dangerBg: '#fae9ed', dangerBorder: '#edc2cb', dangerFg: '#9f3544',
   codeBg: '#f0eaf3', codeFg: '#33253a', inlineCodeBg: '#ece3f0', inlineCodeFg: '#684396', logBg: '#f1ecf2', logFg: '#236d4e',
   warningBg: '#f8efd9', warningFg: '#7b5613', sidebarBg: 'rgba(255, 252, 255, 0.84)', sidebarBorder: 'rgba(215, 201, 221, 0.8)',
@@ -237,9 +238,9 @@ export const duskLight: Palette = {
 // ---- Ember: charcoal and clay with a restrained copper accent ----
 export const emberDark: Palette = {
   bg: '#171311', surface: '#201a17', surface2: '#29211d', surface3: '#342923',
-  border: '#352a24', border2: '#4a3a31', fg: '#f4ece6', fg2: '#c0ada1', fg3: '#8b766a',
+  border: '#352a24', border2: '#4a3a31', fg: '#f4ece6', fg2: '#c0ada1', fg3: '#a08b7f',
   accent: '#f08a5d', accentDim: '#f08a5d20', green: '#79c88d', purple: '#b99ae8', red: '#f06f68', yellow: '#e6b85d',
-  userBg: '#f08a5d', onAccent: '#2a1007', aiBg: '#251e1a', scrollbar: '#4d3c33',
+  userBg: '#342923', onAccent: '#2a1007', onUser: '#f4ece6', aiBg: '#251e1a', scrollbar: '#4d3c33',
   dangerBg: '#3b1d1c', dangerBorder: '#743530', dangerFg: '#fa958d',
   codeBg: '#100d0b', codeFg: '#eadfd8', inlineCodeBg: '#30251f', inlineCodeFg: '#f4a47e', logBg: '#0d0a09', logFg: '#82d296',
   warningBg: '#3a2b18', warningFg: '#e9bd6c', sidebarBg: 'rgba(32, 26, 23, 0.84)', sidebarBorder: 'rgba(74, 58, 49, 0.66)',
@@ -247,9 +248,9 @@ export const emberDark: Palette = {
 
 export const emberLight: Palette = {
   bg: '#faf5f1', surface: '#ffffff', surface2: '#fcf8f5', surface3: '#f0e5de',
-  border: '#eadfd8', border2: '#dac9bf', fg: '#30221c', fg2: '#6e594e', fg3: '#9a8478',
+  border: '#eadfd8', border2: '#dac9bf', fg: '#30221c', fg2: '#6e594e', fg3: '#7a6559',
   accent: '#b94f29', accentDim: '#b94f2918', green: '#2c7d4d', purple: '#7559a5', red: '#bd443e', yellow: '#936510',
-  userBg: '#b94f29', onAccent: '#ffffff', aiBg: '#ffffff', scrollbar: '#d5c3b9',
+  userBg: '#f0e5de', onAccent: '#ffffff', onUser: '#30221c', aiBg: '#ffffff', scrollbar: '#d5c3b9',
   dangerBg: '#fbe8e6', dangerBorder: '#efc1bc', dangerFg: '#a13731',
   codeBg: '#f1e9e4', codeFg: '#362720', inlineCodeBg: '#eee2db', inlineCodeFg: '#9b3f20', logBg: '#f1ece8', logFg: '#276b43',
   warningBg: '#f8edd8', warningFg: '#7d5711', sidebarBg: 'rgba(255, 252, 249, 0.84)', sidebarBorder: 'rgba(218, 201, 191, 0.8)',

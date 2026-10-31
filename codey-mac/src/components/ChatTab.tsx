@@ -1,6 +1,7 @@
 import { TeamAvatar } from './TeamAvatar'
 import { BotInteractionCard } from './BotInteractionCard'
 import { ChatHeaderActions } from './ChatHeaderActions'
+import { NotificationCenter } from './NotificationCenter'
 import { BotMembers } from './BotMembers'
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -89,6 +90,8 @@ interface Props {
   browserLoginWait?: BrowserLoginWaitEvent | null
   onConfirmBrowserLogin?: (event: BrowserLoginWaitEvent) => void
   onDismissBrowserLogin?: () => void
+  /** Left padding that clears the traffic lights when the sidebar is hidden. */
+  headerInset?: number
 }
 
 const SendIcon: React.FC<{ color: string }> = ({ color }) => (
@@ -194,12 +197,6 @@ const VoiceElapsed: React.FC<{ since: number }> = ({ since }) => {
   return <span style={styles.voiceStatusText}>{mm}:{ss}</span>
 }
 
-const PaperclipIcon: React.FC<{ color: string }> = ({ color }) => (
-  <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
-    <path d="M21.44 11.05L12.25 20.24a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 11-2.83-2.83l8.49-8.48" />
-  </svg>
-)
-
 const UploadCloudIcon: React.FC<{ color: string; size?: number }> = ({ color, size = 32 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
     <path d="M16 16l-4-4-4 4" />
@@ -293,7 +290,7 @@ const userFoldStyles: Record<string, React.CSSProperties> = {
   lessRow: { display: 'flex', justifyContent: 'center', marginTop: 6 },
   btn: {
     pointerEvents: 'auto', background: 'rgba(255,255,255,0.18)', border: 'none',
-    color: C.onAccent, fontSize: 11, fontWeight: 600,
+    color: C.onUser, fontSize: 12, fontWeight: 600,
     padding: '2px 10px', borderRadius: 8, cursor: 'pointer',
     backdropFilter: 'blur(2px)',
   },
@@ -457,7 +454,7 @@ export const ChatTab: React.FC<Props> = (props) => {
 const ChatTabView: React.FC<Props & { chat: Chat }> = ({
   chatId, isGatewayRunning, coreFailed,
   rightPanelMode, onRightPanelModeChange, rightPanelWidth, onRightPanelResize,
-  browserLoginWait, onConfirmBrowserLogin, onDismissBrowserLogin,
+  browserLoginWait, onConfirmBrowserLogin, onDismissBrowserLogin, headerInset,
   chat,
 }) => {
   const outerRef = useRef<HTMLDivElement>(null)
@@ -561,10 +558,11 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
     if (!button || !menu) return
     const place = () => {
       const anchor = button.getBoundingClientRect()
+      const composerTop = button.closest('[data-composer]')?.getBoundingClientRect().top ?? anchor.top
       const width = menu.offsetWidth
       setRunSettingsPosition({
-        top: anchor.bottom + 6,
-        left: clampFloatingLeft(anchor.right, width, floatingViewportRight()),
+        top: composerTop - menu.offsetHeight - 6,
+        left: clampFloatingLeft(anchor.left + width, width, floatingViewportRight()),
         ready: true,
       })
     }
@@ -1833,16 +1831,14 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
           </div>
         </div>
       )}
-      <div style={styles.header}>
-        <div style={{ ...styles.headerIdentity, ...(containerWidth > 0 && containerWidth < 760 ? { flex: 1, overflow: 'hidden' } : {}) }}>
-          <span style={styles.workspaceTag}>{chat.botChat?.kind === 'direct'
-            ? <BotAvatar name={chat.botChat.members[0]} config={bots.find(bot => bot.name === chat.botChat!.members[0])?.config.avatar} state={flight?.queuedPosition ? 'waiting' : isSending ? 'working' : 'idle'} size={30} />
-            : chat.botChat?.kind === 'group' ? <TeamAvatar name={chat.title} members={chat.botChat.members} bots={bots} size={30} state={flight?.queuedPosition ? 'waiting' : isSending ? 'working' : 'idle'} /> : <UIIcon name="workspace" size={13} />}{chat.botChat ? (chat.botChat.kind === 'direct' && chat.title === chat.botChat.members[0] ? bots.find(bot => bot.name === chat.botChat!.members[0])?.config.displayName || chat.title : chat.title) : chat.workspaceName}</span>
-          {chat.botChat?.kind === 'direct' && isSending && <span role="status" style={{ fontSize: 11, color: C.fg3 }}>{flight?.queuedPosition ? 'Queued' : 'Working…'}</span>}
+      <div className="chat-header" style={{ ...styles.header, ...(headerInset ? { paddingLeft: headerInset } : null) }}>
+        <div style={styles.headerIdentity}>
+          <span style={styles.workspaceTag} title={chat.botChat ? undefined : chat.workspaceName}>{chat.botChat?.kind === 'direct'
+            ? <BotAvatar name={chat.botChat.members[0]} config={bots.find(bot => bot.name === chat.botChat!.members[0])?.config.avatar} state={flight?.queuedPosition ? 'waiting' : isSending ? 'working' : 'idle'} size={24} />
+            : chat.botChat?.kind === 'group' ? <TeamAvatar name={chat.title} members={chat.botChat.members} bots={bots} size={24} state={flight?.queuedPosition ? 'waiting' : isSending ? 'working' : 'idle'} /> : null}{chat.botChat ? (chat.botChat.kind === 'direct' && chat.title === chat.botChat.members[0] ? bots.find(bot => bot.name === chat.botChat!.members[0])?.config.displayName || chat.title : chat.title) : chat.title?.trim() || 'New Chat'}</span>
+          {chat.botChat?.kind === 'direct' && isSending && <span role="status" style={{ fontSize: 12, color: C.fg3 }}>{flight?.queuedPosition ? 'Queued' : 'Working…'}</span>}
           {chat.botChat && <BotMembers key={chat.id} chat={chat} />}
-        </div>
-        <ChatHeaderActions compact={containerWidth > 0 && containerWidth < 760} onDismiss={() => { setEditorMenuOpen(false); setLinkMenuOpen(false); setRunSettingsOpen(false) }}>
-        {!chat.botChat && <div data-action-label="Checkout"><BranchPicker
+        {!chat.botChat && <div><BranchPicker
           workingDir={workingDir}
           repositoryDir={workspaceDir}
           chatWorktree={chat.chatWorkspace ? {
@@ -1854,6 +1850,18 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
           onExecutionModeChange={async mode => { await setExecutionMode(chat.id, mode) }}
           onSelectWorktree={async (path, expectedBranch) => { await bindWorktree(chat.id, path, expectedBranch) }}
         /></div>}
+        </div>
+        <div style={styles.headerActions}>
+        <NotificationCenter />
+        <button
+          onClick={() => changeRightPanelMode(panelOpen ? null : 'overview')}
+          style={styles.headerIcon}
+          title={panelOpen ? 'Hide context panel (⌘\\)' : 'Show context panel (⌘\\)'}
+          aria-label={panelOpen ? 'Hide context panel' : 'Show context panel'}
+        >
+          <UIIcon name="panel" color={C.fg2} filled={panelOpen} />
+        </button>
+        <ChatHeaderActions compact onDismiss={() => { setEditorMenuOpen(false); setLinkMenuOpen(false) }}>
         <div data-action-label="Open in IDE" style={styles.openInWrap}>
           <div style={styles.openInSplit}>
             <button
@@ -1908,113 +1916,6 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                 )}
               </div>
             </>
-          )}
-        </div>
-        <div data-action-label="Run settings" style={styles.runSettingsWrap}>
-          <button
-            ref={runSettingsButtonRef}
-            onClick={() => setRunSettingsOpen(open => !open)}
-            style={styles.runSettingsButton}
-            title="Configure bot, agent, model, and advisor"
-          >
-            <span style={styles.runSettingsButtonSummary}>{runSettingsSummary}</span>
-            <span style={{ display: 'inline-flex', transform: runSettingsOpen ? 'rotate(-90deg)' : 'rotate(90deg)' }}><UIIcon name="chevron" size={12} /></span>
-          </button>
-          {runSettingsOpen && (
-            createPortal(<>
-              <div onClick={() => setRunSettingsOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 999 }} />
-              <div
-                ref={runSettingsMenuRef}
-                style={{
-                  ...styles.runSettingsMenu,
-                  top: runSettingsPosition.top,
-                  left: runSettingsPosition.left,
-                  visibility: runSettingsPosition.ready ? 'visible' : 'hidden',
-                }}
-                onClick={event => event.stopPropagation()}
-              >
-                <label style={styles.runSettingGroup}>
-                  <span style={styles.runSettingLabel}>Bot</span>
-                  <select disabled={!!chat.botChat} value={selectionValue} onChange={e => void onSelectionChange(e.target.value)} style={styles.runSettingSelect}>
-                    <option value="none">{chat.botChat?.kind === 'group' ? 'Group members' : 'No bot'}</option>
-                    {bots.length > 0 && (
-                      <optgroup label="Bots">
-                        {bots.map(w => <option key={w.name} value={`bot:${w.name}`}>{w.config.displayName || w.name}</option>)}
-                      </optgroup>
-                    )}
-                    {teamNames.length > 0 && (
-                      <optgroup label="Teams" disabled={!!chat.tasks?.length}>
-                        {teamNames.map(n => <option key={n} value={`team:${n}`}>{n}</option>)}
-                      </optgroup>
-                    )}
-                  </select>
-                </label>
-                {chat.selection.type === 'team' ? (
-                  <div style={styles.runSettingsHint}>Teams choose their own agent routing.</div>
-                ) : (
-                  <>
-                    <label style={styles.runSettingGroup}>
-                      <span style={styles.runSettingLabel}>Agent</span>
-                      <select
-                        value={chat.agent ?? ''}
-                        onChange={e => void onAgentChange(e.target.value)}
-                        style={styles.runSettingSelect}
-                        title={`Agent: ${effectiveAgent}${chat.agent ? ' (override)' : ' (default)'}`}
-                      >
-                        <option value="">{inheritedAgent ? `${inheritedAgent} (default)` : 'default agent'}</option>
-                        {AGENT_NAMES.filter(n => n !== inheritedAgent || n === chat.agent).map(n => (
-                          <option key={n} value={n} disabled={installStatus?.[n]?.installed === false && n !== chat.agent}>{n}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <label style={styles.runSettingGroup}>
-                      <span style={styles.runSettingLabel}>Model</span>
-                      <select
-                        value={chat.model ?? ''}
-                        onChange={e => void onModelChange(e.target.value)}
-                        style={styles.runSettingSelect}
-                        title={`Model: ${effectiveModel ?? 'unset'}${chat.model ? ' (override)' : ' (default)'}`}
-                        disabled={modelsForAgent.length === 0}
-                      >
-                        <option value="">{inheritedModel ? `${inheritedModel} (default)` : 'agent default'}</option>
-                        {modelsForAgent.filter(m => m.model !== inheritedModel || m.model === chat.model).map(m => (
-                          <option key={m.model} value={m.model}>{m.model}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <label style={styles.runSettingGroup}>
-                      <span style={styles.runSettingLabel}>Effort</span>
-                      <select
-                        value={chat.effort ?? ''}
-                        onChange={e => void onEffortChange(e.target.value)}
-                        style={styles.runSettingSelect}
-                        title={`Effort: ${effectiveEffort}${chat.effort ? ' (override)' : ''}`}
-                      >
-                        <option value="">{inheritedEffort}</option>
-                        {['low', 'medium', 'high', 'xhigh', 'max']
-                          .filter(e => e !== inheritedEffort || e === chat.effort)
-                          .map(e => <option key={e} value={e}>{e}</option>)}
-                      </select>
-                    </label>
-                    <button
-                      onClick={() => void setSoloAdvisor(chat.id, !(chat.soloAdvisor ?? false))}
-                      style={{ ...styles.advisorSetting, ...(chat.soloAdvisor ? styles.advisorSettingActive : undefined) }}
-                      title={chat.soloAdvisor
-                        ? `Advisor is on — ${effectiveAdvisorModel} can help when the selected model gets stuck`
-                        : `Enable ${effectiveAdvisorModel} for help when the selected model gets stuck`}
-                      role="switch"
-                      aria-checked={chat.soloAdvisor ?? false}
-                    >
-                      <span style={styles.advisorSettingIdentity}>
-                        <UIIcon name="sparkle" size={14} />
-                        <span>Advisor</span>
-                      </span>
-                      <span style={styles.advisorModelName}>{effectiveAdvisorModel}</span>
-                    </button>
-                  </>
-                )}
-              </div>
-            </>, document.body)
           )}
         </div>
         <div data-action-label="Channels" style={{ position: 'relative' }}>
@@ -2095,17 +1996,18 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
           disabled={!workingDir}
           aria-label={bottomTerminalOpen ? 'Hide bottom Terminal' : 'Show bottom Terminal'}
         >
-          <UIIcon name="terminal" color={C.fg} filled={bottomTerminalOpen} />
+          <UIIcon name="terminal" color={C.fg2} filled={bottomTerminalOpen} />
         </button>
-        <button data-action-label="Context panel"
-          onClick={() => changeRightPanelMode(panelOpen ? null : 'overview')}
-          style={{ ...styles.linkBtn, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '4px 6px' }}
-          title={panelOpen ? 'Hide context panel (⌘\\)' : 'Show context panel (⌘\\)'}
-          aria-label={panelOpen ? 'Hide context panel' : 'Show context panel'}
+        <button data-action-label="Browser"
+          onClick={() => changeRightPanelMode('browser')}
+          style={{ ...styles.linkBtn, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+          title="Open the Browser (⇧⌘B)"
+          aria-label="Open the Browser"
         >
-          <UIIcon name="panel" color={C.fg} filled={panelOpen} />
+          <UIIcon name="globe" size={16} color={C.fg2} />
         </button>
         </ChatHeaderActions>
+        </div>
       </div>
 
       <div style={styles.transcriptShell}>
@@ -2153,7 +2055,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
               style={{
                 display: 'flex', flexDirection: 'column',
                 alignItems: isUser ? 'flex-end' : 'flex-start',
-                marginBottom: isUser ? 12 : 20,
+                marginBottom: isUser ? 4 : 20,
                 cursor: isUser ? 'default' : 'pointer',
                 paddingLeft: !isUser ? MESSAGE_ROW_INSET : 0,
                 transform: isSelected ? 'translateY(-3px)' : 'translateY(0)',
@@ -2162,9 +2064,9 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
             >
               <div style={isUser ? {
                 minWidth: 0, maxWidth: 'min(84%, 88ch)', padding: `10px ${USER_BUBBLE_PADDING_X}px`,
-                borderRadius: '16px 16px 4px 16px',
+                borderRadius: 14,
                 background: C.userBg,
-                color: C.onAccent, fontSize: 13, lineHeight: 1.55,
+                color: C.onUser, fontSize: 14, lineHeight: 1.55,
                 overflowWrap: 'anywhere', wordBreak: 'break-word',
               } : {
                 // The bubble marks "what the user said". An assistant reply
@@ -2176,7 +2078,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                 // than the previous 78ch column while retaining a readable
                 // line-length ceiling on wide windows. Small windows still use
                 // all available space via the 100% cap.
-                minWidth: 0, width: '100%', maxWidth: 'min(100%, 96ch)',
+                minWidth: 0, width: '100%', maxWidth: '100%',
                 // Padding on all four sides so the selected highlight reads as a
                 // card rather than a rectangle cut through the text. It is
                 // unconditional — applying it only when selected would shift the
@@ -2187,18 +2089,14 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                 padding: `8px ${TURN_RAIL_WIDTH + TURN_TEXT_PADDING}px 6px ${TURN_TEXT_PADDING}px`,
                 // The rail is always present, transparent when unselected, so
                 // selecting a turn never shifts the text column sideways.
-                borderLeft: `${TURN_RAIL_WIDTH}px solid ${isSelected ? C.accent : 'transparent'}`,
-                // Square corners: the highlight reads as a marked-up block of a
-                // document, not a chat bubble. Only the user's message is a bubble.
-                borderRadius: 0,
-                background: isSelected ? C.accentDim : 'transparent',
-                // Same treatment the rest of the app gives an active card
-                // (teamStepCardActive, teamRoundTableMemberActive): a tint plus a
-                // 1px accent ring, which defines the edge without a hard border.
-                boxShadow: isSelected ? `0 0 0 1px ${C.accentDim}` : 'none',
+                borderLeft: `${TURN_RAIL_WIDTH}px solid transparent`,
+                // A neutral tint: selecting a turn is a quiet state, so it does not
+                // spend the accent, which is kept for the next action.
+                borderRadius: 8,
+                background: isSelected ? C.surface2 : 'transparent',
                 // fontSize/lineHeight stay compact: non-Markdown children
                 // inherit them. Roomy applies inside <Markdown layout="roomy">.
-                color: C.fg, fontSize: 13, lineHeight: 1.55,
+                color: C.fg, fontSize: 14, lineHeight: 1.55,
                 overflowWrap: 'anywhere', wordBreak: 'break-word',
                 transition: 'border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease',
               }}>
@@ -2335,7 +2233,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                       }
                       return (
                         <div key={att.id} style={styles.attachmentFileChip} onClick={open} title={`${att.name} · ${formatBytes(att.size)}`}>
-                          <div style={styles.attachmentFileIcon}><FileIcon color={C.onAccent} /></div>
+                          <div style={styles.attachmentFileIcon}><FileIcon color={C.onUser} /></div>
                           <div style={styles.attachmentFileMeta}>
                             <span style={styles.attachmentFileName}>{att.name}</span>
                             <span style={styles.attachmentFileSize}>{formatBytes(att.size)}</span>
@@ -2634,7 +2532,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
             ))}
           </div>
         )}
-        <div style={composerFocused ? { ...styles.composer, ...styles.composerRaised } : styles.composer}>
+        <div data-composer style={composerFocused ? { ...styles.composer, ...styles.composerRaised } : styles.composer}>
           <div
             style={styles.composerResizeHandle}
             onMouseEnter={() => setComposerHandleHover(true)}
@@ -2766,8 +2664,115 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                 style={styles.attachButton}
                 title="Attach file"
               >
-                <PaperclipIcon color={isGatewayRunning ? C.fg2 : C.fg3} />
+                <UIIcon name="add" size={16} color={isGatewayRunning ? C.fg2 : C.fg3} />
               </button>
+        <div style={styles.runSettingsWrap}>
+          <button
+            ref={runSettingsButtonRef}
+            onClick={() => setRunSettingsOpen(open => !open)}
+            style={styles.runSettingsButton}
+            title="Configure bot, agent, model, and advisor"
+          >
+            <span style={styles.runSettingsButtonSummary}>{runSettingsSummary}</span>
+            <span style={{ display: 'inline-flex', transform: runSettingsOpen ? 'rotate(90deg)' : 'rotate(-90deg)' }}><UIIcon name="chevron" size={12} /></span>
+          </button>
+          {runSettingsOpen && (
+            createPortal(<>
+              <div onClick={() => setRunSettingsOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 999 }} />
+              <div
+                ref={runSettingsMenuRef}
+                style={{
+                  ...styles.runSettingsMenu,
+                  top: runSettingsPosition.top,
+                  left: runSettingsPosition.left,
+                  visibility: runSettingsPosition.ready ? 'visible' : 'hidden',
+                }}
+                onClick={event => event.stopPropagation()}
+              >
+                <label style={styles.runSettingGroup}>
+                  <span style={styles.runSettingLabel}>Bot</span>
+                  <select disabled={!!chat.botChat} value={selectionValue} onChange={e => void onSelectionChange(e.target.value)} style={styles.runSettingSelect}>
+                    <option value="none">{chat.botChat?.kind === 'group' ? 'Group members' : 'No bot'}</option>
+                    {bots.length > 0 && (
+                      <optgroup label="Bots">
+                        {bots.map(w => <option key={w.name} value={`bot:${w.name}`}>{w.config.displayName || w.name}</option>)}
+                      </optgroup>
+                    )}
+                    {teamNames.length > 0 && (
+                      <optgroup label="Teams" disabled={!!chat.tasks?.length}>
+                        {teamNames.map(n => <option key={n} value={`team:${n}`}>{n}</option>)}
+                      </optgroup>
+                    )}
+                  </select>
+                </label>
+                {chat.selection.type === 'team' ? (
+                  <div style={styles.runSettingsHint}>Teams choose their own agent routing.</div>
+                ) : (
+                  <>
+                    <label style={styles.runSettingGroup}>
+                      <span style={styles.runSettingLabel}>Agent</span>
+                      <select
+                        value={chat.agent ?? ''}
+                        onChange={e => void onAgentChange(e.target.value)}
+                        style={styles.runSettingSelect}
+                        title={`Agent: ${effectiveAgent}${chat.agent ? ' (override)' : ' (default)'}`}
+                      >
+                        <option value="">{inheritedAgent ? `${inheritedAgent} (default)` : 'default agent'}</option>
+                        {AGENT_NAMES.filter(n => n !== inheritedAgent || n === chat.agent).map(n => (
+                          <option key={n} value={n} disabled={installStatus?.[n]?.installed === false && n !== chat.agent}>{n}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label style={styles.runSettingGroup}>
+                      <span style={styles.runSettingLabel}>Model</span>
+                      <select
+                        value={chat.model ?? ''}
+                        onChange={e => void onModelChange(e.target.value)}
+                        style={styles.runSettingSelect}
+                        title={`Model: ${effectiveModel ?? 'unset'}${chat.model ? ' (override)' : ' (default)'}`}
+                        disabled={modelsForAgent.length === 0}
+                      >
+                        <option value="">{inheritedModel ? `${inheritedModel} (default)` : 'agent default'}</option>
+                        {modelsForAgent.filter(m => m.model !== inheritedModel || m.model === chat.model).map(m => (
+                          <option key={m.model} value={m.model}>{m.model}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label style={styles.runSettingGroup}>
+                      <span style={styles.runSettingLabel}>Effort</span>
+                      <select
+                        value={chat.effort ?? ''}
+                        onChange={e => void onEffortChange(e.target.value)}
+                        style={styles.runSettingSelect}
+                        title={`Effort: ${effectiveEffort}${chat.effort ? ' (override)' : ''}`}
+                      >
+                        <option value="">{inheritedEffort}</option>
+                        {['low', 'medium', 'high', 'xhigh', 'max']
+                          .filter(e => e !== inheritedEffort || e === chat.effort)
+                          .map(e => <option key={e} value={e}>{e}</option>)}
+                      </select>
+                    </label>
+                    <button
+                      onClick={() => void setSoloAdvisor(chat.id, !(chat.soloAdvisor ?? false))}
+                      style={{ ...styles.advisorSetting, ...(chat.soloAdvisor ? styles.advisorSettingActive : undefined) }}
+                      title={chat.soloAdvisor
+                        ? `Advisor is on — ${effectiveAdvisorModel} can help when the selected model gets stuck`
+                        : `Enable ${effectiveAdvisorModel} for help when the selected model gets stuck`}
+                      role="switch"
+                      aria-checked={chat.soloAdvisor ?? false}
+                    >
+                      <span style={styles.advisorSettingIdentity}>
+                        <UIIcon name="sparkle" size={14} />
+                        <span>Advisor</span>
+                      </span>
+                      <span style={styles.advisorModelName}>{effectiveAdvisorModel}</span>
+                    </button>
+                  </>
+                )}
+              </div>
+            </>, document.body)
+          )}
+        </div>
             </div>
             <div style={styles.voiceIndicatorSlot}>
               {voiceActiveHere && (
@@ -2827,7 +2832,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                   ? <StopIcon color="#fff" />
                   : <UIIcon
                       name="mic"
-                      size={19}
+                      size={16}
                       color={voiceBusy && voice.mode === 'dictate' ? '#fff' : C.fg2}
                     />}
               </button></span>}
@@ -2842,7 +2847,10 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
               >
                 <UIIcon name="close" size={15} color={C.fg3} />
               </button>}
-              {!(voiceActiveHere && voice.state === 'recording' && voice.mode === 'dictate') && <span
+              {/* Talk and Send share a slot: an empty box offers Talk, and typing
+                  swaps it for Send. A live conversation keeps its control. */}
+              {!(voiceActiveHere && voice.state === 'recording' && voice.mode === 'dictate')
+                && ((voiceActiveHere && voice.mode === 'converse') || (!isSending && !canSend)) && <span
                 style={styles.voiceButtonWrap}
                 title={
                   voiceWarmBlocking ? voiceWarmTitle
@@ -2862,7 +2870,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                   ...styles.voiceButton,
                   background: voiceActiveHere && voice.state === 'recording' && voice.mode === 'converse' ? C.red
                     : voiceActiveHere && voice.state === 'speaking' ? C.accent
-                    : 'transparent',
+                    : C.surface3,
                   opacity: voiceWarmBlocking ? 0.4 : 1,
                   cursor: isGatewayRunning && !coreFailed && !voiceActiveElsewhere && !voiceWarmBlocking ? 'pointer' : 'default',
                   // A disabled button still hit-tests, so it swallows the hover
@@ -2876,8 +2884,8 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                   ? <StopIcon color="#fff" />
                   : <UIIcon
                       name="waveform"
-                      size={19}
-                      color={voiceActiveHere && voice.state === 'speaking' ? C.onAccent : C.fg2}
+                      size={16}
+                      color={voiceActiveHere && voice.state === 'speaking' ? C.onAccent : C.fg}
                     />}
               </button></span>}
               {/* One slot, two jobs: Stop while a turn runs, Send otherwise.
@@ -2891,16 +2899,16 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                 >
                   <StopIcon color="#fff" />
                 </button>
-              ) : (
+              ) : canSend ? (
                 <button
                   onClick={send}
-                  disabled={!canSend}
                   title="Send (↵)"
-                  style={{ ...styles.sendButton, background: canSend ? C.accent : C.surface3, cursor: canSend ? 'pointer' : 'default' }}
+                  aria-label="Send"
+                  style={{ ...styles.sendButton, background: C.accent, cursor: 'pointer' }}
                 >
-                  <SendIcon color={canSend ? C.onAccent : C.fg3} />
+                  <SendIcon color={C.onAccent} />
                 </button>
-              )}
+              ) : null}
             </div>
           </div>
         </div>
@@ -3071,14 +3079,21 @@ const styles: Record<string, React.CSSProperties> = {
     position: 'absolute', left: 0, right: 0, top: -4, height: 8, cursor: 'row-resize', zIndex: 20,
   },
   header: {
-    padding: '10px 18px', borderBottom: `1px solid ${C.border}`,
+    height: 44, padding: '0 8px 0 18px',
     display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0,
-    flexWrap: 'wrap', rowGap: 8, background: C.surface,
+    background: C.bg,
+    // @ts-ignore Electron
+    WebkitAppRegion: 'drag',
   },
-  headerIdentity: { display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 },
-  workspaceTag: { color: C.fg2, fontSize: 11, fontWeight: 650, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', flexShrink: 1, display: 'inline-flex', alignItems: 'center', gap: 5 },
+  headerIdentity: { display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 },
+  headerActions: { display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 },
+  headerIcon: {
+    width: 32, height: 32, padding: 0, border: 'none', borderRadius: 8, background: 'transparent',
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
+  },
+  workspaceTag: { color: C.fg, fontSize: 13, fontWeight: 600, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', flexShrink: 1, display: 'inline-flex', alignItems: 'center', gap: 7 },
   gitBadge: {
-    color: C.fg3, fontSize: 11, flexShrink: 0,
+    color: C.fg3, fontSize: 12, flexShrink: 0,
     background: C.surface3, border: `1px solid ${C.border2}`,
     borderRadius: 4, padding: '2px 6px',
     fontFamily: 'SF Mono, Menlo, monospace',
@@ -3101,25 +3116,25 @@ const styles: Record<string, React.CSSProperties> = {
     color: C.fg3, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
     height: 32, boxSizing: 'border-box',
   },
-  runSettingsWrap: { position: 'relative', flexShrink: 0 },
+  runSettingsWrap: { position: 'relative', minWidth: 0 },
   runSettingsButton: {
-    border: `1px solid ${C.border2}`, borderRadius: 6, padding: '4px 8px', background: C.surface3,
-    color: C.fg2, cursor: 'pointer', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 7,
+    border: 'none', borderRadius: 8, padding: '0 8px', background: 'transparent',
+    color: C.fg2, cursor: 'pointer', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 6,
     maxWidth: 310, textAlign: 'left', height: 32, boxSizing: 'border-box',
   },
-  runSettingsButtonSummary: { color: C.fg2, fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  runSettingsButtonSummary: { color: C.fg2, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   runSettingsMenu: {
-    position: 'fixed', zIndex: 1000, minWidth: 244,
-    padding: 10, borderRadius: 9, background: C.surface2, border: `1px solid ${C.border2}`,
+    position: 'fixed', zIndex: 1000, width: 280,
+    padding: 10, borderRadius: 8, background: C.surface2, border: `1px solid ${C.border2}`,
     boxShadow: '0 12px 28px rgba(0,0,0,0.3)', display: 'flex', flexDirection: 'column', gap: 9,
   },
-  runSettingGroup: { display: 'flex', flexDirection: 'column', gap: 4 },
-  runSettingLabel: { color: C.fg3, fontSize: 10, fontWeight: 700, letterSpacing: 0.45, textTransform: 'uppercase' },
+  runSettingGroup: { display: 'flex', alignItems: 'center', gap: 8 },
+  runSettingLabel: { color: C.fg2, fontSize: 13, width: 52, flexShrink: 0 },
   runSettingSelect: {
     width: '100%', minWidth: 0, background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 6,
     color: C.fg2, fontSize: 12, padding: '6px 8px', outline: 'none',
   },
-  runSettingsHint: { padding: '4px 0', color: C.fg3, fontSize: 11, lineHeight: 1.4 },
+  runSettingsHint: { padding: '4px 0', color: C.fg3, fontSize: 12, lineHeight: 1.4 },
   advisorSetting: {
     width: '100%', border: `1px solid ${C.border2}`, borderRadius: 6, padding: '7px 8px', background: C.surface3,
     color: C.fg3, cursor: 'pointer', fontSize: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center',
@@ -3127,12 +3142,12 @@ const styles: Record<string, React.CSSProperties> = {
   advisorSettingIdentity: { display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 },
   advisorModelName: {
     maxWidth: 112, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const,
-    color: C.fg3, fontSize: 10, fontFamily: 'monospace', fontWeight: 500,
+    color: C.fg3, fontSize: 11, fontFamily: 'monospace', fontWeight: 500,
   },
-  advisorSettingActive: { border: `1px solid ${C.accent}`, background: C.accentDim, color: C.accent, fontWeight: 600 },
+  advisorSettingActive: { border: `1px solid ${C.fg3}`, color: C.fg, fontWeight: 600 },
   editorMenu: {
     position: 'absolute', top: 'calc(100% + 6px)', right: 0, zIndex: 1000, minWidth: 205,
-    padding: 4, borderRadius: 9, background: C.surface2, border: `1px solid ${C.border2}`,
+    padding: 4, borderRadius: 8, background: C.surface2, border: `1px solid ${C.border2}`,
     boxShadow: '0 12px 28px rgba(0,0,0,0.3)',
   },
   editorMenuItem: {
@@ -3147,10 +3162,10 @@ const styles: Record<string, React.CSSProperties> = {
     width: 16, height: 16, objectFit: 'contain', flexShrink: 0,
     padding: 1, borderRadius: 4, background: '#fff', boxSizing: 'border-box',
   },
-  editorOpeningLabel: { color: C.fg2, fontSize: 11, whiteSpace: 'nowrap' },
-  editorMenuEmpty: { color: C.fg3, fontSize: 11, lineHeight: 1.4, padding: '8px 9px', maxWidth: 220 },
+  editorOpeningLabel: { color: C.fg2, fontSize: 12, whiteSpace: 'nowrap' },
+  editorMenuEmpty: { color: C.fg3, fontSize: 12, lineHeight: 1.4, padding: '8px 9px', maxWidth: 220 },
   transcriptShell: { flex: 1, minHeight: 0, position: 'relative', background: C.bg },
-  messages: { height: '100%', overflowY: 'auto', padding: '22px max(22px, 5%)', background: C.bg },
+  messages: { height: '100%', overflowY: 'auto', padding: '22px max(22px, calc((100% - 760px) / 2))', background: C.bg },
   // The status row is a direct child of `messages`, not of a message row, so it
   // carries the full inset rather than the remainder.
   typingRow: {
@@ -3160,13 +3175,13 @@ const styles: Record<string, React.CSSProperties> = {
   // Horizontal padding is set per role at the render site — the timestamp has to
   // line up with the reply above it, which is inset differently (and from the
   // opposite edge) for user and assistant.
-  tsLabel: { color: C.fg3, fontSize: 10, marginTop: 6, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  tsLabel: { color: C.fg3, fontSize: 11, marginTop: 6, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   // Hover actions on a user bubble. They share the timestamp's footer row so
   // revealing them costs no vertical space.
   msgActions: { display: 'flex', alignItems: 'center', gap: 2 },
   msgActionBtn: {
     display: 'grid', placeItems: 'center', width: 20, height: 20, padding: 0,
-    border: 'none', borderRadius: 5, background: 'transparent', cursor: 'pointer',
+    border: 'none', borderRadius: 6, background: 'transparent', cursor: 'pointer',
   },
   msgEditBox: { display: 'flex', flexDirection: 'column', gap: 6, minWidth: 260 },
   msgEditArea: {
@@ -3176,24 +3191,24 @@ const styles: Record<string, React.CSSProperties> = {
   },
   msgEditActions: { display: 'flex', justifyContent: 'flex-end', gap: 6 },
   msgEditCancel: {
-    background: 'transparent', color: C.onAccent, border: `1px solid ${C.onAccent}55`,
-    borderRadius: 6, padding: '3px 9px', fontSize: 11, cursor: 'pointer',
+    background: 'transparent', color: C.onUser, border: `1px solid ${C.onUser}55`,
+    borderRadius: 6, padding: '3px 9px', fontSize: 12, cursor: 'pointer',
   },
   msgEditSave: {
     background: C.bg, color: C.fg, border: 'none',
-    borderRadius: 6, padding: '3px 9px', fontSize: 11, cursor: 'pointer', fontWeight: 600,
+    borderRadius: 6, padding: '3px 9px', fontSize: 12, cursor: 'pointer', fontWeight: 600,
   },
   // modelBadge is still used by team bot messages; tsRight, tsMeta and
   // fallbackBadge moved into TurnHeader with the metadata they styled.
   modelBadge: {
     color: C.fg3, background: C.surface3, border: `1px solid ${C.border2}`,
-    borderRadius: 5, padding: '1px 6px', fontSize: 10,
+    borderRadius: 6, padding: '1px 6px', fontSize: 11,
     fontFamily: 'SF Mono, Menlo, monospace',
     maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
   },
   // No border or panel fill here: the composer should read as a card floating
   // over the transcript, so this strip just matches the transcript background.
-  inputContainer: { padding: '0 max(16px, 4%) 16px', display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0, background: 'transparent' },
+  inputContainer: { padding: '0 max(16px, calc((100% - 760px) / 2)) 16px', display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0, background: 'transparent' },
   latestMessageButton: {
     position: 'absolute' as const, bottom: 'calc(100% + 8px)', left: '50%', zIndex: 20,
     transform: 'translateX(-50%)',
@@ -3204,7 +3219,7 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
   },
   composer: {
-    background: C.surface2, border: `1px solid ${C.border2}`, borderRadius: 14,
+    background: C.surface2, borderRadius: 14,
     display: 'flex', flexDirection: 'column', overflow: 'hidden',
     position: 'relative' as const,
     // Resting lift: with no panel behind it, the shadow is what makes the
@@ -3233,7 +3248,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
     gap: 8, padding: '4px 7px 7px',
   },
-  composerTools: { display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 },
+  composerTools: { display: 'flex', alignItems: 'center', gap: 2, minWidth: 0 },
   voiceIndicatorSlot: {
     minWidth: 0, flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
     padding: '0 12px',
@@ -3243,10 +3258,10 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
     padding: '0 6px', overflow: 'hidden',
   },
-  composerActions: { display: 'flex', alignItems: 'center', gap: 4 },
+  composerActions: { display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 },
   input: {
     width: '100%', background: 'transparent', border: 'none', borderRadius: 8,
-    color: C.fg, fontSize: 13, padding: '4px 2px', outline: 'none', resize: 'none',
+    color: C.fg, fontSize: 14, padding: '4px 2px', outline: 'none', resize: 'none',
     lineHeight: 1.5, maxHeight: 120, overflowY: 'auto',
     position: 'relative' as const, zIndex: 1,
   },
@@ -3255,18 +3270,17 @@ const styles: Record<string, React.CSSProperties> = {
   // drift away from the characters they sit behind.
   inputHighlight: {
     position: 'absolute' as const, inset: 0, pointerEvents: 'none' as const,
-    fontSize: 13, padding: '4px 2px', lineHeight: 1.5,
+    fontSize: 14, padding: '4px 2px', lineHeight: 1.5,
     maxHeight: 120, overflow: 'hidden' as const,
     whiteSpace: 'pre-wrap' as const, overflowWrap: 'break-word' as const,
     color: 'transparent',
   },
   inputHighlightMention: {
-    background: 'rgba(43,230,155,0.18)', borderRadius: 4,
-    boxShadow: '0 0 0 1px rgba(43,230,155,0.35)',
+    background: C.accentDim, borderRadius: 4,
   },
   mentionIcon: { display: 'flex', alignItems: 'center', flexShrink: 0 },
   sendButton: {
-    width: 38, height: 38, borderRadius: 11, border: 'none',
+    width: 32, height: 32, borderRadius: '50%', border: 'none',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     flexShrink: 0, transition: 'background 0.15s',
   },
@@ -3274,11 +3288,11 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'inline-flex', flexShrink: 0,
   },
   voiceButton: {
-    width: 36, height: 36, borderRadius: 9, border: 'none',
+    width: 32, height: 32, borderRadius: '50%', border: 'none',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     flexShrink: 0, transition: 'background 0.15s',
   },
-  iconButtonPlus: { fontSize: 12, lineHeight: 1, marginLeft: 1, color: C.accent, fontWeight: 700 },
+  iconButtonPlus: { fontSize: 12, lineHeight: 1, marginLeft: 1, color: C.accent, fontWeight: 600 },
   orphanBanner: { padding: '8px 12px', background: C.warningBg, color: C.warningFg, fontSize: 12, borderTop: `1px solid ${C.border}` },
   dropOverlay: {
     position: 'absolute' as const, inset: 8, zIndex: 10,
@@ -3295,32 +3309,32 @@ const styles: Record<string, React.CSSProperties> = {
     border: `1px solid ${C.border2}`, boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
   },
   dropOverlayTitle: { color: C.fg, fontSize: 14, fontWeight: 600 },
-  dropOverlaySubtitle: { color: C.fg3, fontSize: 11 },
+  dropOverlaySubtitle: { color: C.fg3, fontSize: 12 },
   attachmentsContainer: {
     display: 'flex', flexWrap: 'wrap' as const, gap: 6, marginTop: 8,
   },
   attachmentImage: {
     width: 96, height: 96, borderRadius: 8, objectFit: 'cover' as const, cursor: 'pointer',
-    border: `1px solid ${C.onAccent}3d`,
+    border: `1px solid ${C.onUser}3d`,
   },
   // The chip sits inside the user bubble, so every color is derived from
-  // onAccent rather than the surface palette - surface greys vanish on userBg.
+  // onUser rather than the surface palette - surface greys vanish on userBg.
   attachmentFileChip: {
     display: 'flex', alignItems: 'center', gap: 8,
-    background: `${C.onAccent}1f`,
-    border: `1px solid ${C.onAccent}3d`, borderRadius: 8,
+    background: `${C.onUser}1f`,
+    border: `1px solid ${C.onUser}3d`, borderRadius: 8,
     padding: '6px 10px', cursor: 'pointer', maxWidth: 220,
   },
   attachmentFileIcon: {
-    width: 28, height: 28, borderRadius: 6, background: `${C.onAccent}2e`,
+    width: 28, height: 28, borderRadius: 6, background: `${C.onUser}2e`,
     display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
   },
   attachmentFileMeta: { display: 'flex', flexDirection: 'column' as const, minWidth: 0, gap: 1 },
   attachmentFileName: {
-    color: C.onAccent, fontSize: 12, fontWeight: 500,
+    color: C.onUser, fontSize: 12, fontWeight: 500,
     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, maxWidth: 160,
   },
-  attachmentFileSize: { color: `${C.onAccent}b8`, fontSize: 10, fontVariantNumeric: 'tabular-nums' as const },
+  attachmentFileSize: { color: `${C.onUser}b8`, fontSize: 11, fontVariantNumeric: 'tabular-nums' as const },
   // Queued prompts sit directly above the composer, oldest first, so the order
   // they will run in is the order you read them.
   queuedRow: {
@@ -3335,7 +3349,7 @@ const styles: Record<string, React.CSSProperties> = {
   queuedIndex: {
     flexShrink: 0, minWidth: 16, height: 16, borderRadius: 8,
     display: 'flex', alignItems: 'center', justifyContent: 'center',
-    fontSize: 10, color: C.fg3, background: C.surface3,
+    fontSize: 11, color: C.fg3, background: C.surface3,
   },
   queuedText: {
     flex: 1, fontSize: 12, color: C.fg2,
@@ -3345,10 +3359,10 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
     padding: '0 2px',
   },
-  queuedPausedLabel: { fontSize: 11, color: C.fg3 },
+  queuedPausedLabel: { fontSize: 12, color: C.fg3 },
   queuedResumeBtn: {
     border: `1px solid ${C.border2}`, background: 'transparent', borderRadius: 6,
-    color: C.fg2, cursor: 'pointer', fontSize: 11, padding: '2px 8px',
+    color: C.fg2, cursor: 'pointer', fontSize: 12, padding: '2px 8px',
   },
   queuedRemoveBtn: {
     flexShrink: 0, border: 'none', background: 'transparent',
@@ -3368,7 +3382,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   pendingRemoveBtn: {
     position: 'absolute' as const, top: 2, right: 2,
-    width: 18, height: 18, borderRadius: 9, border: 'none',
+    width: 18, height: 18, borderRadius: 8, border: 'none',
     background: 'rgba(0,0,0,0.7)', color: '#fff',
     cursor: 'pointer', fontSize: 13, lineHeight: '16px', padding: 0,
     display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -3388,15 +3402,15 @@ const styles: Record<string, React.CSSProperties> = {
     color: C.fg, fontSize: 12, fontWeight: 500,
     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, maxWidth: 140,
   },
-  pendingFileSize: { color: C.fg3, fontSize: 10, fontVariantNumeric: 'tabular-nums' as const },
+  pendingFileSize: { color: C.fg3, fontSize: 11, fontVariantNumeric: 'tabular-nums' as const },
   pendingFileRemoveBtn: {
-    width: 22, height: 22, borderRadius: 11, border: 'none',
+    width: 22, height: 22, borderRadius: 10, border: 'none',
     background: 'transparent', color: C.fg3,
-    cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: 0,
+    cursor: 'pointer', fontSize: 15, lineHeight: 1, padding: 0,
     display: 'flex', alignItems: 'center', justifyContent: 'center',
   },
   uploadError: {
-    color: C.dangerFg, fontSize: 11, padding: '0 4px',
+    color: C.dangerFg, fontSize: 12, padding: '0 4px',
   },
   learnedRow: {
     display: 'flex', justifyContent: 'flex-start', padding: '0 4px 4px',
@@ -3404,7 +3418,7 @@ const styles: Record<string, React.CSSProperties> = {
   learnedPill: {
     display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' as const,
     background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 999,
-    color: C.fg2, fontSize: 11, padding: '4px 6px 4px 12px', maxWidth: '100%',
+    color: C.fg2, fontSize: 12, padding: '4px 6px 4px 12px', maxWidth: '100%',
   },
   learnedUndo: {
     background: 'none', border: 'none', cursor: 'pointer', color: C.accent,
@@ -3459,7 +3473,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 13,
   },
   choiceDesc: {
-    fontSize: 11,
+    fontSize: 12,
     color: C.fg2,
     lineHeight: '1.3',
   },
@@ -3481,7 +3495,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex', alignItems: 'flex-start', gap: 10,
   },
   permissionIcon: {
-    width: 32, height: 32, borderRadius: 9, flexShrink: 0,
+    width: 32, height: 32, borderRadius: 8, flexShrink: 0,
     display: 'grid', placeItems: 'center',
     color: C.warningFg,
     background: `color-mix(in srgb, ${C.yellow} 16%, transparent)`,
@@ -3491,7 +3505,7 @@ const styles: Record<string, React.CSSProperties> = {
     minWidth: 0, display: 'flex', flexDirection: 'column' as const, gap: 3,
   },
   permissionTitle: {
-    color: C.fg, fontSize: 13, fontWeight: 650 as const, lineHeight: 1.35,
+    color: C.fg, fontSize: 13, fontWeight: 600 as const, lineHeight: 1.35,
   },
   permissionText: {
     fontSize: 12, lineHeight: 1.45, color: C.fg2,
@@ -3505,32 +3519,32 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '4px 7px', borderRadius: 6,
     background: C.inlineCodeBg, color: C.inlineCodeFg,
     border: `1px solid ${C.border2}`,
-    fontFamily: 'Menlo, Monaco, "Courier New", monospace', fontSize: 10.5,
+    fontFamily: 'Menlo, Monaco, "Courier New", monospace', fontSize: 12,
   },
   permissionNote: {
-    paddingLeft: 42, color: C.fg3, fontSize: 10.5, lineHeight: 1.45,
+    paddingLeft: 42, color: C.fg3, fontSize: 12, lineHeight: 1.45,
   },
   permissionError: {
-    marginLeft: 42, padding: '7px 9px', borderRadius: 7,
+    marginLeft: 42, padding: '7px 9px', borderRadius: 8,
     background: C.dangerBg, color: C.dangerFg,
-    border: `1px solid ${C.dangerBorder}`, fontSize: 11, lineHeight: 1.4,
+    border: `1px solid ${C.dangerBorder}`, fontSize: 12, lineHeight: 1.4,
   },
   permissionActions: {
     display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 1,
   },
   permissionAllow: {
     minHeight: 30, padding: '6px 13px',
-    borderRadius: 7,
+    borderRadius: 8,
     border: 'none',
     background: C.accent,
     color: C.onAccent,
     cursor: 'pointer',
     fontSize: 12,
-    fontWeight: 650 as const,
+    fontWeight: 600 as const,
   },
   permissionDeny: {
     minHeight: 30, padding: '6px 13px',
-    borderRadius: 7,
+    borderRadius: 8,
     border: `1px solid ${C.border2}`,
     background: C.surface,
     color: C.fg2,
@@ -3541,10 +3555,10 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'default', opacity: 0.62,
   },
   voiceStatusText: {
-    color: C.fg2, fontSize: 11, fontVariantNumeric: 'tabular-nums',
+    color: C.fg2, fontSize: 12, fontVariantNumeric: 'tabular-nums',
   },
   attachButton: {
-    width: 36, height: 36, borderRadius: 9, border: 'none',
+    width: 32, height: 32, borderRadius: 8, border: 'none',
     background: 'transparent', display: 'flex', alignItems: 'center',
     justifyContent: 'center', flexShrink: 0, cursor: 'pointer',
     transition: 'background 0.15s',
@@ -3600,11 +3614,11 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 12, color: C.fg2, padding: '2px 0', userSelect: 'none' as const,
   },
   teamStepRunning: {
-    marginLeft: 8, fontSize: 10, color: C.accent,
+    marginLeft: 8, fontSize: 11, color: C.accent,
     fontStyle: 'italic',
   },
   teamStepChevron: {
-    display: 'inline-block', fontSize: 11, marginRight: 6,
+    display: 'inline-block', fontSize: 12, marginRight: 6,
     transition: 'transform 0.15s ease', color: C.fg3, flexShrink: 0,
   },
   teamStepLabel: { color: C.fg, fontWeight: 500 },
@@ -3616,7 +3630,7 @@ const styles: Record<string, React.CSSProperties> = {
   teamStepBody: { marginTop: 4, marginLeft: 17 },
   thinkingToggle: {
     display: 'flex', alignItems: 'center', cursor: 'pointer',
-    fontSize: 11, color: C.fg3, padding: '2px 0', userSelect: 'none' as const,
+    fontSize: 12, color: C.fg3, padding: '2px 0', userSelect: 'none' as const,
     marginBottom: 6,
   },
   thinkingBody: {
@@ -3644,7 +3658,7 @@ const styles: Record<string, React.CSSProperties> = {
     pointerEvents: 'auto' as const,
     appearance: 'none', background: 'rgba(128, 128, 128, 0.14)',
     backdropFilter: 'blur(4px)', border: `1px solid ${C.border2}`,
-    color: C.fg2, fontSize: 11, padding: '3px 10px', borderRadius: 999,
+    color: C.fg2, fontSize: 12, padding: '3px 10px', borderRadius: 999,
     cursor: 'pointer',
   },
   // Reads as one quiet line of the transcript rather than a boxed callout: same
@@ -3680,7 +3694,7 @@ const styles: Record<string, React.CSSProperties> = {
   liveActivityDetail: {
     marginLeft: 18, marginTop: 4, marginBottom: 6,
     padding: 9, background: C.surface3,
-    border: `1px solid ${C.border2}`, borderRadius: 7,
+    border: `1px solid ${C.border2}`, borderRadius: 8,
     maxHeight: 280, overflowY: 'auto',
   },
   slashMenu: {

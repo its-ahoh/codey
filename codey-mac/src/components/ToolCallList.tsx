@@ -118,10 +118,10 @@ export const ToolCallList: React.FC<{ toolCalls: ToolCallEntry[]; emptyHint?: st
 
 const timelineStyles: Record<string, React.CSSProperties> = {
   list: { display: 'flex', flexDirection: 'column', gap: 4 },
-  emptyHint: { color: C.fg3, fontSize: 11 },
+  emptyHint: { color: C.fg3, fontSize: 12 },
   infoRow: {
     display: 'flex', alignItems: 'flex-start', gap: 6,
-    color: C.fg3, fontSize: 11, fontStyle: 'italic',
+    color: C.fg3, fontSize: 12, fontStyle: 'italic',
   },
   callRow: {
     display: 'flex', alignItems: 'flex-start', gap: 6,
@@ -140,8 +140,8 @@ const timelineStyles: Record<string, React.CSSProperties> = {
   detail: {
     marginLeft: 18, marginTop: 4, marginBottom: 6,
     padding: 9, background: C.surface3,
-    border: `1px solid ${C.border2}`, borderRadius: 7,
+    border: `1px solid ${C.border2}`, borderRadius: 8,
     maxHeight: 280, overflowY: 'auto',
   },
-  detailLabel: { color: C.fg2, fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 5 },
+  detailLabel: { color: C.fg2, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 5 },
 }

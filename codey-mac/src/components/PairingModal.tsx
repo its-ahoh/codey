@@ -108,7 +108,7 @@ const styles: Record<string, React.CSSProperties> = {
     background: C.surface2,
     padding: '8px 12px',
     borderRadius: 4,
-    fontSize: 16,
+    fontSize: 15,
     letterSpacing: 1,
     margin: '8px 0',
   },
