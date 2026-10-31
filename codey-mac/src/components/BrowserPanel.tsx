@@ -803,10 +803,7 @@ export const BrowserPanel: React.FC<Props> = ({
           <div style={styles.settingsContent}>
           <div style={styles.settingsPageHeader}>
             <div style={styles.settingsPageIcon}><UIIcon name="users" size={20} /></div>
-            <div>
-              <div style={styles.settingsPageTitle}>Profiles</div>
-              <div style={styles.extensionsCopy}>Manage saved browser sessions, cookies, and site storage.</div>
-            </div>
+            <div style={styles.settingsPageTitle}>Profiles</div>
           </div>
           <BrowserProfiles compact={narrowSettings} />
           </div>

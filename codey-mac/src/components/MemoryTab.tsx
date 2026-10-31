@@ -29,11 +29,7 @@ export const MemoryTab: React.FC<Props> = ({ isGatewayRunning }) => {
 
   return (
     <div style={pageStyle}>
-      <Section
-        first
-        title="Your memory"
-        description="Manage what Codey remembers about you and review your agent instruction files."
-      />
+      <Section first title="Your memory" />
       <CodeyMemorySettings />
       <GlobalMemoryPanel />
       <div style={{ marginTop: 12 }}>

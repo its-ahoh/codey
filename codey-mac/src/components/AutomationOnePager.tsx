@@ -415,7 +415,7 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
               )}
             </DetailCard>
 
-            <DetailCard title="Notifications" description="Choose which run outcomes should interrupt you.">
+            <DetailCard title="Notifications">
               <label style={settingRow}>
                 <span style={settingLabel}>Mac notification</span>
                 <select style={settingSelect} value={knobs.notify}
@@ -426,7 +426,7 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
               {a.report.channel && <div style={infoRow}><span>Channel delivery</span><strong>{a.report.channel.platform}</strong></div>}
             </DetailCard>
 
-            <DetailCard title="Details" description="Execution target and record metadata.">
+            <DetailCard title="Details">
               <div style={settingRow}>
                 <span style={settingLabel}>Checkout</span>
                 <button
@@ -562,12 +562,12 @@ const SummaryCard: React.FC<{ label: string; value: string; detail: string; icon
   )
 }
 
-const DetailCard: React.FC<{ title: string; description: string; action?: React.ReactNode; children: React.ReactNode }> = ({ title, description, action, children }) => (
+const DetailCard: React.FC<{ title: string; description?: string; action?: React.ReactNode; children: React.ReactNode }> = ({ title, description, action, children }) => (
   <section style={detailCard}>
     <div style={cardHeading}>
       <div>
         <div style={cardTitle}>{title}</div>
-        <div style={cardDescription}>{description}</div>
+        {description && <div style={cardDescription}>{description}</div>}
       </div>
       {action}
     </div>

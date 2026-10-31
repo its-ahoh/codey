@@ -281,10 +281,7 @@ export default function GlobalTeamsSection() {
             style={styles.dispatchHelpDialog}
           >
             <div style={styles.dispatchHelpHeader}>
-              <div>
-                <div id="dispatch-help-title" style={styles.dispatchHelpTitle}>Dispatch modes</div>
-                <div style={styles.dispatchHelpIntro}>Choose how bots collaborate on a team task.</div>
-              </div>
+              <div id="dispatch-help-title" style={styles.dispatchHelpTitle}>Dispatch modes</div>
               <button type="button" onClick={() => setDispatchHelpOpen(false)} aria-label="Close" style={styles.modalCloseBtn}><UIIcon name="close" size={15} /></button>
             </div>
             <div style={styles.dispatchHelpList}>
@@ -350,7 +347,6 @@ const styles: Record<string, CSSProperties> = {
   dispatchHelpDialog: { width: 'min(520px, 100%)', background: C.bg, border: `1px solid ${C.border}`, borderRadius: 14, boxShadow: '0 20px 60px rgba(0,0,0,0.28)', overflow: 'hidden' },
   dispatchHelpHeader: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, padding: '17px 18px 14px', borderBottom: `1px solid ${C.border}` },
   dispatchHelpTitle: { color: C.fg, fontSize: 15, fontWeight: 750 },
-  dispatchHelpIntro: { color: C.fg3, fontSize: 11, marginTop: 3 },
   modalCloseBtn: { width: 28, height: 28, display: 'grid', placeItems: 'center', padding: 0, background: C.surface2, color: C.fg2, border: `1px solid ${C.border}`, borderRadius: 8, cursor: 'pointer' },
   dispatchHelpList: { display: 'flex', flexDirection: 'column', gap: 9, padding: 14 },
   dispatchHelpItem: { display: 'grid', gridTemplateColumns: '34px 1fr', gap: 10, padding: 11, background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10 },

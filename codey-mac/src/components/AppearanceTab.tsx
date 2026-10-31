@@ -114,7 +114,7 @@ export const AppearanceTab: React.FC = () => {
 
   return (
     <div style={{ ...pageStyle, ...styles.wrap }}>
-      <Section first title="Appearance" description="Choose how Codey looks on this Mac." />
+      <Section first title="Appearance" />
       <div style={styles.settingsGroup}>
       <div style={{ ...styles.settingRow, borderTop: 'none' }}>
         <div style={{ ...styles.label, width: 'auto', flex: 1 }}>
@@ -234,7 +234,7 @@ export const AppearanceTab: React.FC = () => {
 
       {loaded && (
         <>
-          <Section title="Behavior" description="App-wide permissions, notifications, shortcuts, and launch behavior." />
+          <Section title="Behavior" />
           <div style={styles.settingsGroup}>
           <div style={{ ...styles.settingRow, borderTop: 'none' }}>
             <div style={{ ...styles.label, width: 'auto', flex: 1 }}>
@@ -297,7 +297,7 @@ export const AppearanceTab: React.FC = () => {
           </div>
           </div>
 
-          <Section title="Sound" description="Choose the sound Codey plays when a turn ends." />
+          <Section title="Sound" />
           <div style={styles.settingsGroup}>
           <div style={{ ...styles.settingRow, borderTop: 'none' }}>
             <div style={{ ...styles.label, width: 'auto', flex: 1 }}>

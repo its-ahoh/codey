@@ -15,17 +15,17 @@ import { WhisperTab } from './WhisperTab'
 import { ApiKeysTab } from './ApiKeysTab'
 import { UIIcon, type IconName } from './UIIcons'
 type Tab = 'general' | 'bots' | 'teams' | 'workspaces' | 'status' | 'settings' | 'agents' | 'memory' | 'whisper' | 'apiKeys'
-const TABS: { key: Tab; label: string; icon: IconName; description: string }[] = [
-  { key: 'general',    label: 'General',    icon: 'settings', description: 'Appearance & behavior' },
-  { key: 'apiKeys',    label: 'API Keys',   icon: 'key', description: 'Shared credentials' },
-  { key: 'settings',   label: 'AI Models',  icon: 'sparkle', description: 'Models & fallbacks' },
-  { key: 'agents',     label: 'Agents',     icon: 'bot', description: 'CLI install & environment' },
-  { key: 'memory',     label: 'Memory',     icon: 'book', description: 'User memory & agent instructions' },
-  { key: 'whisper',    label: 'Voice',      icon: 'mic', description: 'Voice input & hotkeys' },
-  { key: 'workspaces', label: 'Workspaces', icon: 'workspace', description: 'Project directories' },
-  { key: 'bots',    label: 'Bots',    icon: 'bot', description: 'Personalities' },
-  { key: 'teams',      label: 'Teams',      icon: 'users', description: 'Team library' },
-  { key: 'status',     label: 'Gateway',    icon: 'server', description: 'Service health & logs' },
+const TABS: { key: Tab; label: string; icon: IconName }[] = [
+  { key: 'general',    label: 'General',    icon: 'settings' },
+  { key: 'apiKeys',    label: 'API Keys',   icon: 'key' },
+  { key: 'settings',   label: 'AI Models',  icon: 'sparkle' },
+  { key: 'agents',     label: 'Agents',     icon: 'bot' },
+  { key: 'memory',     label: 'Memory',     icon: 'book' },
+  { key: 'whisper',    label: 'Voice',      icon: 'mic' },
+  { key: 'workspaces', label: 'Workspaces', icon: 'workspace' },
+  { key: 'bots',    label: 'Bots',    icon: 'bot' },
+  { key: 'teams',      label: 'Teams',      icon: 'users' },
+  { key: 'status',     label: 'Gateway',    icon: 'server' },
 ]
 
 interface Props { onClose: () => void; initialTab?: string }
@@ -74,7 +74,7 @@ export const SettingsOverlay: React.FC<Props> = ({ onClose, initialTab }) => {
           <main style={styles.main}>
             <div style={styles.mainHeader}>
               <span style={styles.mainHeaderIcon}><UIIcon name={activeTab.icon} size={17} /></span>
-              <div><div>{activeTab.label}</div><span style={styles.mainHeaderSub}>{activeTab.description}</span></div>
+              <div>{activeTab.label}</div>
             </div>
             <div style={styles.mainContent}>
               {tab === 'general'    && <AppearanceTab />}
@@ -132,6 +132,5 @@ const styles: Record<string, React.CSSProperties> = {
   main: { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: C.bg },
   mainHeader: { padding: '14px 22px', fontSize: 15, fontWeight: 750, color: C.fg, borderBottom: `1px solid ${C.border}`, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 10, background: C.surface },
   mainHeaderIcon: { width: 30, height: 30, display: 'grid', placeItems: 'center', borderRadius: 9, color: C.accent, background: C.accentDim },
-  mainHeaderSub: { display: 'block', color: C.fg3, fontSize: 11, fontWeight: 400, marginTop: 2 },
   mainContent: { flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column' },
 }
