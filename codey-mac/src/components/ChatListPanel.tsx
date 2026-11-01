@@ -417,6 +417,8 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
         disabled={!newChatWorkspace}
         title={newChatWorkspace ? `New chat in ${newChatWorkspace}` : 'No workspace available'}
       >New chat</SidebarAction>
+      <SidebarAction icon="folder" onClick={handleAddWorkspace} disabled={addingWorkspace}
+        title="Pick a folder and create a new workspace + chat">{addingWorkspace ? 'Picking…' : 'Add workspace'}</SidebarAction>
       <SidebarSearch aria-label="Search chats" placeholder="Search" title={`Search in ${totalChats} chats`} value={search}
         onChange={e => { setSearch(e.target.value); closeHoverCard() }}
         onKeyDown={e => { if (e.key === 'Escape') setSearch('') }} />
@@ -500,7 +502,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
                         title="Gateway default workspace — receives messages from chat platforms"
                         aria-label="Gateway default workspace"
                       >
-                        <UIIcon name="server" size={12} />
+                        <UIIcon name="star" size={12} filled />
                       </span>
                     )}
                   </span>
@@ -667,10 +669,6 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
             </div>
           )
         })}
-        {!searchTerm && (
-          <SidebarAction icon="add" onClick={handleAddWorkspace} disabled={addingWorkspace}
-            title="Pick a folder and create a new workspace + chat">{addingWorkspace ? 'Picking…' : 'Add workspace'}</SidebarAction>
-        )}
         </div>
       </div>
       <SidebarFooter onOpenSettings={onOpenSettings} onOpenAutomations={onOpenAutomations} onOpenTools={onOpenTools} automationsUnseenCount={automationsUnseenCount} />
@@ -698,7 +696,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
             style={styles.menuItem}
             onClick={() => setAsGateway(wsMenu.workspace)}
             disabled={wsMenu.workspace === gatewayWorkspace}
-          ><UIIcon name="server" size={14} />Set as Gateway default</button>
+          ><UIIcon name="star" size={14} />Set as Gateway default</button>
           <button style={styles.menuItem} onClick={() => revealWs(wsMenu.workspace)}><UIIcon name="folder" size={14} />Reveal in Finder</button>
           <button style={styles.menuItem} onClick={() => editMemoryWs(wsMenu.workspace)}><UIIcon name="sparkle" size={14} />Edit memory…</button>
           <div style={styles.menuSep} />
