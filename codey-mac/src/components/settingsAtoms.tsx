@@ -1,5 +1,5 @@
 import React from 'react'
-import { C } from '../theme'
+import { C, tint } from '../theme'
 
 export const sectionStyle: React.CSSProperties = {
   display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
@@ -22,9 +22,12 @@ export const selectStyle: React.CSSProperties = { ...inputStyle, cursor: 'pointe
 export const pillButton = (variant: 'primary' | 'danger' | 'ghost'): React.CSSProperties => ({
   padding: '8px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600,
   border: variant === 'ghost' ? `1px solid ${C.border2}` : '1px solid transparent', cursor: 'pointer',
-  background: variant === 'primary' ? C.accent : variant === 'danger' ? C.red + '22' : C.surface3,
+  background: variant === 'primary' ? C.accent : variant === 'danger' ? tint(C.red, 13) : C.surface3,
   color: variant === 'primary' ? C.onAccent : variant === 'danger' ? C.red : C.fg2,
 })
+
+/** Red text only: a tinted Delete on every row of a list turns into a column of red blocks. */
+export const rowDangerButton = (): React.CSSProperties => ({ ...pillButton('danger'), background: 'transparent' })
 
 export const Section: React.FC<{ title: string; description?: string; right?: React.ReactNode; first?: boolean }> = ({ title, description, right, first }) => (
   <div style={{ ...sectionStyle, marginTop: first ? 0 : sectionStyle.marginTop }}>

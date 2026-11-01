@@ -10,7 +10,7 @@ import type { Chat, ChatMessage, ChatSelection, FileAttachment } from '../types'
 import type { TeamConfigRaw } from '../../../packages/core/src/workspace'
 import { apiService, BotDto } from '../services/api'
 import { useChats } from '../hooks/useChats'
-import { C } from '../theme'
+import { C, tint } from '../theme'
 import { Markdown } from './Markdown'
 import { LinkPreviewCards } from './LinkPreviewCards'
 import { FilePathCwd } from './FilePathLink'
@@ -1942,8 +1942,8 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                       key={ch}
                       style={{
                         ...styles.linkMenuItem,
-                        background: linked ? C.red + '22' : 'transparent',
-                        border: linked ? `1px solid ${C.red}55` : '1px solid transparent',
+                        background: 'transparent',
+                        border: '1px solid transparent',
                         color: linked ? C.red : C.fg2,
                       }}
                       onClick={async () => {
@@ -3191,7 +3191,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   msgEditActions: { display: 'flex', justifyContent: 'flex-end', gap: 6 },
   msgEditCancel: {
-    background: 'transparent', color: C.onUser, border: `1px solid ${C.onUser}55`,
+    background: 'transparent', color: C.onUser, border: `1px solid ${tint(C.onUser, 33)}`,
     borderRadius: 6, padding: '3px 9px', fontSize: 12, cursor: 'pointer',
   },
   msgEditSave: {
@@ -3315,18 +3315,18 @@ const styles: Record<string, React.CSSProperties> = {
   },
   attachmentImage: {
     width: 96, height: 96, borderRadius: 8, objectFit: 'cover' as const, cursor: 'pointer',
-    border: `1px solid ${C.onUser}3d`,
+    border: `1px solid ${tint(C.onUser, 24)}`,
   },
   // The chip sits inside the user bubble, so every color is derived from
   // onUser rather than the surface palette - surface greys vanish on userBg.
   attachmentFileChip: {
     display: 'flex', alignItems: 'center', gap: 8,
-    background: `${C.onUser}1f`,
-    border: `1px solid ${C.onUser}3d`, borderRadius: 8,
+    background: tint(C.onUser, 12),
+    border: `1px solid ${tint(C.onUser, 24)}`, borderRadius: 8,
     padding: '6px 10px', cursor: 'pointer', maxWidth: 220,
   },
   attachmentFileIcon: {
-    width: 28, height: 28, borderRadius: 6, background: `${C.onUser}2e`,
+    width: 28, height: 28, borderRadius: 6, background: tint(C.onUser, 18),
     display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
   },
   attachmentFileMeta: { display: 'flex', flexDirection: 'column' as const, minWidth: 0, gap: 1 },
@@ -3334,7 +3334,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: C.onUser, fontSize: 12, fontWeight: 500,
     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, maxWidth: 160,
   },
-  attachmentFileSize: { color: `${C.onUser}b8`, fontSize: 11, fontVariantNumeric: 'tabular-nums' as const },
+  attachmentFileSize: { color: tint(C.onUser, 72), fontSize: 11, fontVariantNumeric: 'tabular-nums' as const },
   // Queued prompts sit directly above the composer, oldest first, so the order
   // they will run in is the order you read them.
   queuedRow: {

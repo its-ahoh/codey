@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { C } from '../theme'
+import { C, tint } from '../theme'
 import { HotkeyRecorder } from './HotkeyRecorder'
 import { Toggle } from './settingsAtoms'
 import { UIIcon } from './UIIcons'
@@ -206,7 +206,7 @@ const engineColHeadStyle: React.CSSProperties = {
 const pillButton = (variant: 'primary' | 'danger' | 'ghost'): React.CSSProperties => ({
   padding: '6px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600,
   border: 'none', cursor: 'pointer',
-  background: variant === 'primary' ? C.accent : variant === 'danger' ? C.red + '22' : C.surface3,
+  background: variant === 'primary' ? C.accent : variant === 'danger' ? tint(C.red, 13) : C.surface3,
   color: variant === 'primary' ? C.onAccent : variant === 'danger' ? C.red : C.fg2,
 })
 
@@ -541,7 +541,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
 
   return (
     <div style={{ padding: 20, height: '100%', overflowY: 'auto' }}>
-      {error && <div style={{ background: C.red + '22', color: C.red, padding: 10, borderRadius: 8, marginBottom: 10, fontSize: 12 }}>{error}</div>}
+      {error && <div style={{ background: tint(C.red, 13), color: C.red, padding: 10, borderRadius: 8, marginBottom: 10, fontSize: 12 }}>{error}</div>}
 
       {savedMsg && <div style={{ textAlign: 'right', color: C.green, fontSize: 12 }}>Saved</div>}
 

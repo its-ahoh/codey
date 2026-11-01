@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import { C } from '../theme'
+import { C, tint } from '../theme'
 import { UIIcon } from './UIIcons'
 import type { BrowserProfileSiteSummary, BrowserProfileSummary, ChromeClientInfo } from '../codey-api'
 import { BROWSER_PROFILE_AVATARS, browserProfileAvatar } from './browserProfileAvatars'
@@ -147,7 +147,7 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
     <div style={{ display: 'flex', flexDirection: 'column', gap: compact ? 6 : 10 }}>
       {error && (
         <div style={{
-          background: C.red + '22', color: C.red, padding: '8px 10px', borderRadius: 8, fontSize: compact ? 11 : 12,
+          background: tint(C.red, 13), color: C.red, padding: '8px 10px', borderRadius: 8, fontSize: compact ? 11 : 12,
         }}>{error}</div>
       )}
 
@@ -427,7 +427,7 @@ const styles: Record<string, React.CSSProperties> = {
   bindingEmpty: { padding: '5px 7px', color: C.fg3, fontSize: 12, lineHeight: 1.4 },
   avatarControl: { position: 'relative', flexShrink: 0 },
   avatarButton: { width: 34, height: 34, display: 'grid', placeItems: 'center', padding: 0, borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface2, cursor: 'pointer', fontSize: 18 },
-  avatarButtonActive: { borderColor: C.green, background: `${C.green}14` },
+  avatarButtonActive: { borderColor: C.green, background: tint(C.green, 8) },
   avatarPicker: { position: 'absolute', top: 39, left: 0, zIndex: 4, width: 224, display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 4, padding: 6, borderRadius: 10, border: `1px solid ${C.border2}`, background: C.surface2, boxShadow: '0 10px 24px rgba(0,0,0,0.28)' },
   avatarOption: { width: 32, height: 32, padding: 0, borderRadius: 8, border: '1px solid transparent', background: 'transparent', cursor: 'pointer', fontSize: 18 },
   avatarOptionActive: { borderColor: C.accent, background: C.accentDim },

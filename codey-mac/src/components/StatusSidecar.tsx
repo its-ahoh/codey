@@ -1,5 +1,5 @@
 import React from 'react'
-import { C } from '../theme'
+import { C, tint } from '../theme'
 import { statusMeta, formatAgo, type SidecarView, type StatusTone } from './taskHudView'
 import { createPrButtonState } from './createPrModel'
 import { UIIcon } from './UIIcons'
@@ -63,7 +63,6 @@ export const StatusSidecar: React.FC<Props> = ({
           style={{
             ...styles.compactDot,
             background: toneColor(sm.tone),
-            boxShadow: `0 0 7px ${toneColor(sm.tone)}66`,
           }}
         />
         <span style={styles.compactStatus}>{sm.label}</span>
@@ -74,7 +73,7 @@ export const StatusSidecar: React.FC<Props> = ({
   }
 
   const pill = (
-    <span style={{ ...styles.pill, color: toneColor(sm.tone), background: `${toneColor(sm.tone)}22` }}>{sm.label}</span>
+    <span style={{ ...styles.pill, color: toneColor(sm.tone), background: tint(toneColor(sm.tone), 13) }}>{sm.label}</span>
   )
 
   return (

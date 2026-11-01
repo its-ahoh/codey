@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { C } from '../theme'
+import { C, tint } from '../theme'
 import { pillButton, unwrap } from './settingsAtoms'
 import { timelineRows, playbookActions, relativeTime, TimelineRow } from './playbooksModel'
 import { UIIcon } from './UIIcons'
@@ -244,7 +244,7 @@ export const PlaybooksTab: React.FC<{ searchQuery?: string }> = ({ searchQuery =
   return (
     <div style={{ padding: '16px 20px', height: '100%', overflowY: 'auto' }}>
       {error && (
-        <div style={{ background: C.red + '22', color: C.red, padding: 10, borderRadius: 8, marginBottom: 12, fontSize: 12 }}>
+        <div style={{ background: tint(C.red, 13), color: C.red, padding: 10, borderRadius: 8, marginBottom: 12, fontSize: 12 }}>
           {error}
         </div>
       )}

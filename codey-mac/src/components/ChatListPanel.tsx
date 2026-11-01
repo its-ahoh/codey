@@ -5,7 +5,7 @@ import { useChats } from '../hooks/useChats'
 import { pollWhileVisible } from '../hooks/pollWhileVisible'
 import { apiService } from '../services/api'
 import type { Chat } from '../types'
-import { C } from '../theme'
+import { C, tint } from '../theme'
 import { RouteIcons } from './RouteIcons'
 import { setPendingPairing } from './pendingPairing'
 import { onWorkspacesChanged } from './workspacesChanged'
@@ -842,7 +842,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   attentionBadge: {
     width: 16, height: 16, borderRadius: 6, display: 'inline-flex', alignItems: 'center',
-    justifyContent: 'center', background: `${C.red}22`, color: C.red, fontSize: 12,
+    justifyContent: 'center', background: tint(C.red, 13), color: C.red, fontSize: 12,
     fontWeight: 600, flexShrink: 0,
   },
   runningBadge: {

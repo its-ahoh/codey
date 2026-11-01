@@ -2,7 +2,7 @@ import React from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkCjkFriendly from 'remark-cjk-friendly'
-import { C } from '../theme'
+import { C, tint } from '../theme'
 import { FilePathCwd, FilePathLink } from './FilePathLink'
 import { parseFileRef } from './filePathRef'
 import { markdownImageSource } from './markdownImage'
@@ -133,7 +133,7 @@ const CodeBlock: React.FC<{
           type="button"
           onClick={() => { void onCopy() }}
           style={{
-            background: copied ? `${C.green}1f` : 'transparent',
+            background: copied ? tint(C.green, 12) : 'transparent',
             border: `1px solid ${copied ? C.green : borderColor}`,
             color: copied ? C.green : metaColor,
             borderRadius: 4,

@@ -281,6 +281,10 @@ export const C = (Object.keys(classicDark) as (keyof Palette)[]).reduce((acc, ke
   return acc
 }, {} as Record<keyof Palette, string>)
 
+/** A see-through version of a color. `C` tokens are `var(--x)`, so adding a hex alpha suffix to one is invalid CSS. */
+export const tint = (color: string, percent: number): string =>
+  `color-mix(in srgb, ${color} ${percent}%, transparent)`
+
 export function paletteToCssVars(p: Palette): string {
   return (Object.keys(p) as (keyof Palette)[])
     .map(k => `  --${k}: ${p[k]};`)

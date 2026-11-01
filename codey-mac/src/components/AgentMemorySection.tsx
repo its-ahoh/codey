@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import { C } from '../theme'
+import { C, tint } from '../theme'
 import { selectStyle, Toggle, unwrap } from './settingsAtoms'
 import { OpenInEditorButton } from './OpenInEditorButton'
 import { MemoryPanel } from './CodeyMemorySection'
@@ -103,7 +103,7 @@ function useMemory(load: () => Promise<AgentMemoryGroup[]>, enabled: boolean) {
 }
 
 const ErrorBox: React.FC<{ message: string }> = ({ message }) => (
-  <div style={{ background: C.red + '22', color: C.red, padding: 10, borderRadius: 8, marginBottom: 10, fontSize: 12 }}>{message}</div>
+  <div style={{ background: tint(C.red, 13), color: C.red, padding: 10, borderRadius: 8, marginBottom: 10, fontSize: 12 }}>{message}</div>
 )
 
 /** A read-only card showing one agent's instruction files, chosen by a

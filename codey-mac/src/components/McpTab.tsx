@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { C } from '../theme'
-import { inputStyle, pillButton, Toggle, unwrap } from './settingsAtoms'
+import { inputStyle, pillButton, rowDangerButton, Toggle, unwrap } from './settingsAtoms'
 import { UIIcon } from './UIIcons'
 import { parseArgsLine, parseEnvLines } from './mcp-form'
 import { matchesToolSearch } from './tools-search'
@@ -161,7 +161,7 @@ export const McpTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '' })
             onClick={() => { setForm(toForm(server)); setEditing(server.name) }}
           >Edit</button>
           <button
-            style={pillButton('danger')}
+            style={rowDangerButton()}
             disabled={busy === server.name}
             onClick={() => void remove(server)}
           ><UIIcon name="trash" size={13} /></button>

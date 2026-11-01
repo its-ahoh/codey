@@ -1,5 +1,5 @@
 import React from 'react'
-import { C } from '../theme'
+import { C, tint } from '../theme'
 import type { TaskBrief } from '../types'
 import { statusMeta, formatAgo, splitTimeline, type StatusTone } from './taskHudView'
 
@@ -54,7 +54,7 @@ export const TaskHud: React.FC<Props> = ({ brief, loading, onAnswer }) => {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div><b style={{ fontSize: 15 }}>{brief.state.progress}%</b>{brief.state.stepLabel ? ` · ${brief.state.stepLabel}` : ''}</div>
           <span style={{ fontSize: 12, padding: '3px 9px', borderRadius: 6, color: toneColor(sm.tone),
-            background: `${toneColor(sm.tone)}22` }}>{sm.label}</span>
+            background: tint(toneColor(sm.tone), 13) }}>{sm.label}</span>
         </div>
         <div style={{ height: 4, background: C.surface3, borderRadius: 2, marginTop: 8, overflow: 'hidden' }}>
           <div style={{ height: '100%', width: `${brief.state.progress}%`, background: C.accent, borderRadius: 2 }} />

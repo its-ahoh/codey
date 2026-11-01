@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import { C } from '../theme'
+import { C, tint } from '../theme'
 import {
-  inputStyle, pageStyle, pillButton, Section, unwrap,
+  inputStyle, pageStyle, pillButton, rowDangerButton, Section, unwrap,
 } from './settingsAtoms'
 import { UIIcon } from './UIIcons'
 
@@ -102,7 +102,7 @@ const ApiRow: React.FC<{
         </div>
         <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
           <button onClick={() => setEditing(true)} style={pillButton('ghost')}>Edit</button>
-          {onDelete && <button onClick={() => onDelete(entry.name)} style={pillButton('danger')}>Delete</button>}
+          {onDelete && <button onClick={() => onDelete(entry.name)} style={rowDangerButton()}>Delete</button>}
         </div>
       </div>
     )
@@ -186,7 +186,7 @@ export const ApiKeysTab: React.FC<Props> = ({ isGatewayRunning, autoCreatePurpos
 
   return (
     <div style={pageStyle}>
-      {error && <div style={{ background: C.red + '22', color: C.red, padding: 10, borderRadius: 8, marginBottom: 10, fontSize: 12 }}>{error}</div>}
+      {error && <div style={{ background: tint(C.red, 13), color: C.red, padding: 10, borderRadius: 8, marginBottom: 10, fontSize: 12 }}>{error}</div>}
 
 
       <Section first title="Voice" right={

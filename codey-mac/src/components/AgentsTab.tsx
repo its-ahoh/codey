@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import { C } from '../theme'
+import { C, tint } from '../theme'
 import { pageStyle, Section, selectStyle, Toggle, unwrap } from './settingsAtoms'
 import { AGENT_INSTALL_URL, AGENT_NAMES } from './SettingsTab'
 import {
@@ -159,7 +159,7 @@ export const AgentsTab: React.FC<Props> = ({ isGatewayRunning }) => {
         }
         .codey-updating .codey-fall-b { animation-delay: 0.28s }
       `}</style>
-      {error && <div style={{ background: C.red + '22', color: C.red, padding: 10, borderRadius: 8, marginBottom: 10, fontSize: 12 }}>{error}</div>}
+      {error && <div style={{ background: tint(C.red, 13), color: C.red, padding: 10, borderRadius: 8, marginBottom: 10, fontSize: 12 }}>{error}</div>}
       {failure && (
         <AgentUpdateFailureModal
           agent={failure.agent}

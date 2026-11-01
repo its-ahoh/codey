@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import { C } from '../theme'
+import { C, tint } from '../theme'
 import { Toggle } from './settingsAtoms'
 
 // Mirrors the renderer-side channel config shape. Kept local since this is
@@ -170,7 +170,7 @@ export const ChannelsSection: React.FC<ChannelsSectionProps> = ({ liveStatus, is
 
   return (
     <div>
-      {error && <div style={{ background: C.red + '22', color: C.red, padding: 10, borderRadius: 8, marginBottom: 10, fontSize: 12 }}>{error}</div>}
+      {error && <div style={{ background: tint(C.red, 13), color: C.red, padding: 10, borderRadius: 8, marginBottom: 10, fontSize: 12 }}>{error}</div>}
       <ChannelEditor
         label="Telegram"
         enabled={!!channels.telegram?.enabled}

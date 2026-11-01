@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { C } from '../theme'
+import { C, tint } from '../theme'
 import { useGitBranches } from '../hooks/useGitBranches'
 import { BranchNote, compactWorktreePath, currentFirst, describePullResult, filterBranches, worktreeForBranch } from './branchPickerModel'
 import { UIIcon } from './UIIcons'
@@ -356,7 +356,7 @@ const styles: Record<string, React.CSSProperties> = {
   checkoutMode: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '1px 3px 2px' },
   modeLabel: { display: 'inline-flex', alignItems: 'center', gap: 5, color: C.fg3, fontSize: 11, paddingLeft: 3 },
   worktreeBadge: { display: 'inline-flex', alignItems: 'center', gap: 5, color: C.green, fontSize: 11, paddingLeft: 3, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  createWorktreeButton: { background: C.accentDim, color: C.accent, border: `1px solid ${C.accent}55`, borderRadius: 6, padding: '5px 8px', fontSize: 11, cursor: 'pointer' },
+  createWorktreeButton: { background: C.accentDim, color: C.accent, border: `1px solid ${tint(C.accent, 33)}`, borderRadius: 6, padding: '5px 8px', fontSize: 11, cursor: 'pointer' },
   section: { display: 'flex', flexDirection: 'column', gap: 8 },
   sectionLabel: { color: C.fg3, fontSize: 11 },
   // The rule sits on the scroll box itself, not on the footer: with the menu's

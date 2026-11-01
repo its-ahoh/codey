@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { apiService } from '../services/api'
-import { C } from '../theme'
-import { fieldStyle, inputStyle, pageStyle, selectStyle, pillButton, Section, Toggle, unwrap } from './settingsAtoms'
+import { C, tint } from '../theme'
+import { fieldStyle, inputStyle, pageStyle, selectStyle, pillButton, rowDangerButton, Section, Toggle, unwrap } from './settingsAtoms'
 import { UIIcon } from './UIIcons'
 import { AGENT_API_TYPE, AGENT_NAMES, ApiType, agentsPinnedTo, missingAllEndpoints, modelFitsApiType } from './modelApiType'
 
@@ -113,7 +113,7 @@ const ModelRow: React.FC<{
         </div>
         <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
           <button onClick={() => setEditing(true)} style={pillButton('ghost')}>Edit</button>
-          {onDelete && <button onClick={() => onDelete(entry.model)} style={pillButton('danger')}>Delete</button>}
+          {onDelete && <button onClick={() => onDelete(entry.model)} style={rowDangerButton()}>Delete</button>}
         </div>
       </div>
     )
@@ -284,7 +284,7 @@ const FallbackList: React.FC<{
                 }} title="The default agent — drag a row above to replace it">—</span>
               ) : (
                 <button onClick={() => remove(i)} style={{
-                  ...pillButton('danger'),
+                  ...rowDangerButton(),
                   width: 28, height: 28, padding: 0, flexShrink: 0,
                   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                 }} aria-label="Remove fallback"><UIIcon name="trash" size={13} /></button>
@@ -406,7 +406,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
 
   return (
     <div style={pageStyle}>
-      {error && <div style={{ background: C.red + '22', color: C.red, padding: 10, borderRadius: 8, marginBottom: 10, fontSize: 12 }}>{error}</div>}
+      {error && <div style={{ background: tint(C.red, 13), color: C.red, padding: 10, borderRadius: 8, marginBottom: 10, fontSize: 12 }}>{error}</div>}
 
       <Section first title="Advisor" description="Picks bots and coordinates teams."/>
       <div style={{

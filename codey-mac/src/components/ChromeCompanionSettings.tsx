@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import type { BrowserProfileSummary, ChromeClientInfo, ChromeCompanionStatus, ChromeSessionSite } from '../codey-api'
-import { C } from '../theme'
+import { C, tint } from '../theme'
 
 const EMPTY: ChromeCompanionStatus = {
   endpoint: null,
@@ -370,8 +370,8 @@ const styles: Record<string, React.CSSProperties> = {
   stack: { alignItems: 'stretch', flexDirection: 'column' },
   primary: { minHeight: 38, padding: '0 14px', border: `1px solid ${C.accent}`, borderRadius: 8, background: C.accent, color: C.onAccent, cursor: 'pointer', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap' },
   secondary: { minHeight: 31, padding: '0 11px', border: `1px solid ${C.border2}`, borderRadius: 8, background: C.surface2, color: C.fg2, cursor: 'pointer', fontSize: 12 },
-  error: { padding: '9px 11px', borderRadius: 8, color: C.red, background: `${C.red}18`, border: `1px solid ${C.red}55`, fontSize: 12 },
-  success: { padding: '9px 11px', borderRadius: 8, color: C.green, background: `${C.green}18`, border: `1px solid ${C.green}55`, fontSize: 12 },
+  error: { padding: '9px 11px', borderRadius: 8, color: C.red, background: tint(C.red, 9), border: `1px solid ${tint(C.red, 33)}`, fontSize: 12 },
+  success: { padding: '9px 11px', borderRadius: 8, color: C.green, background: tint(C.green, 9), border: `1px solid ${tint(C.green, 33)}`, fontSize: 12 },
   clientRow: { display: 'flex', alignItems: 'center', gap: 9, padding: '7px 8px', borderRadius: 8, background: C.surface2, border: `1px solid ${C.border}` },
   clientCopy: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 },
   clientName: { padding: 0, border: 'none', background: 'none', color: C.fg, cursor: 'pointer', fontSize: 12, fontWeight: 600, textAlign: 'left' },

@@ -359,7 +359,7 @@ const listStat: React.CSSProperties = { display: 'flex', alignItems: 'baseline',
 const styles: Record<string, React.CSSProperties> = {
   body: { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' },
   errorBanner: {
-    margin: '10px 20px 0', background: C.dangerBg ?? (C.red + '22'), color: C.dangerFg ?? C.red,
+    margin: '10px 20px 0', background: C.dangerBg, color: C.dangerFg,
     padding: 10, borderRadius: 8, fontSize: 12,
   },
   list: { padding: '22px 24px', flex: 1, overflowY: 'auto', background: C.bg },

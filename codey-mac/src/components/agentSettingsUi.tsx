@@ -1,5 +1,5 @@
 import React from 'react'
-import { C } from '../theme'
+import { C, tint } from '../theme'
 import { UIIcon } from './UIIcons'
 
 /**
@@ -38,7 +38,7 @@ export const rowHintStyle: React.CSSProperties = { color: C.fg3, fontSize: 12, l
 export const iconButtonStyle = (opts: { accent?: boolean; danger?: boolean; disabled?: boolean } = {}): React.CSSProperties => ({
   display: 'grid', placeItems: 'center', width: 28, height: 28, padding: 0, flexShrink: 0,
   borderRadius: 8, cursor: opts.disabled ? 'default' : 'pointer', background: 'transparent',
-  border: `1px solid ${opts.accent ? C.accent : opts.danger ? C.red + '55' : C.border2}`,
+  border: `1px solid ${opts.accent ? C.accent : opts.danger ? tint(C.red, 33) : C.border2}`,
   color: opts.accent ? C.accent : opts.danger ? C.red : C.fg2,
   opacity: opts.disabled ? 0.45 : 1,
 })

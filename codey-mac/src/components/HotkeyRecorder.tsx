@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { C } from '../theme'
+import { C, tint } from '../theme'
 
 const inputStyle: React.CSSProperties = {
   background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 8,
@@ -8,7 +8,7 @@ const inputStyle: React.CSSProperties = {
 const pillButton = (variant: 'primary' | 'danger' | 'ghost'): React.CSSProperties => ({
   padding: '6px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600,
   border: 'none', cursor: 'pointer',
-  background: variant === 'primary' ? C.accent : variant === 'danger' ? C.red + '22' : C.surface3,
+  background: variant === 'primary' ? C.accent : variant === 'danger' ? tint(C.red, 13) : C.surface3,
   color: variant === 'primary' ? C.onAccent : variant === 'danger' ? C.red : C.fg2,
 })
 

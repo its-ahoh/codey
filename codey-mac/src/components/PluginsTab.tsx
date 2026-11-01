@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { C } from '../theme'
+import { C, tint } from '../theme'
 import { pillButton, Toggle, unwrap } from './settingsAtoms'
 import { UIIcon } from './UIIcons'
 import { PluginLogo } from './PluginLogos'
@@ -428,7 +428,7 @@ const styles: Record<string, React.CSSProperties> = {
   updateNotice: { marginTop: 10, color: C.accent, fontWeight: 600 },
   warningBox: {
     marginTop: 10, padding: '10px 11px', borderRadius: 8, color: C.fg2,
-    background: C.warningBg, border: `1px solid ${C.warningFg}55`, lineHeight: 1.5,
+    background: C.warningBg, border: `1px solid ${tint(C.warningFg, 33)}`, lineHeight: 1.5,
   },
   confirmActions: { display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 10 },
   manageActions: { display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 },
