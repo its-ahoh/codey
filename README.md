@@ -17,7 +17,7 @@
 
 Think of it less as a chat bridge and more as **the control plane for the coding agents you already use**. It runs entirely on your own machine, using your existing agent CLIs and accounts — no proxy server, no extra subscription.
 
-**Contents:** [Why Codey](#why-codey) · [Download](#download) · [Features](#features) · [Quick Start](#quick-start) · [Configuration](#configuration) · [Teams & flow graphs](#bot-configuration) · [Commands](#commands) · [Voice](#voice-input-macos) · [FAQ](#faq)
+**Contents:** [Why Codey](#why-codey) · [Download](#download) · [Features](#features) · [Quick Start](#quick-start) · [Configuration](#configuration) · [Teams & flow graphs](#bot-configuration) · [Commands](#commands) · [Voice](#voice-input-macos) · [Memory](#shared-memory-with-co-memo) · [FAQ](#faq)
 
 <p align="center">
   <img src="assets/demo.gif" alt="Codey demo: a scheduled Automation drafts a post and publishes it through the built-in agent-controlled browser, hands-free" width="800" />
@@ -26,9 +26,9 @@ Think of it less as a chat bridge and more as **the control plane for the coding
 
 ## Why Codey
 
-- **One project, the right agent for each job.** Per-workspace defaults plus per-bot overrides — Architect on Opus, Executor on Codex, Reviewer on local OpenCode, etc.
+- **The right agent for each job.** Every chat picks its own agent, model, and effort, so one project can use Claude Code here and Codex there.
 - **Run multiple agents in parallel on the same prompt.** Compare Claude Code vs. Codex vs. OpenCode side by side instead of guessing which one fits.
-- **Bot teams instead of single prompts.** Define roles, personalities, tools, and let them run sequentially or be auto-dispatched to the subset that's actually relevant.
+- **Bot teams instead of single prompts.** Define roles, personalities, and tools, then run them in order, let the Advisor pick who is needed, or hold a roundtable.
 - **Use them from anywhere.** Native macOS menu-bar app for daily driving, chat platforms for delegating from your phone, voice input for hands-free dictation into any focused app.
 - **Local and yours.** Runs on your machine, talks to your accounts, no proxy server in the middle.
 
@@ -36,31 +36,30 @@ Think of it less as a chat bridge and more as **the control plane for the coding
 
 Grab the latest macOS app from the [Releases page](https://github.com/its-ahoh/codey/releases/latest):
 
-- Apple Silicon: `Codey-<version>-arm64.dmg`
-- Intel: `Codey-<version>.dmg`
+- `Codey-<version>-arm64.dmg` (Apple Silicon only)
 
-Builds are currently unsigned — on first launch, right-click the app → **Open** → confirm to bypass Gatekeeper.
+Release builds are signed and notarized, and they update themselves.
 
 ## Features
 
 **Agent management**
 - **Multiple coding agents**: Claude Code, OpenCode, Codex, [pi](https://pi.dev) (with session resume)
 - **Parallel execution**: Run multiple agents on the same prompt simultaneously to compare
-- **Per-workspace defaults**: Each project picks its own default agent + model
+- **Per-chat settings**: Each chat picks its own agent, model, and effort
 - **Thinking effort**: One low → max control that maps onto each CLI's own reasoning knob
-- **Auto-dispatcher**: Optional built-in dispatcher routes a task to the right subset of a team
+- **Advisor**: Optional routing model that sends a task to the right members of a team
 
 **Workspaces & bots**
-- **Multi-workspace**: Each workspace has its own working directory, memory, and bots
-- **Bot teams**: Define bots with roles, personalities, and tools; execution inherits the chat or Default agent/model
+- **Multi-workspace**: Each workspace points at its own project folder and enables its own teams
+- **Bot teams**: Keep bots in one shared library, with roles, personalities, and tools; execution inherits the chat or Default agent/model
 - **Flow graphs**: Draw a team as a graph on a canvas — a judge LLM picks the next edge by its condition, so runs can branch, loop back for revisions, or pause to ask you
-- **Memory**: Workspace + user-global memory that bots read on every run and write insights back to
+- **Memory**: User and project memory through Co-memo, recalled before each run
 - **Conversation context**: Remembers previous messages within a session
 
 **Interfaces**
-- **macOS menu-bar app** with multi-chat tabs, workspace switcher, and inline settings
+- **macOS app**: Chats listed by Bot or by Workspace, plus Quick Capture to send a task from anywhere
 - **Chat platforms**: Telegram, Discord, iMessage
-- **Voice (macOS)**: Push-to-talk dictation into any focused app, plus a spoken back-and-forth conversation mode — on-device WhisperKit (CoreML / ANE), OpenAI-compatible APIs, or streaming realtime
+- **Voice (macOS)**: Hotkey dictation into any focused app, plus a spoken back-and-forth conversation mode — on-device WhisperKit (CoreML / ANE), OpenAI-compatible APIs, or streaming realtime
 - **Health endpoints**: Built-in health check and metrics
 
 **In the chat window**
@@ -68,18 +67,20 @@ Builds are currently unsigned — on first launch, right-click the app → **Ope
 - **File changes**: Every edit in the chat, grouped by file, as git-style diffs
 - **Git-aware**: Branch picker, sync status, and optional per-chat git worktree isolation so parallel chats never collide
 - **Quick Question**: A read-only side thread that answers questions about the current chat without touching it
-- **`@` file mentions, attachments, and themes**: Type `@` to pull in workspace files; paste or drop images and files; pick a color theme
+- **`@` mentions**: Pull in files, skills, plugins, or MCP servers. `@` a bot or team to send it the task; `@` several bots to form a team on the spot
+- **Attachments and themes**: Paste or drop images and files; pick a color theme
+- **Images and diagrams**: Agent images and Mermaid diagrams show up in the Mac app and on channels
 
 **Skills, automation & web**
-- **Skills & playbooks**: Toggle skills per workspace; Codey watches what your runs actually do and crystallizes repeated procedures into reusable playbooks
+- **Skills & playbooks**: Install skills once and every agent can use them; Codey watches what your runs do and can save repeated procedures as playbook skills
 - **Automations**: Put agents on a schedule — daily posts, recurring checks, cron-style workflows managed from the Mac app
 - **Agent-controlled browser**: A built-in secure browser agents can open, read, click, and fill — view-only by default, with every state-changing action gated on your approval
-- **External MCP servers**: Plug extra tools into your agents from the Mac app's MCP tab
+- **External MCP servers**: Plug extra tools into your agents from **Tools → MCPs** in the Mac app
 - **QR pairing**: Link Telegram / iMessage to your gateway by scanning a code
 
 ## Quick Start
 
-This is a monorepo with three workspaces: `@codey/core`, `@codey/gateway`, and `codey-mac`.
+You need Node.js 24.12 or newer and at least one agent CLI. This is a monorepo with three workspaces: `@codey/core`, `@codey/gateway`, and `codey-mac`.
 
 ```bash
 # Install dependencies (all workspaces)
@@ -111,14 +112,10 @@ Edit `gateway.json`:
 
 ```json
 {
-  "gateway": {
-    "port": 3000,
-    "defaultAgent": "claude-code",
-    "defaultModel": "claude-sonnet-4-20250514"
-  },
+  "gateway": { "port": 3000 },
   "channels": {
-    "telegram": { "enabled": true, "botToken": "YOUR_TOKEN" },
-    "discord": { "enabled": false, "botToken": "" },
+    "telegram": { "enabled": true },
+    "discord": { "enabled": false },
     "imessage": { "enabled": false }
   },
   "agents": {
@@ -127,39 +124,27 @@ Edit `gateway.json`:
     "pi": { "enabled": true, "provider": "anthropic", "defaultModel": "claude-sonnet-4-5" },
     "codex": { "enabled": true, "provider": "openai", "defaultModel": "gpt-5-codex" }
   },
-  "profiles": [
-    {
-      "name": "default",
-      "anthropic": { "apiKey": "sk-..." },
-      "openai": { "apiKey": "sk-..." }
-    }
-  ],
-  "activeProfile": "default",
-  "dev": {
-    "logLevel": "info"
-  }
+  "advisor": { "agent": "claude-code", "model": "claude-haiku-4-5" },
+  "dev": { "logLevel": "info" }
 }
 ```
 
-Advisor (auto-dispatch + team routing) settings: `advisor.{agent, model}` (optional).
+`advisor` is optional and sets the model used for team routing.
+
+**Secrets don't go in this file.** Add API keys and bot tokens in the Mac app under **Settings → Models & keys** and **Settings → Gateway**. They are stored in `~/.codey/secrets.json`. If `gateway.json` still holds a secret, Codey moves it there on load. Environment variables also work: `TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`.
 
 ## Workspace Structure
 
 ```
+bots/
+└── architect/
+    ├── personality.md       # Role, Soul, Instructions
+    └── config.json          # Tools, display name, routing hint
 workspaces/
 ├── default/
-│   ├── workspace.json       # Workspace config (workingDir + bots)
-│   └── bots/
-│       ├── architect.md
-│       └── executor.md
-├── project-a/
-│   ├── workspace.json
-│   └── bots/
-│       └── ...
-└── project-b/
-    ├── workspace.json
-    └── bots/
-        └── ...
+│   └── workspace.json       # Project folder + enabled teams
+└── project-a/
+    └── workspace.json
 ```
 
 User and project memories are stored in Co-memo, separately from workspace files. Project memory is scoped by the project directory path.
@@ -169,43 +154,35 @@ Each workspace ties to a project directory via `workspace.json`:
 ```json
 {
   "workingDir": "/path/to/project",
-  "bots": {
-    "architect": {
-      "tools": ["file-system", "git", "web-search"]
-    }
-  }
+  "teams": ["reviewers"]
 }
 ```
 
-Switching workspaces (`/workspace myproject`) automatically sets the agent's working directory.
+`teams` lists which teams from the shared library this workspace can use. Switching workspaces (`/workspace myproject`) automatically sets the agent's working directory.
 
 ## Bot Configuration
 
-Each bot is defined in a markdown file:
+Each bot is a folder in the shared `bots/` library. `personality.md` holds its character:
 
 ```markdown
-# Bot: Architect
-
 ## Role
 Lead architect responsible for project planning...
 
 ## Soul
 Strategic thinker, focused on scalability...
 
-## Coding Agent
-claude-code
-
-## Model
-claude-opus-4-20250514
-
-## Tools
-file-system, git, web-search
-
-## Relationship
-Leads the implementation bots
-
 ## Instructions
 When prompted, analyze requirements and provide...
+```
+
+`config.json` holds its settings. The bot runs on the agent and model of the chat it is in.
+
+```json
+{
+  "displayName": "Architect",
+  "tools": ["file-system", "git", "web-search"],
+  "dispatchHint": "Plans architecture and breaks down large features"
+}
 ```
 
 ## Commands
@@ -213,9 +190,11 @@ When prompted, analyze requirements and provide...
 ### Bots
 | Command | Description |
 |---------|-------------|
-| `/bots` | List all bots in current workspace |
+| `/bots` | List all bots in the library |
 | `/bot <name> <task>` | Run a specific bot |
+| `/teams` | List teams on this workspace |
 | `/team <name> [--all] <task>` | Run a named team (see below) |
+| `/skill <name> <task>` | Run a task with a specific skill |
 
 **Team dispatch details:**
 
@@ -232,7 +211,7 @@ When prompted, analyze requirements and provide...
     and decides when to ask the user, continue, or terminate.
     Optional settings under `roundtable: { maxDurationMs, idleTimeoutMs, advisorPollMs }`.
     See [design spec](docs/superpowers/specs/2026-05-24-team-parallel-mode-design.md).
-  - A sequential (`all`) team can also carry a **flow graph** — `graph: { entry, maxHops, nodes, edges }`.
+  - A sequential team can also carry a **flow graph** — `graph: { entry, maxHops, nodes, edges }`.
     Nodes are bots (plus `start` / `end`); each edge carries a natural-language condition.
     After every bot runs, a judge LLM (the Advisor's agent/model) picks the next edge, so a flow can
     branch or loop back to an earlier bot for revision until it reaches `end` or hits `maxHops`.
@@ -248,8 +227,8 @@ When prompted, analyze requirements and provide...
 ### Agents
 | Command | Description |
 |---------|-------------|
-| `/parallel <prompt>` | Run all agents in parallel |
-| `/all <prompt>` | Run all agents in parallel |
+| `/parallel <prompt>` | Run all agents in parallel (legacy) |
+| `/all <prompt>` | Same as `/parallel` (legacy) |
 | `/agent <name>` | Switch default agent |
 
 ### Settings
@@ -259,7 +238,12 @@ When prompted, analyze requirements and provide...
 | `/status` | Show gateway status |
 | `/clear` | Clear conversation history |
 | `/reset` | Start a new conversation |
-| `/model <name>` | Show/set model |
+| `/model [name]` | Show/set model |
+| `/effort <level>` | Set effort (low/medium/high/xhigh/max) |
+| `/cwd [path]` | Show/set working directory |
+| `/config` | Show current config |
+| `/memory` | List recent memories (`/memory search <query>` to search) |
+| `/remember <text>` | Save a memory |
 
 ## Examples
 
@@ -274,7 +258,7 @@ When prompted, analyze requirements and provide...
 /bot architect design a REST API
 
 # Run team task
-/team build a todo app
+/team builders build a todo app
 
 # Run all agents in parallel
 /parallel create a hello world app
@@ -282,7 +266,7 @@ When prompted, analyze requirements and provide...
 
 ## Voice Input (macOS)
 
-System-wide push-to-talk dictation. Hold the configured hotkey (default `Fn`), speak, release — Codey transcribes and pastes into whatever text field is focused, no matter which app you're in.
+System-wide dictation. Press the hotkey (default `Fn`), speak, and press it again — Codey transcribes and pastes into whatever text field is focused, no matter which app you're in. A second hotkey (default `Shift+Fn`) starts a spoken conversation with the current chat.
 
 **Transcription backends:**
 - **Local (WhisperKit)** — on-device CoreML / Neural Engine. Models pulled from HuggingFace on first use; default is `large-v3-turbo` quantized (~954 MB). No network, no API key. Pipeline idle-unloads after 30s so RAM/ANE stay free when you're not dictating.
@@ -298,7 +282,7 @@ System-wide push-to-talk dictation. Hold the configured hotkey (default `Fn`), s
 - **Hotkey** (default `Fn`) — toggle recording on / off. Configurable to F-keys or modifier combos (`Cmd+Shift+V`, etc.)
 - **Esc while recording** — cancel without transcribing (buffer discarded)
 
-Configure everything from the macOS app's **Whisper** tab: pick provider, swap models, download / warm / delete WhisperKit variants, change hotkey or injection mode (paste vs Accessibility API).
+Configure everything in the macOS app under **Settings → Voice**: pick provider, swap models, download / warm / delete WhisperKit variants, change hotkey or injection mode (paste vs Accessibility API).
 
 Requires Microphone and Accessibility permissions (the app prompts on first launch).
 
@@ -321,31 +305,51 @@ npm run tui                    # Launch terminal UI
 npm run build                  # Build all workspaces
 ```
 
-For everything else (channels, profiles, API keys), edit `gateway.json` directly or use the macOS app's Settings panel.
+For everything else, use the macOS app's Settings or edit `gateway.json`. Secrets belong in Settings, not in that file.
 
 ## Project Structure
 
 ```
 packages/
-├── core/                # Shared types, workspace + bot managers
+├── core/                # Shared types, agents, workspace + bot managers
 │   └── src/
-└── gateway/             # Gateway server, channels, agents
+│       └── agents/      # Coding agent adapters (claude-code, opencode, codex, pi)
+└── gateway/             # Gateway server and channels
     └── src/
-        ├── agents/      # Coding agent adapters (claude-code, opencode, codex, pi)
         ├── channels/    # Chat platform handlers (telegram, discord, imessage)
         ├── config.ts
-        ├── conversation.ts
         ├── gateway.ts
         ├── health.ts
         ├── logger.ts
         └── index.ts
-codey-mac/               # macOS menu-bar app (Electron + React)
+codey-mac/               # macOS app (Electron + React)
 ├── electron/            # Main + preload processes
 └── src/                 # Renderer (React UI)
 voice/                   # Native Swift helper for hotkey + capture + WhisperKit
 └── Sources/CodeyVoice/  # AudioCapture, HotkeyManager, HudOverlay, WhisperKitEngine, ...
-workspaces/              # Per-workspace config, memory, and bots
+bots/                    # Shared bot library
+workspaces/              # Per-workspace config
 ```
+
+## Shared memory with Co-memo
+
+Codey uses the official `co-memo` 0.8.3 package through local MCP stdio. The gateway requires Node.js 24.12+. User notes are shared across projects; project notes use the chat's working directory, including its worktree. Conversations without a project receive personal memory only. No Bot-private memory is created.
+
+Settings → Memory and workspace memory panels edit Co-memo directly. Edits and archives retain the version shown to the user, so concurrent changes are rejected. Archive keeps history. Codey's memory panels provide active, archived and conflict views, version history, restoration, and explicit conflict resolution by selecting current/candidate content or saving a merge. Stale restores and changed conflict reviews are rejected. Search, pause/resume and confirmed permanent deletion of archived notes are available directly in Codey. Memory controls use the app theme, with expandable cards and an on-demand composer; no external console is required.
+
+The gateway recalls memory context before execution. Manage user memory in Settings and project memory in workspace panels. Agents receive instructions for the bundled Co-memo CLI; they decide what to save. There is no background transcript extractor. Disabling automatic saves requests Co-memo's user-level explicit-only policy. Disabling prompt memory affects Codey injection, not independent agent hooks or already-loaded conversation text. Read failures are logged and do not prevent the coding task; write/sync failures are shown rather than reported as saved.
+
+`CO_MEMO_HOME` selects an existing custom store; omission uses Co-memo's normal data directory. `CO_MEMO_NODE` and `CO_MEMO_CLI` can override the bundled launcher (0.7+ required). Codey does not install per-project hooks. If a CLI already has Co-memo hooks, use its tools-only configuration to avoid duplicate context delivery. Upgrade older connected Co-memo installations before Codey opens the shared database.
+
+Workspace memory panels include the actual checkout paths of their project chats, so isolated worktree memories can be managed alongside the base workspace. Resumed ordinary and Bot sessions receive current retrieval; Codey memory mutations invalidate both kinds of session anchors.
+
+Automatic memory saving and Playbook learning are separate settings: Co-memo controls durable user/project facts, while Skills controls execution traces and procedure evolution. Conversation history, summaries and team blackboards remain task state managed by Codey.
+
+New Codey-created worktrees inherit a one-time copy of the workspace main directory's active, non-conflicted project notes. Every worktree keeps its own Co-memo project ID; user notes remain shared. Later parent/worktree edits do not propagate, and merging a PR does not merge memory. Existing worktrees are not backfilled automatically.
+
+Inheritance snapshots and source-note IDs/versions are retained under the Codey workspace's `memory-inheritance/` directory, outside the code checkout. Interrupted copies resume from the frozen snapshot before the first agent run. A paused or explicit-only Co-memo policy blocks automatic copying and leaves the worktree available for retry; no policy is bypassed. Already linked Co-memo projects are rejected rather than silently shared.
+
+Co-memo is the only user/project memory store. Codey no longer scans, imports, rewrites or removes legacy Codey memory files. Workspace lifecycle operations do not create or maintain `memory.md` or a legacy index.
 
 ## FAQ
 
@@ -353,7 +357,7 @@ workspaces/              # Per-workspace config, memory, and bots
 No — it drives them. Codey shells out to the agent CLIs you already have installed and signed in, and adds the layer above them: workspaces, bot teams, parallel runs, scheduling, and remote access.
 
 **Do I need an API key?**
-Only for what you use. If your agent CLI is already authenticated (e.g. a Claude subscription), Codey uses it as-is. API keys in `gateway.json` are for agents/models you want to reach directly, and for cloud voice transcription.
+Only for what you use. If your agent CLI is already authenticated (e.g. a Claude subscription), Codey uses it as-is. API keys in Settings are for agents/models you want to reach directly, and for cloud voice transcription.
 
 **Is my code sent anywhere?**
 Codey itself is local — the gateway, the macOS app, and the voice helper all run on your machine. Your code goes wherever your chosen agent CLI already sends it, and nowhere else. On-device WhisperKit keeps voice local too.
@@ -385,29 +389,9 @@ codey-mac auto-updates via electron-updater from GitHub Releases.
 (`GITHUB_TOKEN` is provided automatically.)
 
 **To ship a release:**
-1. Bump the version in `package.json` and `codey-mac/package.json`.
+1. Bump the version in every `package.json` (root, `codey-mac`, `packages/core`, `packages/gateway`) and the lockfiles beside them.
 2. Commit, then tag: `git tag vX.Y.Z && git push origin vX.Y.Z`.
 3. The `Release codey-mac` workflow builds, signs, notarizes, and publishes the
    dmg + zip + `latest-mac.yml` to the GitHub Release.
 4. Installed apps detect the new version on next launch (or within ~4h) and show
    the update button in the sidebar footer.
-
-### Shared memory with Co-memo
-
-Codey uses the official `co-memo` 0.8.3 package through local MCP stdio. The gateway requires Node.js 24.12+. User notes are shared across projects; project notes use the chat's working directory, including its worktree. Conversations without a project receive personal memory only. No Bot-private memory is created.
-
-Settings → Memory and workspace memory panels edit Co-memo directly. Edits and archives retain the version shown to the user, so concurrent changes are rejected. Archive keeps history. Codey's memory panels provide active, archived and conflict views, version history, restoration, and explicit conflict resolution by selecting current/candidate content or saving a merge. Stale restores and changed conflict reviews are rejected. Search, pause/resume and confirmed permanent deletion of archived notes are available directly in Codey. Memory controls use the app theme, with expandable cards and an on-demand composer; no external console is required.
-
-The gateway recalls memory context before execution. Manage user memory in Settings and project memory in workspace panels. Agents receive instructions for the bundled Co-memo CLI; they decide what to save. There is no background transcript extractor. Disabling automatic saves requests Co-memo's user-level explicit-only policy. Disabling prompt memory affects Codey injection, not independent agent hooks or already-loaded conversation text. Read failures are logged and do not prevent the coding task; write/sync failures are shown rather than reported as saved.
-
-`CO_MEMO_HOME` selects an existing custom store; omission uses Co-memo's normal data directory. `CO_MEMO_NODE` and `CO_MEMO_CLI` can override the bundled launcher (0.7+ required). Codey does not install per-project hooks. If a CLI already has Co-memo hooks, use its tools-only configuration to avoid duplicate context delivery. Upgrade older connected Co-memo installations before opening the shared database with 0.7.
-
-Workspace memory panels include the actual checkout paths of their project chats, so isolated worktree memories can be managed alongside the base workspace. Resumed ordinary and Bot sessions receive current retrieval; Codey memory mutations invalidate both kinds of session anchors.
-
-Automatic memory saving and Playbook learning are separate settings: Co-memo controls durable user/project facts, while Skills controls execution traces and procedure evolution. Conversation history, summaries and team blackboards remain task state managed by Codey.
-
-New Codey-created worktrees inherit a one-time copy of the workspace main directory's active, non-conflicted project notes. Every worktree keeps its own Co-memo project ID; user notes remain shared. Later parent/worktree edits do not propagate, and merging a PR does not merge memory. Existing worktrees are not backfilled automatically.
-
-Inheritance snapshots and source-note IDs/versions are retained under the Codey workspace's `memory-inheritance/` directory, outside the code checkout. Interrupted copies resume from the frozen snapshot before the first agent run. A paused or explicit-only Co-memo policy blocks automatic copying and leaves the worktree available for retry; no policy is bypassed. Already linked Co-memo projects are rejected rather than silently shared.
-
-Co-memo is the only user/project memory store. Codey no longer scans, imports, rewrites or removes legacy Codey memory files. Workspace lifecycle operations do not create or maintain `memory.md` or a legacy index.
