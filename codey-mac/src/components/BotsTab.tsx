@@ -29,7 +29,7 @@ export default function BotsTab({ initialName }: { initialName?: string }) {
             <button key={w.name} disabled={loading} onClick={() => setMode({ kind: 'select', name: w.name })}
               style={{ display: 'block', width: '100%', textAlign: 'left', padding: '10px 12px', background: mode.kind === 'select' && mode.name === w.name ? C.surface2 : 'transparent', border: 'none', color: C.fg, cursor: 'pointer' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><BotAvatar name={w.name} config={w.config.avatar} /><strong>{w.config.displayName || w.name}</strong></div>
-              <div style={{ fontSize: 11, color: C.fg3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{w.personality.role}</div>
+              <div style={{ fontSize: 12, color: C.fg3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{w.personality.role}</div>
             </button>
           ))}
         </div>
@@ -136,7 +136,7 @@ function EditorPanel({ bot, onSaved, onDeleted }: { bot: BotDto; onSaved: (name:
   }
 
   const fieldStyle = { width: '100%', padding: 10, background: C.surface2, color: C.fg, border: `1px solid ${C.border}`, borderRadius: 6, fontFamily: 'inherit', fontSize: 13, resize: 'vertical' as const }
-  const labelStyle = { display: 'block', fontSize: 11, color: C.fg3, textTransform: 'uppercase' as const, letterSpacing: 0.5, marginTop: 16, marginBottom: 6 }
+  const labelStyle = { display: 'block', fontSize: 12, color: C.fg3, textTransform: 'uppercase' as const, letterSpacing: 0.5, marginTop: 16, marginBottom: 6 }
 
   return (
     <div style={{ padding: 20, maxWidth: 720 }}>

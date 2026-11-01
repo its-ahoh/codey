@@ -262,7 +262,7 @@ export const BrowserProfiles: React.FC<{ compact?: boolean }> = ({ compact = fal
               </button>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }} title="Enabled profiles can be invoked by an agent and opened in tabs">
-              <span style={{ color: C.fg3, fontSize: 10 }}>Active</span>
+              <span style={{ color: C.fg3, fontSize: 11 }}>Active</span>
               <Toggle
                 on={profile.active}
                 disabled={busy}
@@ -405,26 +405,26 @@ function buttonStyle(compact: boolean): React.CSSProperties {
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  defaultChoice: { display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap', padding: '5px 8px', borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface, color: C.fg2, cursor: 'pointer', fontSize: 11 },
+  defaultChoice: { display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap', padding: '5px 8px', borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface, color: C.fg2, cursor: 'pointer', fontSize: 12 },
   defaultChoiceActive: { borderColor: C.accent, background: C.accentDim, color: C.accent },
   syncBox: { display: 'flex', flexDirection: 'column', gap: 8, padding: '7px 8px', borderRadius: 8, background: C.surface2, border: `1px solid ${C.border}` },
   syncRow: { display: 'flex', alignItems: 'center', gap: 10 },
-  syncCopy: { flex: 1, minWidth: 0, color: C.fg2, fontSize: 11, lineHeight: 1.45 },
-  exclusionLabel: { display: 'flex', flexDirection: 'column', gap: 5, color: C.fg3, fontSize: 10 },
-  exclusionInput: { width: '100%', boxSizing: 'border-box', border: `1px solid ${C.border2}`, borderRadius: 7, background: C.surface, color: C.fg, padding: '6px 8px', fontSize: 11, outline: 'none' },
+  syncCopy: { flex: 1, minWidth: 0, color: C.fg2, fontSize: 12, lineHeight: 1.45 },
+  exclusionLabel: { display: 'flex', flexDirection: 'column', gap: 5, color: C.fg3, fontSize: 11 },
+  exclusionInput: { width: '100%', boxSizing: 'border-box', border: `1px solid ${C.border2}`, borderRadius: 8, background: C.surface, color: C.fg, padding: '6px 8px', fontSize: 12, outline: 'none' },
   contents: { display: 'flex', flexDirection: 'column', gap: 1, maxHeight: 200, overflowY: 'auto', padding: '5px 6px', borderRadius: 8, background: C.surface2, border: `1px solid ${C.border}` },
   contentsRow: { display: 'flex', alignItems: 'baseline', gap: 8, padding: '2px 4px' },
-  contentsDomain: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: C.fg2, fontSize: 11 },
-  contentsMeta: { flexShrink: 0, color: C.fg3, fontSize: 10 },
-  contentsEmpty: { color: C.fg3, fontSize: 11, padding: '4px 4px' },
-  contentsNote: { marginTop: 4, paddingTop: 5, borderTop: `1px solid ${C.border}`, color: C.fg3, fontSize: 10, lineHeight: 1.4 },
-  bindingLink: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: 0, border: 'none', background: 'none', color: C.fg3, fontSize: 10, cursor: 'pointer', textAlign: 'left' },
+  contentsDomain: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: C.fg2, fontSize: 12 },
+  contentsMeta: { flexShrink: 0, color: C.fg3, fontSize: 11 },
+  contentsEmpty: { color: C.fg3, fontSize: 12, padding: '4px 4px' },
+  contentsNote: { marginTop: 4, paddingTop: 5, borderTop: `1px solid ${C.border}`, color: C.fg3, fontSize: 11, lineHeight: 1.4 },
+  bindingLink: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: 0, border: 'none', background: 'none', color: C.fg3, fontSize: 11, cursor: 'pointer', textAlign: 'left' },
   bindingPicker: { display: 'flex', flexDirection: 'column', gap: 2, padding: 6, borderRadius: 8, background: C.surface2, border: `1px solid ${C.border}` },
-  bindingOption: { display: 'flex', alignItems: 'center', gap: 8, padding: '5px 7px', border: 'none', borderRadius: 6, background: 'transparent', color: C.fg2, cursor: 'pointer', fontSize: 11, textAlign: 'left' },
+  bindingOption: { display: 'flex', alignItems: 'center', gap: 8, padding: '5px 7px', border: 'none', borderRadius: 6, background: 'transparent', color: C.fg2, cursor: 'pointer', fontSize: 12, textAlign: 'left' },
   bindingOptionActive: { background: C.accentDim, color: C.accent },
   bindingOptionName: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  bindingOptionNote: { flexShrink: 0, color: C.fg3, fontSize: 10 },
-  bindingEmpty: { padding: '5px 7px', color: C.fg3, fontSize: 10.5, lineHeight: 1.4 },
+  bindingOptionNote: { flexShrink: 0, color: C.fg3, fontSize: 11 },
+  bindingEmpty: { padding: '5px 7px', color: C.fg3, fontSize: 12, lineHeight: 1.4 },
   avatarControl: { position: 'relative', flexShrink: 0 },
   avatarButton: { width: 34, height: 34, display: 'grid', placeItems: 'center', padding: 0, borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface2, cursor: 'pointer', fontSize: 18 },
   avatarButtonActive: { borderColor: C.green, background: `${C.green}14` },
@@ -433,7 +433,7 @@ const styles: Record<string, React.CSSProperties> = {
   avatarOptionActive: { borderColor: C.accent, background: C.accentDim },
   composer: {
     display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8,
-    padding: 12, borderRadius: 11, background: C.surface, border: `1px solid ${C.border}`,
+    padding: 12, borderRadius: 10, background: C.surface, border: `1px solid ${C.border}`,
   },
   compactComposer: {
     display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8,
@@ -441,9 +441,9 @@ const styles: Record<string, React.CSSProperties> = {
   },
   empty: {
     display: 'flex', alignItems: 'center', gap: 10, color: C.fg3, fontSize: 12,
-    padding: '18px 16px', borderRadius: 11, background: C.surface, border: `1px dashed ${C.border2}`,
+    padding: '18px 16px', borderRadius: 10, background: C.surface, border: `1px dashed ${C.border2}`,
   },
-  compactEmpty: { color: C.fg3, fontSize: 11, lineHeight: 1.5, padding: '15px', borderRadius: 10, background: C.surface, border: `1px dashed ${C.border2}` },
+  compactEmpty: { color: C.fg3, fontSize: 12, lineHeight: 1.5, padding: '15px', borderRadius: 10, background: C.surface, border: `1px dashed ${C.border2}` },
   emptyIcon: {
     width: 28, height: 28, display: 'grid', placeItems: 'center', flexShrink: 0,
     borderRadius: 8, background: C.surface2, color: C.fg3,

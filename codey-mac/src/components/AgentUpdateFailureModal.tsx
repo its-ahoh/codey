@@ -40,15 +40,15 @@ const styles: Record<string, React.CSSProperties> = {
   },
   head: { fontSize: 14, fontWeight: 600, color: C.red },
   sub: { fontSize: 12, color: C.fg3, lineHeight: 1.5 },
-  code: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 11, color: C.fg2 },
+  code: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12, color: C.fg2 },
   output: {
     margin: 0, padding: 12, background: C.surface3, border: `1px solid ${C.border}`, borderRadius: 8,
-    color: C.fg2, fontSize: 11, lineHeight: 1.55, maxHeight: 320, overflow: 'auto',
+    color: C.fg2, fontSize: 12, lineHeight: 1.55, maxHeight: 320, overflow: 'auto',
     whiteSpace: 'pre-wrap', overflowWrap: 'anywhere',
   },
   row: { display: 'flex', justifyContent: 'flex-end', gap: 8 },
   primary: {
-    background: C.accent, color: C.onAccent, border: 'none', borderRadius: 7,
+    background: C.accent, color: C.onAccent, border: 'none', borderRadius: 8,
     padding: '7px 14px', fontSize: 13, cursor: 'pointer',
   },
 }

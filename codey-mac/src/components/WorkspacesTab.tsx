@@ -265,7 +265,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex', flexDirection: 'column', gap: 4,
   },
   fieldLabel: {
-    fontSize: 12, fontWeight: 650, color: C.fg2,
+    fontSize: 12, fontWeight: 600, color: C.fg2,
   },
   pathValue: {
     fontSize: 12, color: C.fg, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',

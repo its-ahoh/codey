@@ -17,7 +17,7 @@
 
 与其说它是"聊天平台到 Agent 的桥"，不如说它是**你已经在用的那些编码 Agent 的控制台**。它完全跑在你自己的机器上，直接复用你已装好、已登录的 Agent CLI —— 没有中间代理服务器，也不用额外订阅。
 
-**目录：** [为什么用 Codey](#为什么用-codey) · [下载](#下载) · [功能特性](#功能特性) · [快速开始](#快速开始) · [配置](#配置) · [Team 与流程图](#Bot配置) · [命令](#命令) · [语音](#语音输入-macos) · [常见问题](#常见问题)
+**目录：** [为什么用 Codey](#为什么用-codey) · [下载](#下载) · [功能特性](#功能特性) · [快速开始](#快速开始) · [配置](#配置) · [Team 与流程图](#Bot配置) · [命令](#命令) · [语音](#语音输入-macos) · [记忆](#co-memo-共享记忆) · [常见问题](#常见问题)
 
 <p align="center">
   <img src="assets/demo.gif" alt="Codey 演示：定时 Automation 自动起草内容，并通过内置的 Agent 控制浏览器完成发帖" width="800" />
@@ -26,9 +26,9 @@
 
 ## 为什么用 Codey
 
-- **一个项目里，不同任务用不同 Agent。** 每个 workspace 有默认 Agent / 模型，每个 bot 还能单独覆盖 —— Architect 用 Opus、Executor 用 Codex、Reviewer 用本地 OpenCode，都没问题。
+- **不同任务用不同 Agent。** 每个对话都能选自己的 Agent、模型和思考强度，同一个项目里这边用 Claude Code、那边用 Codex 都没问题。
 - **同一个 prompt 让多个 Agent 并行跑。** 直接把 Claude Code / Codex / OpenCode 的结果摆在一起对比，不用靠猜。
-- **用 bot 团队代替单条 prompt。** 给每个 bot 配角色、性格、工具，按顺序执行，或者让 dispatcher 自动挑选真正相关的子集。
+- **用 bot 团队代替单条 prompt。** 给每个 bot 配角色、性格、工具，可以按顺序执行、让 Advisor 挑选需要的成员，或者开圆桌讨论。
 - **多入口，随时调用。** 桌面用 macOS 菜单栏应用，在手机上用聊天平台派活，免手输直接用语音粘到任何前台应用。
 - **完全本地，自己掌控。** 跑在你自己机器上，连你自己的账号，中间没有代理服务器。
 
@@ -36,31 +36,30 @@
 
 从 [Releases 页面](https://github.com/its-ahoh/codey/releases/latest) 获取最新的 macOS 应用：
 
-- Apple Silicon：`Codey-<version>-arm64.dmg`
-- Intel：`Codey-<version>.dmg`
+- `Codey-<version>-arm64.dmg`（仅支持 Apple Silicon）
 
-当前发布版本未签名 — 首次启动时请右键点击应用 → **打开** → 确认以绕过 Gatekeeper。
+发布版本已签名并通过公证，也会自动更新。
 
 ## 功能特性
 
 **Agent 管理**
 - **多种编码代理**：Claude Code、OpenCode、Codex、[pi](https://pi.dev)（支持会话恢复）
 - **并行执行**：同一个 prompt 让多个 Agent 同时跑，方便对比
-- **每个 workspace 独立默认**：每个项目挑自己的默认 Agent + 模型
+- **每个对话独立设置**：每个对话选自己的 Agent、模型和思考强度
 - **思考强度**：一个 low → max 的统一档位，自动映射到各家 CLI 自己的推理参数
-- **自动 Dispatcher**：内置 dispatcher 可选，按任务自动路由到 team 的相关子集
+- **Advisor**：可选的路由模型，按任务把活派给 team 里合适的成员
 
 **工作区与 Bot**
-- **多工作区**：每个工作区拥有独立的工作目录、记忆与Bot
-- **Bot团队**：每个 Bot 定义角色、个性和工具；执行使用聊天设置或 Default 的 Agent / 模型
+- **多工作区**：每个工作区对应自己的项目目录，并启用自己的 team
+- **Bot团队**：所有 Bot 放在同一个共享库里，各自定义角色、个性和工具；执行使用聊天设置或 Default 的 Agent / 模型
 - **流程图**：在画布上把一个 team 画成图，由裁判 LLM 按边上的自然语言条件决定下一步 —— 可以分支、回退返工，也可以停下来问你
-- **记忆**：workspace 级 + 用户全局记忆，bot 每次运行都会读取，并把新结论写回去
+- **记忆**：通过 Co-memo 管理用户记忆和项目记忆，每次运行前自动召回
 - **对话上下文**：在会话中记忆之前的消息
 
 **接入方式**
-- **macOS 菜单栏应用**：多对话标签、工作区切换器、内嵌设置面板
+- **macOS 应用**：对话可按 Bot 或工作区查看；用快速捕获（Quick Capture）随时发任务
 - **聊天平台**：Telegram、Discord、iMessage
-- **语音 (macOS)**：按住热键说话，直接粘进任何前台应用；也支持语音对话模式 —— 可选本地 WhisperKit（CoreML / Neural Engine）、OpenAI 兼容 API 或流式实时转写
+- **语音 (macOS)**：按热键听写，直接粘进任何前台应用；也支持语音对话模式 —— 可选本地 WhisperKit（CoreML / Neural Engine）、OpenAI 兼容 API 或流式实时转写
 - **健康检查端点**：内置健康检查和指标监控
 
 **对话窗口内**
@@ -68,18 +67,20 @@
 - **文件改动**：整个对话里的所有修改，按文件分组，以 git 风格 diff 展示
 - **Git 感知**：分支选择器、同步状态，以及可选的「每个对话一个 git worktree」隔离，多个对话并行也不会互相干扰
 - **Quick Question**：只读的旁路提问线程，回答关于当前对话的问题但不影响它
-- **`@` 引用文件、附件与主题**：输入 `@` 引用工作区文件；粘贴或拖入图片和文件；可切换配色主题
+- **`@` 提及**：引用文件、Skill、插件或 MCP 服务器；`@` 一个 bot 或 team 就把任务交给它，`@` 多个 bot 会临时组成一个 team
+- **附件与主题**：粘贴或拖入图片和文件；可切换配色主题
+- **图片和流程图**：Agent 输出的图片和 Mermaid 图会显示在 Mac 应用和聊天平台里
 
 **技能、自动化与网页**
-- **Skills 与 Playbooks**：技能可按 workspace 开关；Codey 会观察你的运行实际做了什么，把重复的流程沉淀成可复用的 playbook
+- **Skills 与 Playbooks**：Skill 装一次，所有 Agent 都能用；Codey 会观察运行实际做了什么，可以把重复的流程存成 playbook Skill
 - **Automations 定时自动化**：给 Agent 排日程 —— 每日发帖、定期检查、cron 式工作流，都在 Mac 应用里管理
 - **Agent 控制的内置浏览器**：Agent 可以打开、阅读、点击、填表 —— 默认只读，所有会改变状态的操作都需要你确认
-- **外部 MCP 服务器**：在 Mac 应用的 MCP 标签页里给 Agent 接入更多工具
+- **外部 MCP 服务器**：在 Mac 应用的 **Tools → MCPs** 里给 Agent 接入更多工具
 - **QR 扫码配对**：扫码即可把 Telegram / iMessage 连到你的 gateway
 
 ## 快速开始
 
-这是一个 monorepo，包含三个工作区：`@codey/core`、`@codey/gateway` 和 `codey-mac`。
+需要 Node.js 24.12 及以上，并至少装好一个 Agent CLI。这是一个 monorepo，包含三个工作区：`@codey/core`、`@codey/gateway` 和 `codey-mac`。
 
 ```bash
 # 安装依赖（所有工作区）
@@ -111,14 +112,10 @@ npm run build:mac -w codey-mac  # 在 codey-mac/release/ 生成 DMG
 
 ```json
 {
-  "gateway": {
-    "port": 3000,
-    "defaultAgent": "claude-code",
-    "defaultModel": "claude-sonnet-4-20250514"
-  },
+  "gateway": { "port": 3000 },
   "channels": {
-    "telegram": { "enabled": true, "botToken": "YOUR_TOKEN" },
-    "discord": { "enabled": false, "botToken": "" },
+    "telegram": { "enabled": true },
+    "discord": { "enabled": false },
     "imessage": { "enabled": false }
   },
   "agents": {
@@ -127,39 +124,27 @@ npm run build:mac -w codey-mac  # 在 codey-mac/release/ 生成 DMG
     "pi": { "enabled": true, "provider": "anthropic", "defaultModel": "claude-sonnet-4-5" },
     "codex": { "enabled": true, "provider": "openai", "defaultModel": "gpt-5-codex" }
   },
-  "profiles": [
-    {
-      "name": "default",
-      "anthropic": { "apiKey": "sk-..." },
-      "openai": { "apiKey": "sk-..." }
-    }
-  ],
-  "activeProfile": "default",
-  "dev": {
-    "logLevel": "info"
-  }
+  "advisor": { "agent": "claude-code", "model": "claude-haiku-4-5" },
+  "dev": { "logLevel": "info" }
 }
 ```
 
-Auto-dispatch 设置：`dispatcher.{agent, model}`（可选）。
+`advisor` 是可选项，用来设置 team 路由用的模型。
+
+**密钥不要写进这个文件。** API key 和 bot token 请在 Mac 应用的 **设置 → Models & keys** 和 **设置 → Gateway** 里添加，它们保存在 `~/.codey/secrets.json`。如果 `gateway.json` 里还有密钥，Codey 加载时会自动移过去。也可以用环境变量：`TELEGRAM_BOT_TOKEN`、`DISCORD_BOT_TOKEN`、`ANTHROPIC_API_KEY`、`OPENAI_API_KEY`、`GOOGLE_API_KEY`。
 
 ## 工作区结构
 
 ```
+bots/
+└── architect/
+    ├── personality.md       # 角色、性格、指令
+    └── config.json          # 工具、显示名、路由提示
 workspaces/
 ├── default/
-│   ├── workspace.json       # 工作区配置（workingDir + 工作者）
-│   └── bots/
-│       ├── architect.md
-│       └── executor.md
-├── project-a/
-│   ├── workspace.json
-│   └── bots/
-│       └── ...
-└── project-b/
-    ├── workspace.json
-    └── bots/
-        └── ...
+│   └── workspace.json       # 项目目录 + 启用的 team
+└── project-a/
+    └── workspace.json
 ```
 
 用户记忆和项目记忆由 Co-memo 存储，与工作区文件分开管理。项目记忆以项目目录路径区分。
@@ -169,43 +154,35 @@ workspaces/
 ```json
 {
   "workingDir": "/path/to/project",
-  "bots": {
-    "architect": {
-      "tools": ["file-system", "git", "web-search"]
-    }
-  }
+  "teams": ["reviewers"]
 }
 ```
 
-切换工作区（`/workspace myproject`）会自动设置代理的工作目录。
+`teams` 列出这个工作区能用共享库里的哪些 team。切换工作区（`/workspace myproject`）会自动设置 Agent 的工作目录。
 
 ## Bot配置
 
-每个Bot在一个 Markdown 文件中定义：
+每个 Bot 是共享 `bots/` 库里的一个文件夹。`personality.md` 写它的性格：
 
 ```markdown
-# Bot: Architect
-
 ## Role
 负责项目规划的首席架构师...
 
 ## Soul
 战略思维者，专注于可扩展性...
 
-## Coding Agent
-claude-code
-
-## Model
-claude-opus-4-20250514
-
-## Tools
-file-system, git, web-search
-
-## Relationship
-领导实现工作者
-
 ## Instructions
 收到提示时，分析需求并提供...
+```
+
+`config.json` 写它的设置。Bot 运行时使用所在对话的 Agent 和模型。
+
+```json
+{
+  "displayName": "Architect",
+  "tools": ["file-system", "git", "web-search"],
+  "dispatchHint": "负责架构规划，并拆解大型功能"
+}
 ```
 
 ## 命令
@@ -213,22 +190,24 @@ file-system, git, web-search
 ### Bot
 | 命令 | 描述 |
 |------|------|
-| `/bots` | 列出当前工作区的所有Bot |
+| `/bots` | 列出库里的所有 Bot |
 | `/bot <名称> <任务>` | 运行指定的 Bot |
+| `/teams` | 列出这个工作区的 team |
 | `/team <名称> [--all] <任务>` | 运行指定的 team（详见下方） |
+| `/skill <名称> <任务>` | 用指定的 Skill 执行任务 |
 
 **Team dispatch 说明：**
 
 - `/team <name> [--all] <task>` — 运行指定的 team，成员按顺序串行执行，输出会作为下一个成员的输入。
-  - 默认 `dispatch: 'all'`（所有成员参与）。
-  - 配置为 `dispatch: 'auto'` 的 team 会先调用内置 dispatcher，自动选择本次任务真正需要的成员子集。临时跳过 dispatcher 可以加 `--all` 标志。
+  - 默认 `dispatch: 'sequential'`（所有成员按顺序参与）。
+  - 配置为 `dispatch: 'auto'` 的 team 会先调用内置 Advisor，自动选择本次任务真正需要的成员。临时跳过 Advisor 可以加 `--all` 标志。
   - 在 bot 的 `config.json` 里加可选的 `dispatchHint` 字段（一句话）可以提升路由准确性。
   - Advisor 用的 agent/model 在 `gateway.json` 的 `advisor.{agent, model}` 字段配置，未配置时回退到 gateway 默认 agent/model。
-  - 配置为 `dispatch: 'parallel'` 的 team 会以 **Advisor 主持的圆桌** 方式运行：所有 bot 作为长驻会话并发执行，
+  - 配置为 `dispatch: 'roundtable'` 的 team 会以 **Advisor 主持的圆桌** 方式运行：所有 bot 作为长驻会话并发执行，
     在 `chats/<chatId>/discussion/` 下共享各自的意见文件；Advisor 循环评估进展、维护共享摘要，并决定何时问你、
-    何时继续、何时结束。可选参数在 `parallel: { maxDurationMs, idleTimeoutMs, advisorPollMs }`。
+    何时继续、何时结束。可选参数在 `roundtable: { maxDurationMs, idleTimeoutMs, advisorPollMs }`。
     参见[设计文档](docs/superpowers/specs/2026-05-24-team-parallel-mode-design.md)。
-  - 串行（`all`）team 还可以带一张**流程图** —— `graph: { entry, maxHops, nodes, edges }`。
+  - 串行 team 还可以带一张**流程图** —— `graph: { entry, maxHops, nodes, edges }`。
     节点是 bot（外加 `start` / `end`），每条边上写一句自然语言条件。每个 bot 跑完后，
     由裁判 LLM（复用 Advisor 的 agent/model）按条件挑下一条边，因此流程可以分支，也可以回退到更早的 bot 返工，
     直到走到 `end` 或达到 `maxHops` 上限。bot 可以用 `[ASK_USER]` 暂停流程，你回复后会从暂停处继续。
@@ -243,8 +222,8 @@ file-system, git, web-search
 ### 代理
 | 命令 | 描述 |
 |------|------|
-| `/parallel <提示>` | 并行运行所有代理 |
-| `/all <提示>` | 并行运行所有代理 |
+| `/parallel <提示>` | 并行运行所有 Agent（旧命令） |
+| `/all <提示>` | 同 `/parallel`（旧命令） |
 | `/agent <名称>` | 切换默认代理 |
 
 ### 设置
@@ -254,7 +233,12 @@ file-system, git, web-search
 | `/status` | 显示网关状态 |
 | `/clear` | 清除对话历史 |
 | `/reset` | 开始新对话 |
-| `/model <名称>` | 显示/设置模型 |
+| `/model [名称]` | 显示/设置模型 |
+| `/effort <级别>` | 设置思考强度（low/medium/high/xhigh/max） |
+| `/cwd [路径]` | 显示/设置工作目录 |
+| `/config` | 显示当前配置 |
+| `/memory` | 列出最近的记忆（`/memory search <关键词>` 可搜索） |
+| `/remember <内容>` | 保存一条记忆 |
 
 ## 使用示例
 
@@ -262,14 +246,14 @@ file-system, git, web-search
 # 切换工作区
 /workspace myproject
 
-# 列出工作者
+# 列出 Bot
 /bots
 
-# 运行工作者
+# 运行 Bot
 /bot architect design a REST API
 
 # 运行团队任务
-/team build a todo app
+/team builders build a todo app
 
 # 并行运行所有代理
 /parallel create a hello world app
@@ -277,7 +261,7 @@ file-system, git, web-search
 
 ## 语音输入 (macOS)
 
-全局按键语音听写。按住配置的热键（默认 `Fn`）说话，松开后 Codey 转录并把结果直接粘贴到当前焦点输入框 — 不管你在哪个 app 都行。
+全局语音听写。按一下热键（默认 `Fn`）开始说话，再按一下结束，Codey 会转录并把结果直接粘贴到当前焦点输入框 — 不管你在哪个 app 都行。另一个热键（默认 `Shift+Fn`）可以和当前对话语音交谈。
 
 **两种转录后端：**
 - **本地 (WhisperKit)** — 在 CoreML / Neural Engine 上运行。模型首次使用时从 HuggingFace 拉取，默认为 `large-v3-turbo` 量化版（~954 MB）。完全离线、无需 API key。30 秒空闲后自动卸载模型，避免常驻 RAM / ANE
@@ -293,7 +277,7 @@ file-system, git, web-search
 - **热键**（默认 `Fn`）— 切换录音开关。可配置为 F 键或修饰键组合（如 `Cmd+Shift+V`）
 - **录音中按 Esc** — 取消本次录音，buffer 直接丢弃，不转写
 
-所有配置都在 macOS 应用的 **Whisper** 标签页：切换 provider、换模型、下载 / 预热 / 删除 WhisperKit 变体、改热键或注入方式（paste 或 Accessibility API）。
+所有配置都在 macOS 应用的 **设置 → Voice**：切换 provider、换模型、下载 / 预热 / 删除 WhisperKit 变体、改热键或注入方式（paste 或 Accessibility API）。
 
 需要麦克风和辅助功能权限（首次启动会提示）。
 
@@ -316,31 +300,37 @@ npm run tui                    # 启动终端 UI
 npm run build                  # 构建所有工作区
 ```
 
-其他配置（渠道、Profile、API Key）请直接编辑 `gateway.json` 或在 macOS 应用的设置面板中调整。
+其他配置请在 macOS 应用的设置里调整，或编辑 `gateway.json`。密钥请放在设置里，不要写进这个文件。
 
 ## 项目结构
 
 ```
 packages/
-├── core/                # 共享类型、工作区与工作者管理器
+├── core/                # 共享类型、Agent、工作区与 Bot 管理器
 │   └── src/
-└── gateway/             # 网关服务、渠道、代理
+│       └── agents/      # 编码 Agent 适配器（claude-code、opencode、codex、pi）
+└── gateway/             # 网关服务与渠道
     └── src/
-        ├── agents/      # 编码代理适配器（claude-code、opencode、codex、pi）
         ├── channels/    # 聊天平台处理器（telegram、discord、imessage）
         ├── config.ts
-        ├── conversation.ts
         ├── gateway.ts
         ├── health.ts
         ├── logger.ts
         └── index.ts
-codey-mac/               # macOS 菜单栏应用（Electron + React）
+codey-mac/               # macOS 应用（Electron + React）
 ├── electron/            # 主进程与 preload
 └── src/                 # 渲染进程（React UI）
 voice/                   # 原生 Swift helper（热键 + 录音 + WhisperKit）
 └── Sources/CodeyVoice/  # AudioCapture、HotkeyManager、HudOverlay、WhisperKitEngine 等
-workspaces/              # 各工作区的配置、记忆与工作者
+bots/                    # 共享 Bot 库
+workspaces/              # 各工作区的配置
 ```
+
+## Co-memo 共享记忆
+
+Codey 通过本地 MCP stdio 使用官方的 `co-memo` 0.8.3 包，gateway 需要 Node.js 24.12 及以上。用户记忆跨项目共享；项目记忆按对话的工作目录区分，包括它所在的 worktree。没有项目的对话只会收到个人记忆。Bot 没有私有记忆。
+
+记忆可以在 **设置 → Memory** 和工作区的记忆面板里管理。运行前 gateway 会召回相关记忆，要保存什么由 Agent 自己决定，没有后台抽取器。Codey 自己创建的 worktree 会一次性复制主目录的项目记忆，之后两边互不同步。
 
 ## 常见问题
 
@@ -348,7 +338,7 @@ workspaces/              # 各工作区的配置、记忆与工作者
 不是，它是来驱动它们的。Codey 调用你本机已经装好、已经登录的 Agent CLI，在它们之上补一层：workspace、bot 团队、并行对比、定时任务和远程访问。
 
 **必须要 API key 吗？**
-用到才需要。如果你的 Agent CLI 已经登录（比如 Claude 订阅），Codey 直接沿用。`gateway.json` 里的 API key 只用于你想直连的 Agent / 模型，以及云端语音转写。
+用到才需要。如果你的 Agent CLI 已经登录（比如 Claude 订阅），Codey 直接沿用。设置里的 API key 只用于你想直连的 Agent / 模型，以及云端语音转写。
 
 **我的代码会被上传吗？**
 Codey 本身完全本地 —— gateway、macOS 应用、语音 helper 都跑在你自己机器上。代码只会去它本来就会去的地方（你选的那个 Agent CLI），不会多走一步。用本地 WhisperKit 时语音也不出本机。

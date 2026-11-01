@@ -67,11 +67,11 @@ export const StatusTab: React.FC<StatusTabProps> = ({ status, logs, isRunning })
               transition: 'all 0.3s',
             }}
           />
-          <span style={{ color: C.fg, fontSize: 16, fontWeight: 600 }}>
+          <span style={{ color: C.fg, fontSize: 15, fontWeight: 600 }}>
             {isRunning ? 'Gateway Running' : 'Gateway Stopped'}
           </span>
         </div>
-        <span style={{ color: C.fg3, fontSize: 11 }}>In-process · Cmd+Q to quit</span>
+        <span style={{ color: C.fg3, fontSize: 12 }}>In-process · Cmd+Q to quit</span>
       </div>
 
       <div style={styles.statsGrid}>
@@ -148,12 +148,12 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '14px 16px',
     border: `1px solid ${C.border}`,
   },
-  statLabel: { color: C.fg3, fontSize: 11, marginBottom: 4 },
-  statValue: { color: C.fg, fontSize: 22, fontWeight: 600, fontVariantNumeric: 'tabular-nums' },
+  statLabel: { color: C.fg3, fontSize: 12, marginBottom: 4 },
+  statValue: { color: C.fg, fontSize: 20, fontWeight: 600, fontVariantNumeric: 'tabular-nums' },
   sectionHead: {
     color: C.fg,
     fontSize: 13,
-    fontWeight: 700,
+    fontWeight: 600,
     paddingBottom: 8,
     borderBottom: `1px solid ${C.border}`,
     marginBottom: 10,
@@ -183,7 +183,7 @@ const styles: Record<string, React.CSSProperties> = {
     border: `1px solid ${C.border}`,
     padding: 12,
     fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
-    fontSize: 11,
+    fontSize: 12,
     color: C.logFg,
     maxHeight: 180,
     overflowY: 'auto',

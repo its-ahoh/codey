@@ -7,13 +7,13 @@ interface EditorInfo { id: string; name: string; installed: boolean }
 const PREFERRED_KEY = 'codey.preferredEditor'
 
 const primaryStyle: React.CSSProperties = {
-  padding: '3px 8px', fontSize: 11, borderRadius: 6, cursor: 'pointer',
+  padding: '3px 8px', fontSize: 12, borderRadius: 6, cursor: 'pointer',
   background: C.surface3, color: C.fg2, border: `1px solid ${C.border2}`,
   borderTopRightRadius: 0, borderBottomRightRadius: 0, borderRight: 'none',
   whiteSpace: 'nowrap',
 }
 const dropdownStyle: React.CSSProperties = {
-  padding: '3px 6px', fontSize: 11, borderRadius: 6, cursor: 'pointer',
+  padding: '3px 6px', fontSize: 12, borderRadius: 6, cursor: 'pointer',
   background: C.surface3, color: C.fg2, border: `1px solid ${C.border2}`,
   borderTopLeftRadius: 0, borderBottomLeftRadius: 0, display: 'inline-flex', alignItems: 'center',
 }
@@ -96,7 +96,7 @@ export const OpenInEditorButton: React.FC<{ path: string }> = ({ path }) => {
           <div onClick={() => setMenuOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 999 }} />
           <div style={menuStyle} onClick={e => e.stopPropagation()}>
             {!loaded ? (
-              <div style={{ color: C.fg3, fontSize: 11, padding: '6px 9px' }}>Checking editors…</div>
+              <div style={{ color: C.fg3, fontSize: 12, padding: '6px 9px' }}>Checking editors…</div>
             ) : installed.length > 0 ? (
               installed.map(editor => (
                 <button key={editor.id} style={menuItemStyle} onClick={() => void open(editor)}>
@@ -105,7 +105,7 @@ export const OpenInEditorButton: React.FC<{ path: string }> = ({ path }) => {
                 </button>
               ))
             ) : (
-              <div style={{ color: C.fg3, fontSize: 11, padding: '6px 9px' }}>No supported editor found.</div>
+              <div style={{ color: C.fg3, fontSize: 12, padding: '6px 9px' }}>No supported editor found.</div>
             )}
           </div>
         </>

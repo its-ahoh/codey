@@ -106,7 +106,7 @@ const styles: Record<string, React.CSSProperties> = {
   head: { display: 'flex', alignItems: 'flex-start', gap: 10 },
   headText: { display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1 },
   name: { fontSize: 13, fontWeight: 600, color: C.fg, overflowWrap: 'anywhere' },
-  meta: { fontSize: 11, color: C.fg3 },
+  meta: { fontSize: 12, color: C.fg3 },
   closeBtn: {
     background: 'transparent', border: 'none', color: C.fg3, fontSize: 20,
     lineHeight: 1, cursor: 'pointer', padding: '0 4px',
@@ -119,18 +119,18 @@ const styles: Record<string, React.CSSProperties> = {
   frame: { width: '100%', height: '70vh', border: 'none', background: '#fff' },
   text: {
     margin: 0, padding: 12, width: '100%', alignSelf: 'stretch', color: C.fg2,
-    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 11,
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12,
     lineHeight: 1.55, maxHeight: '70vh', overflow: 'auto',
     whiteSpace: 'pre-wrap', overflowWrap: 'anywhere',
   },
   note: { padding: 24, fontSize: 12, color: C.fg3, textAlign: 'center' },
   row: { display: 'flex', justifyContent: 'flex-end', gap: 8 },
   secondary: {
-    background: C.surface3, color: C.fg2, border: `1px solid ${C.border}`, borderRadius: 7,
+    background: C.surface3, color: C.fg2, border: `1px solid ${C.border}`, borderRadius: 8,
     padding: '7px 14px', fontSize: 13, cursor: 'pointer',
   },
   primary: {
-    background: C.accent, color: C.onAccent, border: 'none', borderRadius: 7,
+    background: C.accent, color: C.onAccent, border: 'none', borderRadius: 8,
     padding: '7px 14px', fontSize: 13, cursor: 'pointer',
   },
 }

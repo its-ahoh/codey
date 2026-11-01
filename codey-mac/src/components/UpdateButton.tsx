@@ -40,7 +40,7 @@ const styles: Record<string, React.CSSProperties> = {
   action: {
     width: '100%', padding: '8px 10px', border: `1px solid ${C.accent}`, marginBottom: 4,
     background: C.accentDim, color: C.fg, cursor: 'pointer',
-    textAlign: 'left', borderRadius: 8, fontSize: 12, fontWeight: 650, display: 'flex', alignItems: 'center', gap: 7,
+    textAlign: 'left', borderRadius: 8, fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 7,
   },
   progress: {
     width: '100%', padding: '8px 10px', marginBottom: 4,
@@ -49,7 +49,7 @@ const styles: Record<string, React.CSSProperties> = {
   error: {
     width: '100%', padding: '8px 10px', border: `1px solid ${C.dangerBorder}`, marginBottom: 4,
     background: C.dangerBg, color: C.dangerFg, cursor: 'pointer',
-    textAlign: 'left', borderRadius: 8, fontSize: 12, fontWeight: 650,
+    textAlign: 'left', borderRadius: 8, fontSize: 12, fontWeight: 600,
     display: 'flex', alignItems: 'center', gap: 7,
   },
 }

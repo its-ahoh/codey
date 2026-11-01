@@ -151,8 +151,8 @@ export function CodeyMemorySettings() {
     <div className="memory-header"><div><h3 className="memory-title">Memory settings</h3></div><button className="memory-button" disabled={busy} onClick={() => void patch({ paused: !settings.paused })}>{settings.paused ? 'Resume memory' : 'Pause memory'}</button></div>
     {settings.paused && <div className="memory-notice">Memory is paused. Reading and saving will resume when you turn it back on.</div>}
     <div aria-busy={busy} style={{ opacity: busy || settings.paused ? .5 : 1, pointerEvents: busy || settings.paused ? 'none' : undefined }}>
-      <div className="memory-setting"><div><div>Use memory in conversations</div><p className="memory-hint">Include relevant preferences and project facts in new prompts.</p></div><MemoryToggle disabled={busy || settings.paused} on={settings.enabled} label="Use memory in conversations" onChange={enabled => { if (!busy && !settings.paused) void patch({ enabled }) }} /></div>
-      <div className="memory-setting"><div><div>Save useful information automatically</div><p className="memory-hint">Keep durable preferences and decisions. You can still save memories manually.</p></div><MemoryToggle disabled={busy || settings.paused} on={settings.autoExtract} label="Save useful information automatically" onChange={autoExtract => { if (!busy && !settings.paused) void patch({ autoExtract }) }} /></div>
+      <div className="memory-setting"><div><div>Use memory in conversations</div></div><MemoryToggle disabled={busy || settings.paused} on={settings.enabled} label="Use memory in conversations" onChange={enabled => { if (!busy && !settings.paused) void patch({ enabled }) }} /></div>
+      <div className="memory-setting"><div><div>Save useful information automatically</div></div><MemoryToggle disabled={busy || settings.paused} on={settings.autoExtract} label="Save useful information automatically" onChange={autoExtract => { if (!busy && !settings.paused) void patch({ autoExtract }) }} /></div>
     </div>
   </section>
 }

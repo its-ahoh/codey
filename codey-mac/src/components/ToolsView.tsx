@@ -86,8 +86,8 @@ const styles: Record<string, React.CSSProperties> = {
     borderBottom: `1px solid ${C.border}`, flexShrink: 0, background: C.surface2,
   },
   tabBtn: {
-    padding: '9px 12px', border: `1px solid transparent`, borderRadius: 9,
-    background: 'transparent', color: C.fg2, cursor: 'pointer', fontSize: 12, fontWeight: 650,
+    padding: '9px 12px', border: `1px solid transparent`, borderRadius: 8,
+    background: 'transparent', color: C.fg2, cursor: 'pointer', fontSize: 12, fontWeight: 600,
     display: 'flex', alignItems: 'center', gap: 7,
   },
   tabBtnActive: {
@@ -97,7 +97,7 @@ const styles: Record<string, React.CSSProperties> = {
   searchBox: {
     width: 220, minWidth: 140, height: 34, boxSizing: 'border-box',
     display: 'flex', alignItems: 'center', gap: 6, padding: '0 8px',
-    border: `1px solid ${C.border2}`, borderRadius: 9, background: C.bg,
+    border: `1px solid ${C.border2}`, borderRadius: 8, background: C.bg,
   },
   searchIcon: { display: 'inline-flex', color: C.fg3, flexShrink: 0 },
   searchInput: {
@@ -108,7 +108,7 @@ const styles: Record<string, React.CSSProperties> = {
     width: 22, height: 22, padding: 0, display: 'grid', placeItems: 'center', flexShrink: 0,
     border: 'none', borderRadius: 6, background: 'transparent', color: C.fg3, cursor: 'pointer',
   },
-  addSkillBtn: { display: 'inline-flex', alignItems: 'center', gap: 6, border: 'none', borderRadius: 9, padding: '9px 12px', color: C.onAccent, background: C.accent, cursor: 'pointer', fontSize: 12, fontWeight: 700, boxShadow: `0 5px 13px ${C.accentDim}` },
+  addSkillBtn: { display: 'inline-flex', alignItems: 'center', gap: 6, border: 'none', borderRadius: 8, padding: '9px 12px', color: C.onAccent, background: C.accent, cursor: 'pointer', fontSize: 12, fontWeight: 600, boxShadow: 'none' },
   body: { flex: 1, overflowY: 'auto', padding: 20, background: C.bg },
   skillsBody: { padding: 0 },
 }

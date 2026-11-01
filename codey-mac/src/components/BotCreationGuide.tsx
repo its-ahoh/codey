@@ -23,7 +23,7 @@ export function BotCreationGuide({ busy, error, onCreate, onCancel }: {
   const preset = purposes.find(item => item.label === purpose)
   const question = preset?.question ?? 'What would you like it to help you achieve?'
   const options = preset?.options ?? ['Give me advice and ideas', 'Create useful drafts and plans', 'Help me work through tasks step by step']
-  const button = { padding: '9px 12px', background: C.surface2, color: C.fg, border: `1px solid ${C.border}`, borderRadius: 9, cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit', fontSize: 12, textAlign: 'left' as const }
+  const button = { padding: '9px 12px', background: C.surface2, color: C.fg, border: `1px solid ${C.border}`, borderRadius: 8, cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit', fontSize: 12, textAlign: 'left' as const }
 
   const create = async (goal: string) => {
     if (busy || submitting.current || !purpose) return

@@ -276,7 +276,7 @@ const styles: Record<string, React.CSSProperties> = {
   input: {
     flex: 1, minWidth: 0,
     background: 'transparent', border: 'none',
-    color: C.fg, fontSize: 11.5, padding: '4px 7px', outline: 'none',
+    color: C.fg, fontSize: 12, padding: '4px 7px', outline: 'none',
   },
   filterBtn: {
     display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
@@ -286,7 +286,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   filterBtnActive: { background: C.accentDim, borderColor: C.accent, color: C.fg },
   count: {
-    color: C.fg3, fontSize: 10.5, fontVariantNumeric: 'tabular-nums',
+    color: C.fg3, fontSize: 12, fontVariantNumeric: 'tabular-nums',
     whiteSpace: 'nowrap', flexShrink: 0,
   },
   navBtn: {

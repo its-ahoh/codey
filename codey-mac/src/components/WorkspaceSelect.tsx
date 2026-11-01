@@ -113,7 +113,7 @@ const styles: Record<string, React.CSSProperties> = {
     minHeight: 31, maxWidth: 220, display: 'inline-flex', alignItems: 'center', gap: 6,
     border: `1px solid ${C.border}`, borderRadius: 8, padding: '4px 8px',
     background: C.bg, color: C.fg, cursor: 'pointer',
-    fontSize: 11, fontWeight: 650, fontFamily: 'inherit',
+    fontSize: 12, fontWeight: 600, fontFamily: 'inherit',
   },
   triggerLabel: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 },
   caret: {
@@ -139,5 +139,5 @@ const styles: Record<string, React.CSSProperties> = {
   itemSelected: { background: C.accentDim, color: C.accent },
   itemName: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   checkSlot: { width: 14, flexShrink: 0, display: 'inline-flex', alignItems: 'center' },
-  empty: { color: C.fg3, fontSize: 11, padding: '12px 8px', textAlign: 'center' },
+  empty: { color: C.fg3, fontSize: 12, padding: '12px 8px', textAlign: 'center' },
 }

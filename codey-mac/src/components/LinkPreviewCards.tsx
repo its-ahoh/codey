@@ -84,25 +84,25 @@ const styles: Record<string, React.CSSProperties> = {
     font: 'inherit',
   },
   thumb: {
-    width: 56, height: 56, flexShrink: 0, borderRadius: 7,
+    width: 56, height: 56, flexShrink: 0, borderRadius: 8,
     objectFit: 'cover', background: C.surface3,
   },
   thumbFallback: {
-    width: 56, height: 56, flexShrink: 0, borderRadius: 7,
+    width: 56, height: 56, flexShrink: 0, borderRadius: 8,
     background: C.surface3, color: C.fg3,
     display: 'flex', alignItems: 'center', justifyContent: 'center',
   },
   body: { minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2, justifyContent: 'center' },
   title: {
-    fontSize: 12.5, fontWeight: 600, color: C.fg, lineHeight: 1.3,
+    fontSize: 12, fontWeight: 600, color: C.fg, lineHeight: 1.3,
     display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
     overflow: 'hidden',
   },
   desc: {
-    fontSize: 11.5, color: C.fg2, lineHeight: 1.35,
+    fontSize: 12, color: C.fg2, lineHeight: 1.35,
     display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
     overflow: 'hidden',
   },
-  site: { display: 'flex', alignItems: 'center', gap: 4, color: C.fg3, fontSize: 11, minWidth: 0 },
+  site: { display: 'flex', alignItems: 'center', gap: 4, color: C.fg3, fontSize: 12, minWidth: 0 },
   siteText: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
 }

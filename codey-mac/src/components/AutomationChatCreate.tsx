@@ -459,11 +459,11 @@ const shellStyle: React.CSSProperties = { display: 'grid', gridTemplateColumns: 
 const chatColumn: React.CSSProperties = { minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', borderRight: `1px solid ${C.border}`, background: C.surface }
 const setupColumn: React.CSSProperties = { minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }
 const columnHeader: React.CSSProperties = { padding: '18px 20px 14px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'flex-end' }
-const eyebrow: React.CSSProperties = { color: C.accent, fontSize: 9, fontWeight: 800, letterSpacing: 1.1, marginBottom: 4 }
-const columnTitle: React.CSSProperties = { color: C.fg, fontSize: 14, fontWeight: 720, letterSpacing: '-0.01em' }
-const helperText: React.CSSProperties = { color: C.fg3, fontSize: 10, lineHeight: 1.4, maxWidth: 180, textAlign: 'right' }
+const eyebrow: React.CSSProperties = { color: C.accent, fontSize: 11, fontWeight: 600, letterSpacing: 1.1, marginBottom: 4 }
+const columnTitle: React.CSSProperties = { color: C.fg, fontSize: 14, fontWeight: 600, letterSpacing: '-0.01em' }
+const helperText: React.CSSProperties = { color: C.fg3, fontSize: 11, lineHeight: 1.4, maxWidth: 180, textAlign: 'right' }
 const chatScroll: React.CSSProperties = { flex: 1, overflowY: 'auto', padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 9 }
-const bubbleBase: React.CSSProperties = { maxWidth: '86%', padding: '9px 12px', borderRadius: 12, fontSize: 12.5, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }
+const bubbleBase: React.CSSProperties = { maxWidth: '86%', padding: '9px 12px', borderRadius: 12, fontSize: 12, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }
 const bubbleAssistant: React.CSSProperties = { ...bubbleBase, alignSelf: 'flex-start', background: C.bg, border: `1px solid ${C.border}`, borderBottomLeftRadius: 4, color: C.fg }
 const bubbleUser: React.CSSProperties = { ...bubbleBase, alignSelf: 'flex-end', background: C.surface3, borderBottomRightRadius: 4, color: C.fg }
 const suggestionRow: React.CSSProperties = { display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 2 }
@@ -478,41 +478,41 @@ const composerInput: React.CSSProperties = { ...inputStyle, flex: 1, width: 'aut
 const sendButton: React.CSSProperties = { width: 40, height: 40, borderRadius: 10, border: 'none', display: 'grid', placeItems: 'center', flexShrink: 0 }
 const setupScroll: React.CSSProperties = { flex: 1, overflowY: 'auto', padding: '20px 22px 28px' }
 const setupHeading: React.CSSProperties = { display: 'flex', justifyContent: 'space-between', gap: 14, alignItems: 'center', marginBottom: 16 }
-const summaryPill: React.CSSProperties = { padding: '5px 9px', borderRadius: 999, background: C.accentDim, color: C.accent, fontSize: 10, fontWeight: 650 }
+const summaryPill: React.CSSProperties = { padding: '5px 9px', borderRadius: 999, background: C.accentDim, color: C.accent, fontSize: 11, fontWeight: 600 }
 const sectionCard: React.CSSProperties = { background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: '14px 15px', marginBottom: 12 }
-const sectionTitle: React.CSSProperties = { color: C.fg, fontSize: 12, fontWeight: 700 }
-const sectionDescription: React.CSSProperties = { color: C.fg3, fontSize: 10.5, lineHeight: 1.4, marginTop: 2 }
+const sectionTitle: React.CSSProperties = { color: C.fg, fontSize: 12, fontWeight: 600 }
+const sectionDescription: React.CSSProperties = { color: C.fg3, fontSize: 12, lineHeight: 1.4, marginTop: 2 }
 const fieldBlock: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 5 }
-const fieldLabel: React.CSSProperties = { color: C.fg2, fontSize: 10.5, fontWeight: 650 }
+const fieldLabel: React.CSSProperties = { color: C.fg2, fontSize: 12, fontWeight: 600 }
 const wideInput: React.CSSProperties = { ...inputStyle, boxSizing: 'border-box', width: '100%' }
 const wideSelect: React.CSSProperties = { ...selectStyle, boxSizing: 'border-box', width: '100%' }
 const compactInput: React.CSSProperties = { ...inputStyle, width: 104, padding: '6px 8px' }
 const briefInput: React.CSSProperties = { ...wideInput, minHeight: 128, resize: 'vertical', lineHeight: 1.5, fontFamily: 'inherit' }
 const twoColumns: React.CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }
-const emptyHint: React.CSSProperties = { color: C.fg3, fontSize: 11, fontStyle: 'italic' }
+const emptyHint: React.CSSProperties = { color: C.fg3, fontSize: 12, fontStyle: 'italic' }
 const paramRow: React.CSSProperties = { display: 'flex', gap: 7, alignItems: 'center' }
-const paramKey: React.CSSProperties = { color: C.accent, fontSize: 10.5, width: 92, overflow: 'hidden', textOverflow: 'ellipsis' }
+const paramKey: React.CSSProperties = { color: C.accent, fontSize: 12, width: 92, overflow: 'hidden', textOverflow: 'ellipsis' }
 const paramAddRow: React.CSSProperties = { display: 'flex', gap: 7 }
-const removeButton: React.CSSProperties = { width: 27, height: 27, borderRadius: 7, border: `1px solid ${C.border}`, background: 'transparent', color: C.fg3, cursor: 'pointer' }
+const removeButton: React.CSSProperties = { width: 27, height: 27, borderRadius: 8, border: `1px solid ${C.border}`, background: 'transparent', color: C.fg3, cursor: 'pointer' }
 const switchRow: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }
-const switchTitle: React.CSSProperties = { color: C.fg2, fontSize: 12, fontWeight: 650 }
-const switchDescription: React.CSSProperties = { color: C.fg3, fontSize: 10.5, marginTop: 2 }
+const switchTitle: React.CSSProperties = { color: C.fg2, fontSize: 12, fontWeight: 600 }
+const switchDescription: React.CSSProperties = { color: C.fg3, fontSize: 12, marginTop: 2 }
 const modeControl = (disabled: boolean): React.CSSProperties => ({
   display: 'inline-flex', alignItems: 'center', gap: 2, flexShrink: 0, padding: 3,
-  border: `1px solid ${C.border}`, borderRadius: 9, background: C.surface3,
+  border: `1px solid ${C.border}`, borderRadius: 8, background: C.surface3,
   cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.6 : 1,
 })
 const modeOption = (active: boolean): React.CSSProperties => ({
-  padding: '5px 8px', borderRadius: 6, fontSize: 10.5, fontWeight: active ? 700 : 550,
+  padding: '5px 8px', borderRadius: 6, fontSize: 12, fontWeight: active ? 700 : 550,
   color: active ? C.fg : C.fg3, background: active ? C.surface : 'transparent',
 })
 const slotList: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 8 }
 const slotCard: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 11px', borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface2 }
 const slotTopRow: React.CSSProperties = { display: 'flex', gap: 8, alignItems: 'center' }
-const slotDaySummary: React.CSSProperties = { color: C.fg3, fontSize: 10, flex: 1 }
+const slotDaySummary: React.CSSProperties = { color: C.fg3, fontSize: 11, flex: 1 }
 const addSlotButton: React.CSSProperties = { ...pillButton('ghost'), alignSelf: 'flex-start', padding: '6px 10px' }
 const dayRow: React.CSSProperties = { display: 'flex', gap: 5 }
-const dayButton = (selected: boolean): React.CSSProperties => ({ width: 29, height: 29, borderRadius: 8, border: `1px solid ${selected ? C.accent : C.border2}`, background: selected ? C.accentDim : C.surface3, color: selected ? C.accent : C.fg3, cursor: 'pointer', fontSize: 10, fontWeight: 700 })
+const dayButton = (selected: boolean): React.CSSProperties => ({ width: 29, height: 29, borderRadius: 8, border: `1px solid ${selected ? C.accent : C.border2}`, background: selected ? C.accentDim : C.surface3, color: selected ? C.accent : C.fg3, cursor: 'pointer', fontSize: 11, fontWeight: 600 })
 const footerStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 12, padding: '12px 18px', borderTop: `1px solid ${C.border}`, background: C.surface }
-const statusMuted: React.CSSProperties = { color: C.fg3, fontSize: 11 }
+const statusMuted: React.CSSProperties = { color: C.fg3, fontSize: 12 }
 const inlineButton: React.CSSProperties = { border: 'none', background: 'transparent', color: C.accent, cursor: 'pointer', fontSize: 'inherit', padding: '0 4px', textDecoration: 'underline' }

@@ -73,10 +73,10 @@ function TeamRunFlowInner({ turn, isStreaming, teamGraph, askingBot, group, onCl
 
   return (
     <div onClick={onClose} aria-modal="true" style={{ position: 'fixed', inset: 0, background: 'rgba(9,12,20,0.65)', backdropFilter: 'blur(10px)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div onClick={e => e.stopPropagation()} style={{ width: '90vw', height: '85vh', background: C.surface, border: `1px solid ${C.border2}`, borderRadius: 16, boxShadow: '0 30px 90px rgba(0,0,0,0.48)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: '90vw', height: '85vh', background: C.surface, border: `1px solid ${C.border2}`, borderRadius: 14, boxShadow: '0 30px 90px rgba(0,0,0,0.48)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '13px 16px', borderBottom: `1px solid ${C.border}`, background: C.surface2 }}>
-          <span style={{ width: 30, height: 30, borderRadius: 9, display: 'grid', placeItems: 'center', background: C.accentDim, color: C.accent }}><UIIcon name="activity" size={16} /></span>
-          <div style={{ flex: 1 }}><div style={{ fontWeight: 750, color: C.fg }}>Team run</div><div style={{ fontSize: 11, color: C.fg3, marginTop: 2 }}>{runs.length} bot {runs.length === 1 ? 'step' : 'steps'} captured</div></div>
+          <span style={{ width: 30, height: 30, borderRadius: 8, display: 'grid', placeItems: 'center', background: C.accentDim, color: C.accent }}><UIIcon name="activity" size={16} /></span>
+          <div style={{ flex: 1 }}><div style={{ fontWeight: 600, color: C.fg }}>Team run</div><div style={{ fontSize: 12, color: C.fg3, marginTop: 2 }}>{runs.length} bot {runs.length === 1 ? 'step' : 'steps'} captured</div></div>
           <button onClick={onClose} style={secondaryBtn}>Close</button>
         </div>
         <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
@@ -94,14 +94,14 @@ function TeamRunFlowInner({ turn, isStreaming, teamGraph, askingBot, group, onCl
           <div style={{ flex: 1, minWidth: 280, padding: 18, overflowY: 'auto', background: C.surface }}>
             {sel ? (
               <>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 13 }}><span style={{ width: 30, height: 30, borderRadius: 9, display: 'grid', placeItems: 'center', background: sel.status === 'failed' ? C.dangerBg : C.accentDim, color: sel.status === 'failed' ? C.red : C.accent }}><UIIcon name={sel.status === 'failed' ? 'activity' : 'bot'} size={15} /></span><div><div style={{ fontWeight: 700, color: C.fg }}>{sel.bot}</div><div style={{ fontSize: 11, color: C.fg3 }}>Step {sel.step} · {sel.status}</div></div></div>
-                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.7, textTransform: 'uppercase', color: C.fg3, marginBottom: 7 }}>Output</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 13 }}><span style={{ width: 30, height: 30, borderRadius: 8, display: 'grid', placeItems: 'center', background: sel.status === 'failed' ? C.dangerBg : C.accentDim, color: sel.status === 'failed' ? C.red : C.accent }}><UIIcon name={sel.status === 'failed' ? 'activity' : 'bot'} size={15} /></span><div><div style={{ fontWeight: 600, color: C.fg }}>{sel.bot}</div><div style={{ fontSize: 12, color: C.fg3 }}>Step {sel.step} · {sel.status}</div></div></div>
+                <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: 0.7, textTransform: 'uppercase', color: C.fg3, marginBottom: 7 }}>Output</div>
                 <Markdown variant="assistant">{sel.output || '(no output yet)'}</Markdown>
-                <div style={{ fontSize: 11, textTransform: 'uppercase', color: C.fg3, margin: '14px 0 6px' }}>Tool calls</div>
+                <div style={{ fontSize: 12, textTransform: 'uppercase', color: C.fg3, margin: '14px 0 6px' }}>Tool calls</div>
                 <ToolCallList toolCalls={selToolCalls} emptyHint="(no tool calls)" minimal />
                 {sel.thinking && (
                   <div style={{ marginTop: 14 }}>
-                    <button onClick={() => setShowThinking(s => !s)} style={{ ...secondaryBtn, fontSize: 11 }}>
+                    <button onClick={() => setShowThinking(s => !s)} style={{ ...secondaryBtn, fontSize: 12 }}>
                       {showThinking ? 'Hide thinking' : 'Thinking ▸'}
                     </button>
                     {showThinking && <div style={{ marginTop: 8, fontSize: 12, color: C.fg2, whiteSpace: 'pre-wrap' }}>{sel.thinking}</div>}

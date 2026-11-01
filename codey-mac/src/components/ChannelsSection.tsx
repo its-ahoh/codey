@@ -11,11 +11,11 @@ interface ChannelsCfg {
 }
 
 const inputStyle: React.CSSProperties = {
-  background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 7,
+  background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 8,
   color: C.fg, fontSize: 13, padding: '6px 10px', outline: 'none', width: 180,
 }
 const pillButton = (variant: 'ghost'): React.CSSProperties => ({
-  padding: '6px 12px', borderRadius: 7, fontSize: 12, fontWeight: 600,
+  padding: '6px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600,
   border: 'none', cursor: 'pointer',
   background: C.surface3, color: C.fg2,
 })
@@ -66,14 +66,14 @@ const ChannelEditor: React.FC<{
           {(fields.length > 0 || note) && (
             <button
             onClick={() => setOpen(o => !o)}
-            style={{ ...pillButton('ghost'), padding: '2px 8px', fontSize: 11, flex: 0.7 }}>
+            style={{ ...pillButton('ghost'), padding: '2px 8px', fontSize: 12, flex: 0.7 }}>
               {open ? 'Hide' : 'Configure'}
             </button>
           )}
           {liveStatus && (
             <span style={{
               alignSelf: 'flex-end',
-              fontSize: 10, fontWeight: 600, letterSpacing: 0.4, textTransform: 'uppercase',
+              fontSize: 11, fontWeight: 600, letterSpacing: 0.4, textTransform: 'uppercase',
               color: liveStatus === 'connected' ? C.green : C.fg3,
             }}>
               {liveStatus === 'connected' ? '● Connected' : '○ Off'}
@@ -85,7 +85,7 @@ const ChannelEditor: React.FC<{
       </div>
       {open && (
         <div style={{ padding: '0 14px 12px', borderTop: `1px solid ${C.border}` }}>
-          {note && <div style={{ color: C.fg3, fontSize: 11, padding: '10px 0' }}>{note}</div>}
+          {note && <div style={{ color: C.fg3, fontSize: 12, padding: '10px 0' }}>{note}</div>}
           {fields.map((f, i) => (
             <div key={f.label} style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: 8, alignItems: 'center', marginTop: 10 }}>
               <label style={{ color: C.fg3, fontSize: 12 }}>{f.label}</label>

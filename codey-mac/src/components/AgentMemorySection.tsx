@@ -35,22 +35,22 @@ const MemoryRow: React.FC<{ entry: MemoryEntry; first: boolean }> = ({ entry, fi
           title={entry.path}
         >
           <span style={{
-            width: 20, height: 20, borderRadius: 5, flexShrink: 0,
+            width: 20, height: 20, borderRadius: 6, flexShrink: 0,
             display: 'grid', placeItems: 'center', color: C.fg3, background: C.surface3,
             transform: open ? 'rotate(90deg)' : undefined, transition: 'transform 120ms ease',
           }}>
             <UIIcon name="disclosure" size={11} />
           </span>
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 550 }}>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 500 }}>
             {entry.label}
           </span>
         </button>
-        <span style={{ color: C.fg3, fontSize: 11, whiteSpace: 'nowrap' }}>{formatBytes(entry.bytes)}</span>
+        <span style={{ color: C.fg3, fontSize: 12, whiteSpace: 'nowrap' }}>{formatBytes(entry.bytes)}</span>
         <OpenInEditorButton path={entry.path} />
       </div>
       {!open && preview && (
         <div style={{
-          color: C.fg3, fontSize: 11, lineHeight: 1.45, marginTop: 4, marginLeft: 28,
+          color: C.fg3, fontSize: 12, lineHeight: 1.45, marginTop: 4, marginLeft: 28,
           marginRight: 8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
         }}>{preview}</div>
       )}
@@ -58,7 +58,7 @@ const MemoryRow: React.FC<{ entry: MemoryEntry; first: boolean }> = ({ entry, fi
         <pre style={{
           margin: '9px 0 1px 28px', padding: 12, background: C.surface3,
           border: `1px solid ${C.border}`, borderRadius: 8,
-          color: C.fg2, fontSize: 11, lineHeight: 1.55, maxHeight: 280,
+          color: C.fg2, fontSize: 12, lineHeight: 1.55, maxHeight: 280,
           overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere',
         }}>
           {entry.content}
@@ -146,7 +146,7 @@ const AgentMemoryFilesCard: React.FC<{
       }}>
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontSize: 14, fontWeight: 600 }}>Agent instruction and native memory files</div>
-          <div style={{ color: C.fg3, fontSize: 11, lineHeight: 1.45, marginTop: 3 }}>{description}</div>
+          <div style={{ color: C.fg3, fontSize: 12, lineHeight: 1.45, marginTop: 3 }}>{description}</div>
           <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
             {groups.length > 1 && (
               <select
@@ -161,7 +161,7 @@ const AgentMemoryFilesCard: React.FC<{
             )}
             {selectedGroup && (
               <span style={{
-                color: C.fg3, fontSize: 11, lineHeight: 1, whiteSpace: 'nowrap',
+                color: C.fg3, fontSize: 12, lineHeight: 1, whiteSpace: 'nowrap',
                 boxSizing: 'border-box', padding: '8px 10px',
                 background: C.surface3, borderRadius: 6,
               }}>
@@ -177,7 +177,7 @@ const AgentMemoryFilesCard: React.FC<{
             display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 9px', fontSize: 12,
             flexShrink: 0,
             background: 'transparent', color: C.fg2, border: `1px solid ${C.border2}`,
-            borderRadius: 7, cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.65 : 1,
+            borderRadius: 8, cursor: loading ? 'default' : 'pointer', opacity: loading ? 0.65 : 1,
           }}
         >
           <UIIcon name="refresh" size={13} />

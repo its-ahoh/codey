@@ -153,7 +153,7 @@ export const lineDiff = (a: string, b: string): DiffLine[] => {
 const diffStyles: Record<string, React.CSSProperties> = {
   // overflowX:auto lets long lines scroll horizontally instead of being clipped.
   wrap: {
-    fontFamily: 'Menlo, Monaco, "Courier New", monospace', fontSize: 11.5, lineHeight: 1.55,
+    fontFamily: 'Menlo, Monaco, "Courier New", monospace', fontSize: 12, lineHeight: 1.55,
     borderRadius: 6, overflowX: 'auto', border: `1px solid ${C.border2}`, background: C.surface,
   },
   // The inner column is as wide as the longest line (min: the visible width),
@@ -172,7 +172,7 @@ const diffStyles: Record<string, React.CSSProperties> = {
     color: C.fg2, opacity: 0.8, userSelect: 'none', WebkitUserSelect: 'none',
     minWidth: 30,
   },
-  marker: { width: 18, flexShrink: 0, textAlign: 'center', fontWeight: 700, userSelect: 'none', WebkitUserSelect: 'none' },
+  marker: { width: 18, flexShrink: 0, textAlign: 'center', fontWeight: 600, userSelect: 'none', WebkitUserSelect: 'none' },
   code: { flexShrink: 0, paddingRight: 14 },
   contextRow: { background: C.surface },
   contextButton: {
@@ -180,7 +180,7 @@ const diffStyles: Record<string, React.CSSProperties> = {
     border: 'none', borderTop: `1px solid ${C.border}`, borderBottom: `1px solid ${C.border}`,
     background: C.surface2, color: C.accent, cursor: 'pointer',
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    fontSize: 10.5, fontWeight: 600, textAlign: 'center', whiteSpace: 'nowrap',
+    fontSize: 12, fontWeight: 600, textAlign: 'center', whiteSpace: 'nowrap',
   },
   // The bar spans the whole (possibly scrolled) width; its label stays centered
   // until horizontal scrolling would push it off, then pins to the left edge.
@@ -528,10 +528,10 @@ export const DiffView: React.FC<{ oldText: string; newText: string }> = ({ oldTe
 // ── Detail rendering ──────────────────────────────────────────────────────────
 
 const detailStyles: Record<string, React.CSSProperties> = {
-  label: { fontSize: 10, color: C.fg2, fontWeight: 600, fontFamily: 'Menlo, Monaco, "Courier New", monospace', marginBottom: 4, marginTop: 7, textTransform: 'uppercase', letterSpacing: 0.5 },
-  pre: { margin: 0, fontSize: 11.5, lineHeight: 1.5, color: C.codeFg, fontFamily: 'Menlo, Monaco, "Courier New", monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word' },
+  label: { fontSize: 11, color: C.fg2, fontWeight: 600, fontFamily: 'Menlo, Monaco, "Courier New", monospace', marginBottom: 4, marginTop: 7, textTransform: 'uppercase', letterSpacing: 0.5 },
+  pre: { margin: 0, fontSize: 12, lineHeight: 1.5, color: C.codeFg, fontFamily: 'Menlo, Monaco, "Courier New", monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word' },
   block: { padding: 9, background: C.codeBg, borderRadius: 6, border: `1px solid ${C.border2}` },
-  meta: { fontSize: 11, color: C.fg2, fontFamily: 'Menlo, Monaco, "Courier New", monospace' },
+  meta: { fontSize: 12, color: C.fg2, fontFamily: 'Menlo, Monaco, "Courier New", monospace' },
   todoRow: { display: 'flex', gap: 6, alignItems: 'flex-start', fontSize: 12, padding: '2px 0', fontFamily: 'Menlo, Monaco, "Courier New", monospace' },
 }
 

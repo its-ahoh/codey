@@ -59,7 +59,7 @@ export function BotNodeView({ data, selected }: NodeProps) {
         {d.status && <span style={{ marginRight: 6, color: sBorder ?? C.fg2 }}>{STATUS_ICON[d.status]}</span>}
         {d.label}
       </div>
-      {d.role && <div style={{ fontSize: 11, color: C.fg2, marginTop: 2, maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.role}</div>}
+      {d.role && <div style={{ fontSize: 12, color: C.fg2, marginTop: 2, maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.role}</div>}
       <NodeHandles />
     </div>
   )
@@ -71,7 +71,7 @@ export function ConditionNodeView({ data, selected }: NodeProps) {
   return (
     <div style={{ width: 130, height: 130, display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
       <div style={{ position: 'absolute', inset: 19, transform: 'rotate(45deg)', background: C.surface2, border: `1px solid ${d.bad ? C.red : C.accent}`, borderRadius: 8, boxShadow: ring(selected, d.bad) }} />
-      <span style={{ position: 'relative', fontSize: 10, lineHeight: 1.25, color: C.fg, width: 78, textAlign: 'center', display: '-webkit-box', WebkitLineClamp: 5, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{text}</span>
+      <span style={{ position: 'relative', fontSize: 11, lineHeight: 1.25, color: C.fg, width: 78, textAlign: 'center', display: '-webkit-box', WebkitLineClamp: 5, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{text}</span>
       <NodeHandles />
     </div>
   )
@@ -106,7 +106,7 @@ export function FlowEdgeView({ id, sourceX, sourceY, targetX, targetY, sourcePos
         <EdgeLabelRenderer>
           <div style={{
             position: 'absolute', transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
-            background: C.bg, color: C.fg2, fontSize: 10, padding: '1px 5px', borderRadius: 4,
+            background: C.bg, color: C.fg2, fontSize: 11, padding: '1px 5px', borderRadius: 4,
             border: `1px solid ${C.border}`, pointerEvents: 'none',
           }}>{String(label)}</div>
         </EdgeLabelRenderer>

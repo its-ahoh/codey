@@ -257,7 +257,7 @@ const styles: Record<string, React.CSSProperties> = {
   chip: {
     display: 'inline-flex', alignItems: 'center', gap: 4, maxWidth: 200,
     background: C.surface3, color: C.fg2, border: `1px solid ${C.border2}`,
-    borderRadius: 6, padding: '2px 4px 2px 8px', fontSize: 11,
+    borderRadius: 6, padding: '2px 4px 2px 8px', fontSize: 12,
   },
   chipName: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   chipX: {
@@ -279,7 +279,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   composerRow: { display: 'flex', gap: 6, alignItems: 'center', padding: 6 },
   attachBtn: {
-    width: 34, height: 34, borderRadius: 9, border: 'none', background: 'transparent',
+    width: 34, height: 34, borderRadius: 8, border: 'none', background: 'transparent',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     flexShrink: 0, cursor: 'pointer',
   },
@@ -296,11 +296,11 @@ const styles: Record<string, React.CSSProperties> = {
   },
   // Taller, prominent primary action.
   sendBtn: {
-    width: 56, height: 46, borderRadius: 9, border: 'none', background: C.accent,
+    width: 56, height: 46, borderRadius: 8, border: 'none', background: C.accent,
     color: C.onAccent, fontSize: 14, fontWeight: 600, cursor: 'pointer',
     fontFamily: 'inherit', flexShrink: 0,
     display: 'flex', alignItems: 'center', justifyContent: 'center',
   },
   sendBtnDisabled: { opacity: 0.6, cursor: 'default' },
-  error: { color: C.dangerFg, fontSize: 11, paddingLeft: 2, flexShrink: 0 },
+  error: { color: C.dangerFg, fontSize: 12, paddingLeft: 2, flexShrink: 0 },
 }

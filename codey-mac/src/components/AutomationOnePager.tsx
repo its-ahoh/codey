@@ -314,7 +314,7 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
           <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
             <span style={attentionIcon}>!</span>
             <div style={{ flex: 1 }}>
-              <div style={{ color: C.fg, fontSize: 12, fontWeight: 700 }}>This automation needs your input</div>
+              <div style={{ color: C.fg, fontSize: 12, fontWeight: 600 }}>This automation needs your input</div>
               <div style={{ color: C.fg2, fontSize: 12, margin: '3px 0 8px' }}>{latest.question}</div>
               <ParkedPrompt
                 run={latest}
@@ -517,7 +517,7 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
         <div style={checkBackdrop} onClick={() => setCheckOpen(false)}>
           <div style={checkPanel} role="dialog" aria-modal="true" aria-label="Dry run details" onClick={e => e.stopPropagation()}>
             <div style={checkPanelHead}>
-              <div style={{ color: C.fg, fontSize: 13, fontWeight: 750 }}>{chip.title}</div>
+              <div style={{ color: C.fg, fontSize: 13, fontWeight: 600 }}>{chip.title}</div>
               <button style={iconButton} onClick={() => setCheckOpen(false)} aria-label="Close dry run details">
                 <UIIcon name="close" size={13} />
               </button>
@@ -528,11 +528,11 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
                   {chip.questions.map((q, i) => <li key={i}>{q}</li>)}
                 </ul>
               )}
-              {chip.detail && <pre style={{ ...preStyle, borderTop: 'none', borderRadius: 9 }}>{chip.detail}</pre>}
+              {chip.detail && <pre style={{ ...preStyle, borderTop: 'none', borderRadius: 8 }}>{chip.detail}</pre>}
               {!chip.questions?.length && !chip.detail && (
-                <div style={{ color: C.fg3, fontSize: 11.5 }}>The dry run left no details behind.</div>
+                <div style={{ color: C.fg3, fontSize: 12 }}>The dry run left no details behind.</div>
               )}
-              <div style={{ color: C.fg3, fontSize: 10.5 }}>Checked {new Date(a.check!.at).toLocaleString()}</div>
+              <div style={{ color: C.fg3, fontSize: 12 }}>Checked {new Date(a.check!.at).toLocaleString()}</div>
             </div>
             <div style={{ display: 'flex', gap: 7, justifyContent: 'flex-end' }}>
               <button style={pillButton('ghost')} onClick={() => void dismissCheck()}>Dismiss</button>
@@ -601,30 +601,30 @@ function formatDuration(ms: number): string {
 
 const pageStyle: React.CSSProperties = { padding: '18px 22px 28px', flex: 1, overflowY: 'auto', background: C.bg }
 const heroStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 18 }
-const eyebrow: React.CSSProperties = { color: C.accent, fontSize: 9, fontWeight: 800, letterSpacing: 1.1, marginBottom: 4 }
+const eyebrow: React.CSSProperties = { color: C.accent, fontSize: 11, fontWeight: 600, letterSpacing: 1.1, marginBottom: 4 }
 const titleRow: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 9, minWidth: 0 }
-const titleStyle: React.CSSProperties = { color: C.fg, fontSize: 19, lineHeight: 1.2, fontWeight: 750, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
-const subtitleStyle: React.CSSProperties = { color: C.fg3, fontSize: 11, marginTop: 4 }
+const titleStyle: React.CSSProperties = { color: C.fg, fontSize: 18, lineHeight: 1.2, fontWeight: 600, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
+const subtitleStyle: React.CSSProperties = { color: C.fg3, fontSize: 12, marginTop: 4 }
 const heroActions: React.CSSProperties = { display: 'flex', gap: 7, alignItems: 'center', flexShrink: 0 }
 const actionButton: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6 }
 const iconButton: React.CSSProperties = { ...pillButton('ghost'), ...actionButton }
 const modeControl: React.CSSProperties = {
   display: 'inline-flex', alignItems: 'center', gap: 2, padding: 3,
-  border: `1px solid ${C.border}`, borderRadius: 9, background: C.surface,
+  border: `1px solid ${C.border}`, borderRadius: 8, background: C.surface,
   cursor: 'pointer',
 }
 const modeOption = (active: boolean): React.CSSProperties => ({
-  padding: '5px 8px', borderRadius: 6, fontSize: 10.5, fontWeight: active ? 700 : 550,
+  padding: '5px 8px', borderRadius: 6, fontSize: 12, fontWeight: active ? 700 : 550,
   color: active ? C.fg : C.fg3, background: active ? C.surface3 : 'transparent',
 })
-const healthBadge = (color: string): React.CSSProperties => ({ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 8px', borderRadius: 999, color, background: C.surface3, fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap' })
+const healthBadge = (color: string): React.CSSProperties => ({ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 8px', borderRadius: 999, color, background: C.surface3, fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' })
 const healthDot = (color: string): React.CSSProperties => ({ width: 6, height: 6, borderRadius: 999, background: color, boxShadow: `0 0 0 3px ${C.surface2}` })
 
 const parkedBanner: React.CSSProperties = {
-  marginTop: 14, padding: '12px 14px', borderRadius: 11,
+  marginTop: 14, padding: '12px 14px', borderRadius: 10,
   border: `1px solid ${C.yellow}`, background: C.warningBg,
 }
-const attentionIcon: React.CSSProperties = { width: 24, height: 24, flexShrink: 0, display: 'grid', placeItems: 'center', borderRadius: 8, background: C.yellow, color: C.bg, fontWeight: 900, fontSize: 12 }
+const attentionIcon: React.CSSProperties = { width: 24, height: 24, flexShrink: 0, display: 'grid', placeItems: 'center', borderRadius: 8, background: C.yellow, color: C.bg, fontWeight: 600, fontSize: 12 }
 
 /** The error tone is deliberately quiet: a failed dry run almost always means
  *  an environment problem, not a misconfigured automation. */
@@ -634,9 +634,9 @@ const dryRunChip = (tone: CheckTone): React.CSSProperties => ({
   display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0,
   padding: '3px 7px', borderRadius: 999,
   background: C.surface3, color: dryRunToneColor[tone],
-  fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap',
+  fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap',
 })
-const dryRunChipButton: React.CSSProperties = { border: 'none', font: 'inherit', fontSize: 10, fontWeight: 700, cursor: 'pointer' }
+const dryRunChipButton: React.CSSProperties = { border: 'none', font: 'inherit', fontSize: 11, fontWeight: 600, cursor: 'pointer' }
 const dryRunSpinner: React.CSSProperties = { display: 'inline-flex', animation: 'codey-dryrun-spin 1.1s linear infinite' }
 
 const checkBackdrop: React.CSSProperties = {
@@ -646,7 +646,7 @@ const checkBackdrop: React.CSSProperties = {
 const checkPanel: React.CSSProperties = {
   width: 'min(460px, 100%)', maxHeight: '70vh', overflowY: 'auto',
   display: 'flex', flexDirection: 'column', gap: 12,
-  padding: '15px 16px', borderRadius: 13,
+  padding: '15px 16px', borderRadius: 12,
   border: `1px solid ${C.border}`, background: C.surface2,
   boxShadow: '0 18px 45px rgba(0,0,0,.32)',
 }
@@ -657,20 +657,20 @@ const checkQuestionList: React.CSSProperties = {
 }
 
 const summaryGrid: React.CSSProperties = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 9, marginTop: 15 }
-const summaryCard: React.CSSProperties = { display: 'flex', gap: 10, minWidth: 0, padding: '11px 12px', border: `1px solid ${C.border}`, borderRadius: 11, background: C.surface }
+const summaryCard: React.CSSProperties = { display: 'flex', gap: 10, minWidth: 0, padding: '11px 12px', border: `1px solid ${C.border}`, borderRadius: 10, background: C.surface }
 /** Same tile, but activated: the button reset keeps it visually identical. */
 const clickableSummaryCard: React.CSSProperties = { ...summaryCard, font: 'inherit', textAlign: 'left', cursor: 'pointer' }
-const summaryIcon: React.CSSProperties = { width: 30, height: 30, flexShrink: 0, display: 'grid', placeItems: 'center', borderRadius: 9, background: C.accentDim, color: C.accent }
-const summaryLabel: React.CSSProperties = { color: C.fg3, fontSize: 9.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4 }
-const summaryValue: React.CSSProperties = { fontSize: 12, fontWeight: 700, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
-const summaryDetail: React.CSSProperties = { color: C.fg3, fontSize: 9.5, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
+const summaryIcon: React.CSSProperties = { width: 30, height: 30, flexShrink: 0, display: 'grid', placeItems: 'center', borderRadius: 8, background: C.accentDim, color: C.accent }
+const summaryLabel: React.CSSProperties = { color: C.fg3, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.4 }
+const summaryValue: React.CSSProperties = { fontSize: 12, fontWeight: 600, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
+const summaryDetail: React.CSSProperties = { color: C.fg3, fontSize: 11, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
 
 const tabBar: React.CSSProperties = {
   display: 'flex', gap: 4, borderBottom: `1px solid ${C.border}`, margin: '18px 0 14px',
 }
 
 const tabStyle = (on: boolean): React.CSSProperties => ({
-  padding: '7px 13px', fontSize: 11.5, border: 'none', cursor: 'pointer',
+  padding: '7px 13px', fontSize: 12, border: 'none', cursor: 'pointer',
   borderBottom: `2px solid ${on ? C.accent : 'transparent'}`, background: 'transparent',
   color: on ? C.fg : C.fg3, fontWeight: on ? 700 : 500,
 })
@@ -678,52 +678,52 @@ const tabStyle = (on: boolean): React.CSSProperties => ({
 const overviewGrid: React.CSSProperties = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', alignItems: 'start', gap: 12 }
 const detailCard: React.CSSProperties = { background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: '14px 15px' }
 const cardHeading: React.CSSProperties = { display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start', marginBottom: 12 }
-const cardTitle: React.CSSProperties = { color: C.fg, fontSize: 12.5, fontWeight: 750 }
-const cardDescription: React.CSSProperties = { color: C.fg3, fontSize: 10.5, lineHeight: 1.4, marginTop: 2 }
-const textButton: React.CSSProperties = { border: 'none', background: 'transparent', color: C.accent, cursor: 'pointer', fontSize: 10.5, whiteSpace: 'nowrap' }
+const cardTitle: React.CSSProperties = { color: C.fg, fontSize: 12, fontWeight: 600 }
+const cardDescription: React.CSSProperties = { color: C.fg3, fontSize: 12, lineHeight: 1.4, marginTop: 2 }
+const textButton: React.CSSProperties = { border: 'none', background: 'transparent', color: C.accent, cursor: 'pointer', fontSize: 12, whiteSpace: 'nowrap' }
 
 const briefBox: React.CSSProperties = {
-  padding: '10px 12px', borderRadius: 9, background: C.surface3, color: C.fg2,
+  padding: '10px 12px', borderRadius: 8, background: C.surface3, color: C.fg2,
   fontSize: 12, lineHeight: 1.55, wordBreak: 'break-word',
 }
 const settingRow: React.CSSProperties = { display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'space-between', minHeight: 32 }
-const settingLabel: React.CSSProperties = { color: C.fg2, fontSize: 11, minWidth: 90 }
+const settingLabel: React.CSSProperties = { color: C.fg2, fontSize: 12, minWidth: 90 }
 const parameterRow: React.CSSProperties = { display: 'grid', gridTemplateColumns: '110px minmax(0, 1fr)', gap: 12, alignItems: 'center', minHeight: 32 }
-const parameterLabel: React.CSSProperties = { color: C.fg2, fontSize: 11, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
+const parameterLabel: React.CSSProperties = { color: C.fg2, fontSize: 12, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
 const settingInput: React.CSSProperties = { ...inputStyle, boxSizing: 'border-box', flex: 1, width: 'auto', minWidth: 0 }
 const settingSelect: React.CSSProperties = { ...selectStyle, width: 155 }
-const compactInput: React.CSSProperties = { ...inputStyle, width: 88, padding: '5px 7px', fontSize: 11 }
-const removeButton: React.CSSProperties = { width: 25, height: 25, borderRadius: 7, border: `1px solid ${C.border}`, background: C.surface3, color: C.fg3, cursor: 'pointer' }
-const smallButton: React.CSSProperties = { padding: '5px 8px', borderRadius: 7, border: `1px solid ${C.border2}`, background: C.surface3, color: C.fg2, cursor: 'pointer', fontSize: 10 }
+const compactInput: React.CSSProperties = { ...inputStyle, width: 88, padding: '5px 7px', fontSize: 12 }
+const removeButton: React.CSSProperties = { width: 25, height: 25, borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface3, color: C.fg3, cursor: 'pointer' }
+const smallButton: React.CSSProperties = { padding: '5px 8px', borderRadius: 8, border: `1px solid ${C.border2}`, background: C.surface3, color: C.fg2, cursor: 'pointer', fontSize: 11 }
 const scheduleSlotList: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 8 }
-const scheduleSlotCard: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 8, padding: '9px 10px', border: `1px solid ${C.border}`, borderRadius: 9, background: C.surface2 }
+const scheduleSlotCard: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 8, padding: '9px 10px', border: `1px solid ${C.border}`, borderRadius: 8, background: C.surface2 }
 const slotHeader: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 7 }
-const slotSummary: React.CSSProperties = { color: C.fg3, fontSize: 10, flex: 1 }
+const slotSummary: React.CSSProperties = { color: C.fg3, fontSize: 11, flex: 1 }
 const dayEditor: React.CSSProperties = { display: 'flex', gap: 4 }
-const dayButton = (active: boolean): React.CSSProperties => ({ width: 25, height: 25, borderRadius: 7, border: `1px solid ${active ? C.accent : C.border2}`, background: active ? C.accentDim : C.surface3, color: active ? C.accent : C.fg3, cursor: 'pointer', fontSize: 9, fontWeight: 750 })
-const settingHint: React.CSSProperties = { color: C.fg3, fontSize: 10.5, margin: '-2px 0 6px' }
-const infoRow: React.CSSProperties = { display: 'flex', justifyContent: 'space-between', gap: 12, color: C.fg3, fontSize: 10.5, padding: '2px 0' }
-const emptyState: React.CSSProperties = { color: C.fg3, fontSize: 11, padding: '8px 0', fontStyle: 'italic' }
-const saveBar: React.CSSProperties = { gridColumn: '1 / -1', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, position: 'sticky', bottom: 8, zIndex: 2, padding: '11px 13px', border: `1px solid ${C.accent}`, borderRadius: 11, background: C.surface2, boxShadow: '0 8px 25px rgba(0,0,0,.22)', color: C.fg, fontSize: 11 }
-const dangerCard: React.CSSProperties = { gridColumn: '1 / -1', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginTop: 2, padding: '12px 14px', border: `1px solid ${C.dangerBorder}`, borderRadius: 11, background: C.dangerBg, color: C.dangerFg, fontSize: 11 }
+const dayButton = (active: boolean): React.CSSProperties => ({ width: 25, height: 25, borderRadius: 8, border: `1px solid ${active ? C.accent : C.border2}`, background: active ? C.accentDim : C.surface3, color: active ? C.accent : C.fg3, cursor: 'pointer', fontSize: 11, fontWeight: 600 })
+const settingHint: React.CSSProperties = { color: C.fg3, fontSize: 12, margin: '-2px 0 6px' }
+const infoRow: React.CSSProperties = { display: 'flex', justifyContent: 'space-between', gap: 12, color: C.fg3, fontSize: 12, padding: '2px 0' }
+const emptyState: React.CSSProperties = { color: C.fg3, fontSize: 12, padding: '8px 0', fontStyle: 'italic' }
+const saveBar: React.CSSProperties = { gridColumn: '1 / -1', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, position: 'sticky', bottom: 8, zIndex: 2, padding: '11px 13px', border: `1px solid ${C.accent}`, borderRadius: 10, background: C.surface2, boxShadow: '0 8px 25px rgba(0,0,0,.22)', color: C.fg, fontSize: 12 }
+const dangerCard: React.CSSProperties = { gridColumn: '1 / -1', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginTop: 2, padding: '12px 14px', border: `1px solid ${C.dangerBorder}`, borderRadius: 10, background: C.dangerBg, color: C.dangerFg, fontSize: 12 }
 const noticeCopy: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 2 }
 const compactDeleteButton: React.CSSProperties = {
   ...pillButton('danger'), display: 'inline-flex', alignItems: 'center', gap: 5,
   flexShrink: 0, padding: '7px 11px', border: `1px solid ${C.red}`,
-  borderRadius: 8, background: C.red, color: '#fff', fontSize: 10.5, fontWeight: 700,
+  borderRadius: 8, background: C.red, color: '#fff', fontSize: 12, fontWeight: 600,
 }
 
 const runsList: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 9 }
-const runCard: React.CSSProperties = { background: C.surface, border: `1px solid ${C.border}`, borderRadius: 11, overflow: 'hidden' }
+const runCard: React.CSSProperties = { background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }
 const runHeader: React.CSSProperties = { display: 'flex', gap: 10, alignItems: 'center', padding: '11px 13px' }
-const runStatusIcon = (color: string): React.CSSProperties => ({ width: 30, height: 30, display: 'grid', placeItems: 'center', borderRadius: 9, background: C.surface3, color, flexShrink: 0 })
-const triggerBadge: React.CSSProperties = { padding: '2px 6px', borderRadius: 999, background: C.surface3, color: C.fg3, fontSize: 9.5 }
-const runMeta: React.CSSProperties = { color: C.fg3, fontSize: 10, marginTop: 3 }
+const runStatusIcon = (color: string): React.CSSProperties => ({ width: 30, height: 30, display: 'grid', placeItems: 'center', borderRadius: 8, background: C.surface3, color, flexShrink: 0 })
+const triggerBadge: React.CSSProperties = { padding: '2px 6px', borderRadius: 999, background: C.surface3, color: C.fg3, fontSize: 11 }
+const runMeta: React.CSSProperties = { color: C.fg3, fontSize: 11, marginTop: 3 }
 const runBody: React.CSSProperties = { borderTop: `1px solid ${C.border}`, padding: '11px 13px', background: C.surface2 }
-const errorNotice: React.CSSProperties = { borderTop: `1px solid ${C.dangerBorder}`, padding: '8px 13px', background: C.dangerBg, color: C.dangerFg, fontSize: 10.5 }
+const errorNotice: React.CSSProperties = { borderTop: `1px solid ${C.dangerBorder}`, padding: '8px 13px', background: C.dangerBg, color: C.dangerFg, fontSize: 12 }
 const logMessage: React.CSSProperties = {
   borderTop: `1px solid ${C.border}`, padding: '10px 13px 11px',
-  background: C.codeBg ?? C.surface3, color: C.fg3, fontSize: 11, lineHeight: 1.5,
+  background: C.codeBg ?? C.surface3, color: C.fg3, fontSize: 12, lineHeight: 1.5,
 }
 
 const outputStyle: React.CSSProperties = {
@@ -735,5 +735,5 @@ const outputStyle: React.CSSProperties = {
 const preStyle: React.CSSProperties = {
   margin: 0, padding: '10px 13px', borderTop: `1px solid ${C.border}`,
   background: C.codeBg ?? C.surface3, color: C.codeFg ?? C.fg2,
-  fontSize: 11, lineHeight: 1.5, fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+  fontSize: 12, lineHeight: 1.5, fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
 }

@@ -6,18 +6,16 @@ import { UIIcon } from './UIIcons'
 
 /** Left inset applied to a whole message row. */
 export const MESSAGE_ROW_INSET = 6
-/** Width of the selection rail down the left of an assistant turn. */
-export const TURN_RAIL_WIDTH = 3
-/** Gap between the rail and the text. Chosen so the text column lands exactly
- *  where the old bubble put it: rail 3 + 12 == the bubble's border 1 + padding 14. */
-export const TURN_TEXT_PADDING = 12
+/** Horizontal padding inside an assistant turn, on both sides so the selected
+ *  highlight sits evenly around the text. */
+export const TURN_TEXT_PADDING = 15
 
 /** Left inset of an assistant turn's text column, measured from the messages
  *  container. Everything that belongs to the turn — the header, the reply, the
  *  timestamp footer, the status row — aligns to this one value. They used to
  *  carry independent numbers (21, 10 and 0), which read as three ragged left
  *  edges. */
-export const TURN_TEXT_INSET = MESSAGE_ROW_INSET + TURN_RAIL_WIDTH + TURN_TEXT_PADDING
+export const TURN_TEXT_INSET = MESSAGE_ROW_INSET + TURN_TEXT_PADDING
 
 /** Horizontal padding inside the user bubble. A user turn is right-aligned, so
  *  its timestamp lines up on the right edge and needs this, not TURN_TEXT_INSET. */
@@ -78,20 +76,9 @@ export const IdentityLabel: React.FC<{ identity: string; visible: boolean }> = (
   </span>
 )
 
-/** Identifies an assistant turn and bounds it.
- *
- *  The bubble used to do both jobs. When it was removed, the boundary fell to
- *  spacing alone — an implicit signal competing with the reply's own paragraph
- *  spacing — and the turn's secondary chrome lost the surface that marked it as
- *  belonging to this turn. A rule is an explicit boundary that does not compete,
- *  and the header gives the thinking disclosure a permanent home instead of
- *  leaving it as an unanchored 11px line above the reply.
- *
- *  The rule always renders — including while the turn is still streaming, so
- *  the header keeps the same shape from the first token to the last instead of
- *  gaining a line when the turn lands. The metadata row renders only when there
- *  is something to put in it, so a turn with no metadata is a bare hairline
- *  rather than a blank row. */
+/** Identifies an assistant turn and gives the thinking disclosure a permanent
+ *  home. The row renders only when there is something to put in it, so a turn
+ *  with no metadata adds no blank space. */
 export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onToggle, turnComplete, onAskAgentAboutFallback, leftAvatar, leftLabel, messageHovered = false }) => {
   const elapsedSec = useElapsedSeconds(!turnComplete, msg.timestamp)
   const meta = turnHeaderMeta(msg, { elapsedSec })
@@ -107,53 +94,49 @@ export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onTogg
   // A bot's avatar/name makes the row worth drawing even when there's
   // otherwise nothing to show.
   const isEmpty = (leftAvatar || leftLabel) ? false : meta.isEmpty
-  const rule = <div style={styles.rule} />
-  if (isEmpty && !hasThinking) return rule
+  if (isEmpty && !hasThinking) return null
 
   return (
-    <div>
-      <div
-        style={styles.row}
-        onMouseEnter={() => setHeaderActive(true)}
-        onMouseLeave={() => setHeaderActive(false)}
-        onFocus={() => setHeaderActive(true)}
-        onBlur={e => {
-          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setHeaderActive(false)
-        }}
-      >
-        <div style={styles.left}>
-          {leftAvatar}
-          <div style={styles.leftText}>
-            {leftLabel}
-            {hasThinking ? (
-              <button
-                type="button"
-                style={styles.disclosure}
-                onClick={onToggle}
-                aria-expanded={expanded}
-                aria-label={`${expanded ? 'Hide' : 'Show'} thinking${meta.identity ? ` for ${meta.identity}` : ''}`}
-                title={expanded ? 'Hide thinking' : 'Show thinking'}
-              >
-                {meta.identity && <IdentityLabel identity={meta.identity} visible={identityVisible} />}
-                <span style={{ ...styles.chevron, opacity: chevronOpacity, transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>
-                  <UIIcon name="chevron" size={14} strokeWidth={2} />
-                </span>
-              </button>
-            ) : meta.identity ? (
-              <IdentityLabel identity={meta.identity} visible={identityVisible} />
-            ) : null}
-          </div>
-          {meta.fallback && (
-            <FallbackWarning fallback={meta.fallback} onAskAgent={onAskAgentAboutFallback} visible={identityVisible} />
-          )}
+    <div
+      style={styles.row}
+      onMouseEnter={() => setHeaderActive(true)}
+      onMouseLeave={() => setHeaderActive(false)}
+      onFocus={() => setHeaderActive(true)}
+      onBlur={e => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setHeaderActive(false)
+      }}
+    >
+      <div style={styles.left}>
+        {leftAvatar}
+        <div style={styles.leftText}>
+          {leftLabel}
+          {hasThinking ? (
+            <button
+              type="button"
+              style={styles.disclosure}
+              onClick={onToggle}
+              aria-expanded={expanded}
+              aria-label={`${expanded ? 'Hide' : 'Show'} thinking${meta.identity ? ` for ${meta.identity}` : ''}`}
+              title={expanded ? 'Hide thinking' : 'Show thinking'}
+            >
+              {meta.identity && <IdentityLabel identity={meta.identity} visible={identityVisible} />}
+              <span style={{ ...styles.chevron, opacity: chevronOpacity, transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>
+                <UIIcon name="chevron" size={14} strokeWidth={2} />
+              </span>
+            </button>
+          ) : meta.identity ? (
+            <IdentityLabel identity={meta.identity} visible={identityVisible} />
+          ) : null}
         </div>
-        <div style={styles.right}>
-          {meta.stats.length > 0 && (
-            <span style={styles.stats}>{meta.stats.join(' · ')}</span>
-          )}
-        </div>
+        {meta.fallback && (
+          <FallbackWarning fallback={meta.fallback} onAskAgent={onAskAgentAboutFallback} visible={identityVisible} />
+        )}
       </div>
-      {rule}
+      <div style={styles.right}>
+        {meta.stats.length > 0 && (
+          <span style={styles.stats}>{meta.stats.join(' · ')}</span>
+        )}
+      </div>
     </div>
   )
 }
@@ -260,7 +243,7 @@ const FallbackWarning: React.FC<{
 const styles: Record<string, React.CSSProperties> = {
   row: {
     display: 'flex', alignItems: 'center',
-    gap: 10, fontSize: 11, color: C.fg3, marginBottom: 4,
+    gap: 10, fontSize: 12, color: C.fg3, marginBottom: 10,
   },
   left: { display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 },
   // Baseline, not center: the bot's bold name and the monospace identity
@@ -308,17 +291,17 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'grid', gridTemplateColumns: 'max-content minmax(0, 1fr)',
     columnGap: 8, rowGap: 4, alignItems: 'baseline', marginBottom: 8,
   },
-  fallbackLabel: { color: C.fg3, fontSize: 10.5 },
+  fallbackLabel: { color: C.fg3, fontSize: 12 },
   fallbackIdentity: {
-    color: C.fg, fontFamily: 'SF Mono, Menlo, monospace', fontSize: 10.5,
+    color: C.fg, fontFamily: 'SF Mono, Menlo, monospace', fontSize: 12,
     overflowWrap: 'anywhere', userSelect: 'text', cursor: 'text',
   },
   fallbackErrorLabel: {
-    color: C.fg3, fontSize: 10.5, marginBottom: 3,
+    color: C.fg3, fontSize: 12, marginBottom: 3,
     borderTop: `1px solid ${C.border2}`, paddingTop: 8,
   },
   fallbackReason: {
-    fontFamily: 'SF Mono, Menlo, monospace', fontSize: 10.5, lineHeight: 1.45,
+    fontFamily: 'SF Mono, Menlo, monospace', fontSize: 12, lineHeight: 1.45,
     color: C.fg2, whiteSpace: 'pre-wrap',
     maxHeight: 200, overflowY: 'auto', overflowWrap: 'anywhere',
     userSelect: 'text', cursor: 'text',
@@ -330,8 +313,7 @@ const styles: Record<string, React.CSSProperties> = {
   fallbackAction: {
     appearance: 'none', background: 'transparent', color: C.fg2,
     border: `1px solid ${C.border2}`, borderRadius: 6,
-    padding: '3px 7px', fontSize: 10.5, lineHeight: 1.2,
+    padding: '3px 7px', fontSize: 12, lineHeight: 1.2,
     display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer',
   },
-  rule: { borderTop: `1px solid ${C.border2}`, marginBottom: 8 },
 }

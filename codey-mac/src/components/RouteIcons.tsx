@@ -25,5 +25,5 @@ export function RouteIcons({ routes }: { routes?: ChatRoute[] }) {
 
 const styles: Record<string, React.CSSProperties> = {
   row: { display: 'inline-flex', gap: 3, marginLeft: 6 },
-  icon: { lineHeight: 1, width: 18, height: 18, display: 'grid', placeItems: 'center', borderRadius: 5, background: 'var(--surface3)', color: 'var(--fg2)' },
+  icon: { lineHeight: 1, width: 18, height: 18, display: 'grid', placeItems: 'center', borderRadius: 6, background: 'var(--surface3)', color: 'var(--fg2)' },
 }

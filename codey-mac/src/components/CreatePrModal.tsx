@@ -59,7 +59,7 @@ const styles: Record<string, React.CSSProperties> = {
   backdrop: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center' },
   card: { width: 420, background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, display: 'flex', flexDirection: 'column', gap: 8 },
   head: { fontSize: 14, fontWeight: 600, color: C.fg },
-  label: { fontSize: 11, color: C.fg3, textTransform: 'uppercase', letterSpacing: 0.5 },
+  label: { fontSize: 12, color: C.fg3, textTransform: 'uppercase', letterSpacing: 0.5 },
   input: { background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 6, color: C.fg, fontSize: 13, padding: '6px 8px', outline: 'none' },
   textarea: { background: C.surface3, border: `1px solid ${C.border2}`, borderRadius: 6, color: C.fg, fontSize: 13, padding: '6px 8px', outline: 'none', resize: 'vertical' },
   row: { display: 'flex', gap: 8, marginTop: 4 },
