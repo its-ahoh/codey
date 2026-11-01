@@ -408,7 +408,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
     <div style={pageStyle}>
       {error && <div style={{ background: C.red + '22', color: C.red, padding: 10, borderRadius: 8, marginBottom: 10, fontSize: 12 }}>{error}</div>}
 
-      <Section first title="Advisor" description="Routing model used by teams to choose bots and coordinate execution."/>
+      <Section first title="Advisor" description="Picks bots and coordinates teams."/>
       <div style={{
         display: 'flex', alignItems: 'center', gap: 8,
         background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 8,
@@ -445,7 +445,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
         </select>
       </div>
 
-      <Section title="Aide" description="Background model for summaries, titles, and other lightweight housekeeping."/>
+      <Section title="Aide" description="Writes summaries and titles."/>
       <div style={{
         display: 'flex', alignItems: 'center', gap: 8,
         background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 8,

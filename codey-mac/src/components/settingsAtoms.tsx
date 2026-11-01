@@ -3,12 +3,11 @@ import { C } from '../theme'
 
 export const sectionStyle: React.CSSProperties = {
   display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
-  color: C.fg, fontSize: 13, fontWeight: 600,
-  marginTop: 22, marginBottom: 10, paddingBottom: 8,
+  color: C.fg, fontSize: 15, fontWeight: 600,
+  marginTop: 26, marginBottom: 10, paddingBottom: 8,
   borderBottom: `1px solid ${C.border}`,
 }
 export const pageStyle: React.CSSProperties = { padding: 20, height: '100%', overflowY: 'auto' }
-export const pageIntroStyle: React.CSSProperties = { color: C.fg3, fontSize: 12, lineHeight: 1.5, marginBottom: 14 }
 export const fieldStyle: React.CSSProperties = {
   display: 'flex', alignItems: 'center', justifyContent: 'space-between',
   padding: '13px 14px', border: `1px solid ${C.border}`,

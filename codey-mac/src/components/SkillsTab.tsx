@@ -606,7 +606,6 @@ export const SkillsTab: React.FC<{ addRequest?: number; searchQuery?: string }> 
           <div style={styles.installHeader}>
             <div>
               <div style={styles.installTitle}>Install a skill</div>
-              <div style={styles.installSubtitle}>One skill or a whole pack, shared with every coding agent</div>
             </div>
             <button
               onClick={() => { setAdding(false); setAddInput(''); setError(null) }}
@@ -814,7 +813,6 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 12, marginBottom: 15,
   },
   installTitle: { color: C.fg, fontSize: 13, fontWeight: 600, marginBottom: 3 },
-  installSubtitle: { color: C.fg3, fontSize: 12 },
   smallSwitcher: {
     display: 'inline-flex', alignItems: 'center', padding: 2, gap: 2,
     borderRadius: 8, background: C.bg, border: `1px solid ${C.border}`,

@@ -210,11 +210,11 @@ const pillButton = (variant: 'primary' | 'danger' | 'ghost'): React.CSSPropertie
   color: variant === 'primary' ? C.onAccent : variant === 'danger' ? C.red : C.fg2,
 })
 
-const Section: React.FC<{ title: string; description: string; right?: React.ReactNode }> = ({ title, description, right }) => (
+const Section: React.FC<{ title: string; description?: string; right?: React.ReactNode }> = ({ title, description, right }) => (
   <div style={sectionStyle}>
     <div>
-      <div style={{ color: C.fg, fontSize: 14, fontWeight: 600 }}>{title}</div>
-      <div style={{ color: C.fg3, fontSize: 12, marginTop: 2 }}>{description}</div>
+      <div style={{ color: C.fg, fontSize: 15, fontWeight: 600 }}>{title}</div>
+      {description && <div style={{ color: C.fg3, fontSize: 12, marginTop: 2 }}>{description}</div>}
     </div>
     {right}
   </div>
@@ -506,7 +506,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
     <div style={settingBlockStyle}>
       <div style={{ ...settingRowStyle, alignItems: 'flex-start' }}>
         <div>
-          <div style={{ color: C.fg, fontSize: 13 }}>{label}</div>
+          <div style={{ color: C.fg, fontSize: 14, fontWeight: 500 }}>{label}</div>
           <div style={{ color: C.fg3, fontSize: 12, marginTop: 3 }}>{description}</div>
         </div>
         <select
@@ -543,10 +543,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
     <div style={{ padding: 20, height: '100%', overflowY: 'auto' }}>
       {error && <div style={{ background: C.red + '22', color: C.red, padding: 10, borderRadius: 8, marginBottom: 10, fontSize: 12 }}>{error}</div>}
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, color: C.fg3, fontSize: 12, lineHeight: 1.5 }}>
-        <span>The switches control global hotkeys only; both composer actions remain available. Dictation and Conversation share the recognition settings below.</span>
-        {savedMsg && <span style={{ color: C.green, flexShrink: 0 }}>Saved</span>}
-      </div>
+      {savedMsg && <div style={{ textAlign: 'right', color: C.green, fontSize: 12 }}>Saved</div>}
 
       <div style={sectionCardStyle}>
         <Section
@@ -557,7 +554,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
         <div style={sectionBodyStyle}>
 
       <div style={fieldStyle}>
-        <span style={{ color: C.fg, fontSize: 13 }}>Dictation hotkey</span>
+        <span style={{ color: C.fg, fontSize: 14, fontWeight: 500 }}>Dictation hotkey</span>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <button
             onClick={() => updateVoice({ hotkey: 'Fn' })}
@@ -578,7 +575,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
       </div>
 
       <div style={fieldStyle}>
-        <span style={{ color: C.fg, fontSize: 13 }}>Insertion</span>
+        <span style={{ color: C.fg, fontSize: 14, fontWeight: 500 }}>Insertion</span>
         <select
           value={voice.injection}
           onChange={e => updateVoice({ injection: e.target.value as 'paste' | 'ax' })}
@@ -591,21 +588,18 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
 
       <div style={{ ...lastFieldStyle, alignItems: 'flex-start', flexDirection: 'column', gap: 6 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-          <span style={{ color: C.fg, fontSize: 13 }}>Polish the transcript</span>
+          <span style={{ color: C.fg, fontSize: 14, fontWeight: 500 }}>Polish the transcript</span>
           <Toggle on={voice.polish.enabled} onChange={enabled => updatePolish({ enabled })}/>
         </div>
         <span style={{ color: C.fg3, fontSize: 12, lineHeight: 1.5 }}>
-          Drops filler and repeated words and fixes grammar before the text lands. Never
-          translates, summarizes, or answers what you said &mdash; a result that drifts is
-          thrown away and what you actually said goes in instead. Costs a moment after you
-          stop talking, so Conversation skips it &mdash; nobody reads that text.
+          Removes filler words and fixes grammar. Conversation skips this.
         </span>
 
         {/* Only once it is on: an empty box for a switched-off feature is a
             question the user has no reason to answer yet. */}
         {voice.polish.enabled && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%', paddingTop: 10 }}>
-            <span style={{ color: C.fg, fontSize: 13 }}>Instructions</span>
+            <span style={{ color: C.fg, fontSize: 14, fontWeight: 500 }}>Instructions</span>
             <textarea
               value={voice.polish.extraInstructions}
               onChange={e => setVoice({
@@ -621,9 +615,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
               }}
             />
             <span style={{ color: C.fg3, fontSize: 12, lineHeight: 1.5 }}>
-              Added to the built-in instructions, not a replacement for them. Asking here for
-              a summary, a translation, or an answer will not work: those are thrown away by
-              the same check that protects your words, whatever the instructions say.
+              Added to the built-in instructions. It can&rsquo;t ask for a summary, translation, or answer.
             </span>
           </div>
         )}
@@ -641,7 +633,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
 
       <div style={settingBlockStyle}>
         <div style={settingRowStyle}>
-          <span style={{ color: C.fg, fontSize: 13 }}>Talk-to-chat hotkey</span>
+          <span style={{ color: C.fg, fontSize: 14, fontWeight: 500 }}>Talk-to-chat hotkey</span>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <button
               onClick={() => updateVoice({ converseHotkey: 'Shift+Fn' })}
@@ -687,8 +679,8 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
         {!voice.tts.enabled ? (
           <div style={{ ...settingRowStyle, padding: '16px 0 0' }}>
               <div>
-                <div style={{ color: C.fg, fontSize: 13 }}>System voice</div>
-                <div style={{ color: C.fg3, fontSize: 12, marginTop: 3 }}>Installed macOS voices; Automatic follows the reply language.</div>
+                <div style={{ color: C.fg, fontSize: 14, fontWeight: 500 }}>System voice</div>
+                <div style={{ color: C.fg3, fontSize: 12, marginTop: 3 }}>Automatic follows the reply language.</div>
               </div>
               <select
                 value={voice.tts.systemVoice}
@@ -716,7 +708,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
                 'No key selected',
               )}
               <div style={fieldStyle}>
-                <span style={{ color: C.fg, fontSize: 13 }}>Speech API URL</span>
+                <span style={{ color: C.fg, fontSize: 14, fontWeight: 500 }}>Speech API URL</span>
                 <input
                   value={voice.tts.apiUrl}
                   onChange={e => setVoice({ ...voice, tts: { ...voice.tts, apiUrl: e.target.value } })}
@@ -727,7 +719,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
               </div>
 
               <div style={fieldStyle}>
-                <span style={{ color: C.fg, fontSize: 13 }}>Speech model</span>
+                <span style={{ color: C.fg, fontSize: 14, fontWeight: 500 }}>Speech model</span>
                 <input
                   value={voice.tts.apiModel}
                   onChange={e => setVoice({ ...voice, tts: { ...voice.tts, apiModel: e.target.value } })}
@@ -738,7 +730,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
               </div>
 
               <div style={{ ...fieldStyle, borderBottom: 'none', paddingBottom: 0 }}>
-                <span style={{ color: C.fg, fontSize: 13 }}>Voice</span>
+                <span style={{ color: C.fg, fontSize: 14, fontWeight: 500 }}>Voice</span>
                 <select
                   value={voice.tts.voiceId}
                   onChange={e => updateTts({ voiceId: e.target.value })}
@@ -754,9 +746,9 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
       <div style={lastSettingBlockStyle}>
         <div style={settingRowStyle}>
           <div>
-            <div style={{ color: C.fg, fontSize: 13 }}>Spoken reply length</div>
+            <div style={{ color: C.fg, fontSize: 14, fontWeight: 500 }}>Spoken reply length</div>
             <div style={{ color: C.fg3, fontSize: 12, marginTop: 3 }}>
-              Choose how much Codey reads aloud. Say &ldquo;more detail&rdquo; to hear the full response.
+              Say &ldquo;more detail&rdquo; to hear the full response.
             </div>
           </div>
           <select
@@ -781,7 +773,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
         <div style={sectionBodyStyle}>
 
       <div style={fieldStyle}>
-        <span style={{ color: C.fg, fontSize: 13 }}>Language</span>
+        <span style={{ color: C.fg, fontSize: 14, fontWeight: 500 }}>Language</span>
         <select
           value={voice.language}
           onChange={e => updateVoice({ language: e.target.value })}
@@ -798,7 +790,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
           orphaned below a row-divider with awkward gap. */}
       <div style={settingBlockStyle}>
         <div style={settingRowStyle}>
-          <span style={{ color: C.fg, fontSize: 13 }}>Transcription source</span>
+          <span style={{ color: C.fg, fontSize: 14, fontWeight: 500 }}>Transcription source</span>
           <div style={{ display: 'flex', gap: 6 }}>
             <button
               onClick={() => { if (!isApi) updateVoice({ provider: 'api' }) }}
@@ -917,7 +909,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
         return (
           <div style={lastSettingBlockStyle}>
             <div style={settingRowStyle}>
-              <span style={{ color: C.fg, fontSize: 13 }}>{isStreaming ? 'Streaming model' : 'Local model'}</span>
+              <span style={{ color: C.fg, fontSize: 14, fontWeight: 500 }}>{isStreaming ? 'Streaming model' : 'Local model'}</span>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <select
                   value={selectedModel}
@@ -994,7 +986,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
       {voice.provider === 'api' && (
       <>
       <div style={{ ...fieldStyle, alignItems: 'flex-start', flexDirection: 'column', gap: 6 }}>
-        <span style={{ color: C.fg, fontSize: 13 }}>API base URL</span>
+        <span style={{ color: C.fg, fontSize: 14, fontWeight: 500 }}>API base URL</span>
         <input
           value={voice.apiUrl}
           onChange={e => setVoice({ ...voice, apiUrl: e.target.value })}
@@ -1007,7 +999,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
         </span>
       </div>
       <div style={lastFieldStyle}>
-        <span style={{ color: C.fg, fontSize: 13 }}>Model</span>
+        <span style={{ color: C.fg, fontSize: 14, fontWeight: 500 }}>Model</span>
         <input
           value={voice.apiModel}
           onChange={e => setVoice({ ...voice, apiModel: e.target.value })}
@@ -1022,7 +1014,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
       {voice.provider === 'realtime' && (
       <>
       <div style={{ ...fieldStyle, alignItems: 'flex-start', flexDirection: 'column', gap: 6 }}>
-        <span style={{ color: C.fg, fontSize: 13 }}>WebSocket URL</span>
+        <span style={{ color: C.fg, fontSize: 14, fontWeight: 500 }}>WebSocket URL</span>
         <input
           value={voice.realtimeUrl}
           onChange={e => setVoice({ ...voice, realtimeUrl: e.target.value })}
@@ -1036,7 +1028,7 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
       </div>
       <div style={lastSettingBlockStyle}>
         <div style={settingRowStyle}>
-          <span style={{ color: C.fg, fontSize: 13 }}>Realtime model</span>
+          <span style={{ color: C.fg, fontSize: 14, fontWeight: 500 }}>Realtime model</span>
           <input
             value={voice.realtimeModel}
             onChange={e => setVoice({ ...voice, realtimeModel: e.target.value })}
@@ -1059,7 +1051,6 @@ export const WhisperTab: React.FC<WhisperTabProps> = ({ isGatewayRunning, onAddV
       <div style={sectionCardStyle}>
         <Section
           title="Dictionary"
-          description="Words the recognizer should know about"
           right={<Toggle on={voice.vocabularyAutoLearn} onChange={vocabularyAutoLearn => updateVoice({ vocabularyAutoLearn })}/>}
         />
         <div style={sectionBodyStyle}>

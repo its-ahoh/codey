@@ -135,7 +135,7 @@ export default function GlobalTeamsSection() {
   return (
     <div>
       <div style={styles.topRow}>
-        <div style={styles.libraryNote}><span style={styles.libraryDot} />Available in every workspace</div>
+        <div />
         <div style={styles.topActions}>
           {savedAt > 0 && Date.now() - savedAt < 2000 && <span style={styles.saved}><span>✓</span> Saved</span>}
           <button onClick={addTeam} style={styles.newTeamBtn}><UIIcon name="add" size={15} />New team</button>
@@ -315,15 +315,13 @@ export default function GlobalTeamsSection() {
 
 const styles: Record<string, CSSProperties> = {
   topRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 14 },
-  libraryNote: { display: 'inline-flex', alignItems: 'center', gap: 7, color: C.fg3, fontSize: 12 },
-  libraryDot: { width: 7, height: 7, borderRadius: '50%', background: C.green, boxShadow: `0 0 8px ${C.green}` },
   topActions: { display: 'flex', alignItems: 'center', gap: 10 },
   saved: { color: C.green, fontSize: 12, fontWeight: 600, display: 'inline-flex', gap: 4 },
   newTeamBtn: { display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 12px', fontSize: 12, fontWeight: 600, background: C.accent, color: C.onAccent, border: 'none', borderRadius: 8, cursor: 'pointer', boxShadow: 'none' },
   error: { background: C.dangerBg, color: C.dangerFg, border: `1px solid ${C.dangerBorder}`, padding: '10px 12px', borderRadius: 8, fontSize: 12, marginBottom: 12 },
   empty: { minHeight: 270, border: `1px dashed ${C.border2}`, borderRadius: 14, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: 24 },
   emptyIcon: { width: 56, height: 56, borderRadius: 14, display: 'grid', placeItems: 'center', background: C.accentDim, color: C.accent },
-  emptyTitle: { color: C.fg, fontSize: 15, fontWeight: 600, marginTop: 14 },
+  emptyTitle: { color: C.fg, fontSize: 18, fontWeight: 600, marginTop: 14 },
   emptyText: { color: C.fg3, fontSize: 12, lineHeight: 1.5, maxWidth: 300, marginTop: 5 },
   teamCard: { marginBottom: 16, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, overflow: 'hidden', boxShadow: '0 6px 18px rgba(0,0,0,0.05)' },
   teamHeader: { display: 'flex', alignItems: 'center', gap: 9, padding: '13px 15px', borderBottom: `1px solid ${C.border}`, background: C.surface2 },

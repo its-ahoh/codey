@@ -8,8 +8,6 @@ export interface SidebarCommonProps {
   onOpenAutomations: () => void
   onOpenTools: () => void
   automationsUnseenCount: number
-  /** The Bots / Workspaces switch; each panel places it above its own list. */
-  modeTabs: React.ReactNode
 }
 
 export function SidebarAction({ icon, children, badge, hint, ...buttonProps }: {
@@ -30,7 +28,7 @@ export function SidebarSearch(props: Omit<React.InputHTMLAttributes<HTMLInputEle
   </label>
 }
 
-export function SidebarFooter({ onOpenSettings, onOpenAutomations, onOpenTools, automationsUnseenCount }: Omit<SidebarCommonProps, 'modeTabs'>) {
+export function SidebarFooter({ onOpenSettings, onOpenAutomations, onOpenTools, automationsUnseenCount }: SidebarCommonProps) {
   return <div style={styles.section}>
     <UpdateButton />
     <SidebarAction icon="activity" onClick={onOpenAutomations} badge={automationsUnseenCount}>Automations</SidebarAction>

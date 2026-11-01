@@ -260,17 +260,16 @@ export type PaletteName = 'classic' | 'terminal' | 'ocean' | 'dusk' | 'ember'
 
 export interface PaletteDefinition {
   label: string
-  description: string
   light: Palette
   dark: Palette
 }
 
 export const PALETTES: Record<PaletteName, PaletteDefinition> = {
-  classic:  { label: 'Classic',  description: 'Clean graphite with a calm blue accent.', light: classicLight, dark: classicDark },
-  terminal: { label: 'Terminal', description: 'Warm paper and focused terminal green.', light: terminalLight, dark: terminalDark },
-  ocean:    { label: 'Ocean',    description: 'Deep navy and crisp cyan.', light: oceanLight, dark: oceanDark },
-  dusk:     { label: 'Dusk',     description: 'Muted plum with soft violet.', light: duskLight, dark: duskDark },
-  ember:    { label: 'Ember',    description: 'Charcoal and clay with copper warmth.', light: emberLight, dark: emberDark },
+  classic:  { label: 'Classic',  light: classicLight, dark: classicDark },
+  terminal: { label: 'Terminal', light: terminalLight, dark: terminalDark },
+  ocean:    { label: 'Ocean',    light: oceanLight, dark: oceanDark },
+  dusk:     { label: 'Dusk',     light: duskLight, dark: duskDark },
+  ember:    { label: 'Ember',    light: emberLight, dark: emberDark },
 }
 
 export const DEFAULT_PALETTE: PaletteName = 'classic'

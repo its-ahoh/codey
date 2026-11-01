@@ -3091,7 +3091,7 @@ const styles: Record<string, React.CSSProperties> = {
     width: 32, height: 32, padding: 0, border: 'none', borderRadius: 8, background: 'transparent',
     display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
   },
-  workspaceTag: { color: C.fg, fontSize: 13, fontWeight: 600, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', flexShrink: 1, display: 'inline-flex', alignItems: 'center', gap: 7 },
+  workspaceTag: { color: C.fg, fontSize: 14, fontWeight: 600, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', flexShrink: 1, display: 'inline-flex', alignItems: 'center', gap: 7 },
   gitBadge: {
     color: C.fg3, fontSize: 12, flexShrink: 0,
     background: C.surface3, border: `1px solid ${C.border2}`,

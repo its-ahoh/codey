@@ -100,7 +100,7 @@ const ContextMenu: React.FC<{ x: number; y: number; children: React.ReactNode }>
   )
 }
 
-export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomations, onOpenTools, onSelectChat, automationsUnseenCount, activeChatId, modeTabs }) => {
+export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomations, onOpenTools, onSelectChat, automationsUnseenCount, activeChatId }) => {
   const { state, createChat, selectChat, renameChat, deleteChat, toggleWorkspace, refreshWorkspaces, refreshChats, linkChannel, unlinkChannel } = useChats()
   const voice = useVoiceTurn()
   const [addingWorkspace, setAddingWorkspace] = useState(false)
@@ -420,11 +420,7 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
       <SidebarSearch aria-label="Search chats" placeholder="Search" title={`Search in ${totalChats} chats`} value={search}
         onChange={e => { setSearch(e.target.value); closeHoverCard() }}
         onKeyDown={e => { if (e.key === 'Escape') setSearch('') }} />
-      <div style={styles.listHeader}>
-        {modeTabs}
-        <button type="button" style={styles.addWorkspaceBtn} onClick={handleAddWorkspace} disabled={addingWorkspace}
-          title="Pick a folder and create a new workspace + chat" aria-label="Add workspace"><UIIcon name="add" size={14} /></button>
-      </div>
+      <div style={styles.listGap} />
       <div style={styles.chatSection}>
         <div style={styles.scroll} onScroll={closeHoverCard}>
         {groupNames.length === 0 && (
@@ -503,7 +499,9 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
                         style={styles.gatewayBadge}
                         title="Gateway default workspace — receives messages from chat platforms"
                         aria-label="Gateway default workspace"
-                      >primary</span>
+                      >
+                        <UIIcon name="server" size={12} />
+                      </span>
                     )}
                   </span>
                 )}
@@ -669,6 +667,10 @@ export const ChatListPanel: React.FC<Props> = ({ onOpenSettings, onOpenAutomatio
             </div>
           )
         })}
+        {!searchTerm && (
+          <SidebarAction icon="add" onClick={handleAddWorkspace} disabled={addingWorkspace}
+            title="Pick a folder and create a new workspace + chat">{addingWorkspace ? 'Picking…' : 'Add workspace'}</SidebarAction>
+        )}
         </div>
       </div>
       <SidebarFooter onOpenSettings={onOpenSettings} onOpenAutomations={onOpenAutomations} onOpenTools={onOpenTools} automationsUnseenCount={automationsUnseenCount} />
@@ -819,8 +821,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   chatSection: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' },
   scroll: { flex: 1, overflowY: 'auto' },
-  listHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0 6px', flexShrink: 0 },
-  addWorkspaceBtn: { width: 24, height: 24, display: 'grid', placeItems: 'center', padding: 0, border: 'none', borderRadius: 6, background: 'transparent', color: C.fg3, cursor: 'pointer' },
+  listGap: { height: 6, flexShrink: 0 },
   empty: { color: C.fg3, fontSize: 12, padding: 12, textAlign: 'center' },
   groupHeader: {
     display: 'flex', alignItems: 'center', gap: 6,

@@ -292,16 +292,6 @@ const Shell: React.FC = () => {
   const sidebarActions = {
     onOpenSettings: openSettings,
     onOpenAutomations: openAutomations,
-    modeTabs: (
-      <div role="group" aria-label="Navigation mode" style={styles.modeTabs}>
-        {(['bots', 'workspaces'] as const).map(mode => (
-          <button key={mode} type="button" aria-pressed={sidebarMode === mode} onClick={() => switchSidebarMode(mode)}
-            style={{ ...styles.modeTab, color: sidebarMode === mode ? C.fg : C.fg3, fontWeight: sidebarMode === mode ? 600 : 400 }}>
-            {mode === 'bots' ? 'Bots' : 'Workspaces'}
-          </button>
-        ))}
-      </div>
-    ),
     onOpenTools: () => { setRightTool(null); setToolsOpen(true) },
     automationsUnseenCount: unseenRunKeys.size,
   }
@@ -312,6 +302,14 @@ const Shell: React.FC = () => {
         {!leftCollapsed && (
           <div style={{ ...styles.sidebarShell, width: leftPanelWidth }}>
             <div style={styles.sidebarStrip}>{sidebarToggle}</div>
+            <div role="group" aria-label="Navigation mode" style={styles.modeTabs}>
+              {(['bots', 'workspaces'] as const).map(mode => (
+                <button key={mode} type="button" aria-pressed={sidebarMode === mode} onClick={() => switchSidebarMode(mode)}
+                  style={{ ...styles.modeTab, color: sidebarMode === mode ? C.fg : C.fg3, fontWeight: sidebarMode === mode ? 600 : 400 }}>
+                  {mode === 'bots' ? 'Bots' : 'Workspaces'}
+                </button>
+              ))}
+            </div>
             <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
             {sidebarMode === 'bots' ? <BotListPanel
               newBotRequested={newBotRequested} onNewBotHandled={() => setNewBotRequested(false)}
@@ -368,7 +366,7 @@ const Shell: React.FC = () => {
               <div style={styles.emptyCard}>
                 <div style={styles.emptyIcon}><UIIcon name="chat" size={30} /></div>
                 <div style={styles.emptyTitle}>{sidebarMode === 'bots' ? 'Meet your Bots' : state.order.length === 0 ? 'Start your first chat' : 'Pick up where you left off'}</div>
-                <div style={styles.emptyCopy}>{sidebarMode === 'bots' ? 'Choose a Bot to chat, or create a group to work together.' : state.order.length === 0 ? 'Create a chat from the sidebar to give Codey a task.' : 'Choose a conversation from the sidebar.'}</div>
+                <div style={styles.emptyCopy}>{sidebarMode === 'bots' ? 'Choose a Bot to chat, or create a group to work together.' : state.order.length === 0 ? 'Create a chat from the sidebar to give Codey a task.' : null}</div>
               </div>
             </div>
           )}
@@ -456,8 +454,8 @@ const styles: Record<string, React.CSSProperties> = {
     WebkitAppRegion: 'no-drag',
   },
   floatingToggle: { position: 'absolute', top: 8, left: 82, zIndex: 20 },
-  modeTabs: { display: 'flex', gap: 14, padding: '0 8px' },
-  modeTab: { padding: 0, border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 12 },
+  modeTabs: { display: 'flex', gap: 14, padding: '0 16px 10px', flexShrink: 0 },
+  modeTab: { padding: 0, border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 13 },
   emptyStrip: {
     height: 44, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', padding: '0 8px',
     // @ts-ignore Electron
@@ -473,7 +471,7 @@ const styles: Record<string, React.CSSProperties> = {
   emptyMain: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.fg3, padding: 24 },
   emptyCard: { display: 'flex', flexDirection: 'column', alignItems: 'center', maxWidth: 270, textAlign: 'center' },
   emptyIcon: { width: 62, height: 62, borderRadius: 20, display: 'grid', placeItems: 'center', color: C.fg3, background: C.surface2 },
-  emptyTitle: { color: C.fg, fontSize: 15, fontWeight: 600, marginTop: 14 },
+  emptyTitle: { color: C.fg, fontSize: 18, fontWeight: 600, marginTop: 14 },
   emptyCopy: { color: C.fg2, fontSize: 12, lineHeight: 1.5, marginTop: 6 },
 }
 

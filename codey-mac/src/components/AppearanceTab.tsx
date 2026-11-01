@@ -119,9 +119,6 @@ export const AppearanceTab: React.FC = () => {
       <div style={{ ...styles.settingRow, borderTop: 'none' }}>
         <div style={{ ...styles.label, width: 'auto', flex: 1 }}>
           <div>Mode</div>
-          {mode === 'system' && (
-            <div style={styles.settingDesc}>Following macOS: {effective === 'dark' ? 'Dark' : 'Light'}</div>
-          )}
         </div>
         <div role="radiogroup" aria-label="Appearance" style={styles.segmented}>
           {OPTIONS.map(opt => {
@@ -148,7 +145,6 @@ export const AppearanceTab: React.FC = () => {
       <div style={{ ...styles.settingRow, ...styles.themeRow }}>
         <div style={{ ...styles.label, width: 'auto' }}>
           <div>Color theme</div>
-          <div style={styles.settingDesc}>Choose a palette. Each one adapts to Light and Dark mode.</div>
         </div>
         <div role="radiogroup" aria-label="Color theme" style={styles.paletteGrid}>
           {PALETTE_OPTIONS.map(([name, definition]) => {
@@ -174,7 +170,6 @@ export const AppearanceTab: React.FC = () => {
                 </span>
                 <span style={styles.paletteCopy}>
                   <span style={{ ...styles.paletteName, color: active ? C.accent : C.fg }}>{definition.label}</span>
-                  <span style={styles.paletteDescription}>{definition.description}</span>
                 </span>
                 <span aria-hidden="true" style={{ ...styles.check, opacity: active ? 1 : 0 }}>✓</span>
               </button>
@@ -187,7 +182,7 @@ export const AppearanceTab: React.FC = () => {
         <div style={{ ...styles.label, width: 'auto', flex: 1 }}>
           <div>Zoom</div>
           <div style={styles.settingDesc}>
-            Scale the whole interface — text, spacing and icons together. ⌘+ and ⌘− adjust it from anywhere in the app; ⌘0 goes back to 100%.
+            ⌘+ and ⌘− work anywhere. ⌘0 resets.
           </div>
         </div>
         <div style={styles.stepper}>
@@ -222,7 +217,7 @@ export const AppearanceTab: React.FC = () => {
         <div style={{ ...styles.label, width: 'auto', flex: 1 }}>
           <div>Status panel</div>
           <div style={styles.settingDesc}>
-            Show the Status tab and the floating status card in the chat's right panel. Off also stops Codey from generating the status brief.
+            Off also stops generating the status brief.
           </div>
         </div>
         <Toggle
@@ -240,7 +235,7 @@ export const AppearanceTab: React.FC = () => {
             <div style={{ ...styles.label, width: 'auto', flex: 1 }}>
               <div>Skip permissions</div>
               <div style={styles.settingDesc}>
-                When enabled, agents run shell commands, edit files, and make network requests without asking for confirmation. Disable to review every action before execution.
+                Agents run commands, edit files, and use the network without asking.
               </div>
             </div>
             <Toggle on={skipPerms} onChange={toggleSkipPerms}/>
@@ -249,9 +244,6 @@ export const AppearanceTab: React.FC = () => {
           <div style={styles.settingRow}>
             <div style={{ ...styles.label, width: 'auto', flex: 1 }}>
               <div>Background notifications</div>
-              <div style={styles.settingDesc}>
-                Notify when Codey finishes, errors, or needs your input while the app is in the background.
-              </div>
             </div>
             <Toggle on={notifyEnabled} onChange={toggleNotify}/>
           </div>
@@ -260,7 +252,7 @@ export const AppearanceTab: React.FC = () => {
             <div style={{ ...styles.label, width: 'auto', flex: 1 }}>
               <div>Quick capture hotkey</div>
               <div style={styles.settingDesc}>
-                Summon a floating composer from anywhere to send Codey a task. Clear to disable.
+                Opens a floating message box from anywhere.
               </div>
             </div>
             <HotkeyRecorder value={captureHotkey} onChange={changeCaptureHotkey}/>
@@ -269,9 +261,6 @@ export const AppearanceTab: React.FC = () => {
           <div style={styles.settingRow}>
             <div style={{ ...styles.label, width: 'auto', flex: 1 }}>
               <div>Screenshot to Quick Capture</div>
-              <div style={styles.settingDesc}>
-                Grab a full-screen screenshot and open Quick Capture with it attached. Clear to disable.
-              </div>
             </div>
             <HotkeyRecorder value={screenshotHotkey} onChange={changeScreenshotHotkey}/>
           </div>
@@ -279,9 +268,6 @@ export const AppearanceTab: React.FC = () => {
           <div style={styles.settingRow}>
             <div style={{ ...styles.label, width: 'auto', flex: 1 }}>
               <div>Launch Codey at login</div>
-              <div style={styles.settingDesc}>
-                Start Codey automatically when you log in, so the gateway and menu bar are always available.
-              </div>
             </div>
             <Toggle on={launchAtLogin} onChange={toggleLaunchAtLogin}/>
           </div>
@@ -289,9 +275,6 @@ export const AppearanceTab: React.FC = () => {
           <div style={styles.settingRow}>
             <div style={{ ...styles.label, width: 'auto', flex: 1 }}>
               <div>Hide Dock icon (menu bar only)</div>
-              <div style={styles.settingDesc}>
-                Run as a menu-bar app with no Dock icon. Codey stays reachable from the menu bar.
-              </div>
             </div>
             <Toggle on={dockless} onChange={toggleDockless}/>
           </div>
@@ -303,7 +286,7 @@ export const AppearanceTab: React.FC = () => {
             <div style={{ ...styles.label, width: 'auto', flex: 1 }}>
               <div>Turn-end sound</div>
               <div style={styles.settingDesc}>
-                Play a short sound each time a reply finishes, errors, or needs your input — even while Codey is in front.
+                Also plays while Codey is in front.
               </div>
             </div>
             <Toggle on={turnSound} onChange={toggleTurnSound}/>
@@ -316,7 +299,7 @@ export const AppearanceTab: React.FC = () => {
                 <div style={{ ...styles.settingDesc, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={soundFile || undefined}>
                   {soundFile
                     ? soundFile.split('/').pop()
-                    : 'System default — different sounds for finished, needs input, and error.'}
+                    : 'System default'}
                 </div>
               </div>
               <div style={styles.stepper}>
@@ -349,7 +332,7 @@ const styles: Record<string, React.CSSProperties> = {
   // clipped underneath the following section.
   wrap:  { display: 'block' },
   row:   { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, padding: '13px 14px', borderRadius: 10, background: C.surface, border: `1px solid ${C.border}` },
-  label: { fontSize: 13, color: C.fg, width: 80 },
+  label: { fontSize: 14, fontWeight: 500, color: C.fg, width: 80 },
   // Toggle/hotkey settings stacked with dividers so each row's label and
   // control read as a distinct line instead of a packed block.
   settingsGroup: {
@@ -406,8 +389,7 @@ const styles: Record<string, React.CSSProperties> = {
   previewLine: { position: 'absolute', left: 20, top: 10, width: 18, height: 3, borderRadius: 2, opacity: 0.72 },
   previewAccent: { position: 'absolute', left: 20, top: 19, width: 21, height: 8, borderRadius: 4 },
   paletteCopy: { minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 },
-  paletteName: { fontSize: 12, fontWeight: 600 },
-  paletteDescription: { color: C.fg3, fontSize: 11, lineHeight: 1.35 },
+  paletteName: { fontSize: 13, fontWeight: 500 },
   check: { marginLeft: 'auto', color: C.accent, fontSize: 12, fontWeight: 600 },
   value: { fontSize: 13, color: C.fg2, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' },
 }

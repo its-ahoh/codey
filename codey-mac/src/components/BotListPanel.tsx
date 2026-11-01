@@ -95,7 +95,7 @@ export function BotListPanel(props: Props) {
   return <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, padding: '0 8px 8px', gap: 1 }}>
     <SidebarAction icon="add" hint="⌘N" disabled={busy} onClick={() => setForm(form === 'bot' ? null : 'bot')}>New Bot</SidebarAction>
     <SidebarSearch aria-label="Search chats and messages" placeholder="Search" title="Search chats and messages" value={search} onChange={e => setSearch(e.target.value)} onCompositionStart={() => setComposing(true)} onCompositionEnd={() => setComposing(false)} />
-    <div style={{ padding: '10px 0 6px', flexShrink: 0 }}>{props.modeTabs}</div>
+    <div style={{ height: 6, flexShrink: 0 }} />
     {error && !form && <div role="alert" style={{ color: C.red, fontSize: 12 }}>{error}</div>}
     <div style={{ overflowY: 'auto', minHeight: 0, flex: 1 }}>
       {form && <div style={{ padding: 10, marginBottom: 14, border: `1px solid ${C.border}`, borderRadius: 10 }}>

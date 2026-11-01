@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { C } from '../theme'
 import {
-  inputStyle, pageIntroStyle, pageStyle, pillButton, Section, unwrap,
+  inputStyle, pageStyle, pillButton, Section, unwrap,
 } from './settingsAtoms'
 import { UIIcon } from './UIIcons'
 
@@ -188,7 +188,6 @@ export const ApiKeysTab: React.FC<Props> = ({ isGatewayRunning, autoCreatePurpos
     <div style={pageStyle}>
       {error && <div style={{ background: C.red + '22', color: C.red, padding: 10, borderRadius: 8, marginBottom: 10, fontSize: 12 }}>{error}</div>}
 
-      <div style={pageIntroStyle}>Store credentials once, then select them from Models or Voice settings. Secrets are not duplicated into those feature configs.</div>
 
       <Section first title="Voice" right={
         <button onClick={() => setCreating('voice')} style={pillButton('primary')} disabled={creating !== null}>+ Add</button>

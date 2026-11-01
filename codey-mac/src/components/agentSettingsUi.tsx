@@ -31,7 +31,7 @@ export const rowStyle: React.CSSProperties = {
   padding: '11px 0', borderBottom: `1px solid ${C.border}`,
 }
 export const lastRowStyle: React.CSSProperties = { ...rowStyle, borderBottom: 'none' }
-export const rowLabelStyle: React.CSSProperties = { color: C.fg, fontSize: 13 }
+export const rowLabelStyle: React.CSSProperties = { color: C.fg, fontSize: 14, fontWeight: 500 }
 export const rowHintStyle: React.CSSProperties = { color: C.fg3, fontSize: 12, lineHeight: 1.45, marginTop: 3 }
 
 /** Every action on this page is a square icon button; only the tint changes. */
