@@ -33,7 +33,7 @@ import { defaultThinkingExpanded } from './thinkingState'
 import { getThinkingToggles, rememberThinkingToggle } from './thinkingToggles'
 import { formatTokens } from './turnHeaderModel'
 import {
-  TurnHeader, MESSAGE_ROW_INSET, TURN_RAIL_WIDTH, TURN_TEXT_PADDING, TURN_TEXT_INSET,
+  TurnHeader, MESSAGE_ROW_INSET, TURN_TEXT_PADDING, TURN_TEXT_INSET,
   USER_BUBBLE_PADDING_X,
 } from './TurnHeader'
 import { ACTIVITY_LABEL } from './agentActivity'
@@ -1861,7 +1861,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
         >
           <UIIcon name="panel" color={C.fg2} filled={panelOpen} />
         </button>
-        <ChatHeaderActions compact onDismiss={() => { setEditorMenuOpen(false); setLinkMenuOpen(false) }}>
+        <ChatHeaderActions onDismiss={() => { setEditorMenuOpen(false); setLinkMenuOpen(false) }}>
         <div data-action-label="Open in IDE" style={styles.openInWrap}>
           <div style={styles.openInSplit}>
             <button
@@ -2070,26 +2070,13 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                 overflowWrap: 'anywhere', wordBreak: 'break-word',
               } : {
                 // The bubble marks "what the user said". An assistant reply
-                // reads as a document; the header rule below carries the
-                // boundary the bubble used to provide.
-                //
-                // `ch` resolves against this element's 13px font, so 96ch is
-                // roughly 700px. This gives prose, code, and tables more room
-                // than the previous 78ch column while retaining a readable
-                // line-length ceiling on wide windows. Small windows still use
-                // all available space via the 100% cap.
+                // reads as a document, in the transcript's centered column.
                 minWidth: 0, width: '100%', maxWidth: '100%',
                 // Padding on all four sides so the selected highlight reads as a
                 // card rather than a rectangle cut through the text. It is
                 // unconditional — applying it only when selected would shift the
                 // whole reply the moment you click it.
-                //
-                // Right padding equals rail + left padding, so the text sits the
-                // same distance from both inner edges of the highlight.
-                padding: `8px ${TURN_RAIL_WIDTH + TURN_TEXT_PADDING}px 6px ${TURN_TEXT_PADDING}px`,
-                // The rail is always present, transparent when unselected, so
-                // selecting a turn never shifts the text column sideways.
-                borderLeft: `${TURN_RAIL_WIDTH}px solid transparent`,
+                padding: `8px ${TURN_TEXT_PADDING}px 6px`,
                 // A neutral tint: selecting a turn is a quiet state, so it does not
                 // spend the accent, which is kept for the next action.
                 borderRadius: 8,
@@ -2103,7 +2090,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                 {/* Aide, Advisor and the team final answer read like a plain
                     Codey reply: no member header at all. Only real bots
                     get a name and an avatar, folded into TurnHeader's own row
-                    so the name sits directly above the rule instead of on a
+                    so the name sits directly above the reply instead of on a
                     separate row with a gap under it. */}
                 {!isUser && (() => {
                   const thinking = msg.thinking?.trim() ?? ''
