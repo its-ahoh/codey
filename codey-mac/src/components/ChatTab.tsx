@@ -1918,14 +1918,17 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
             </>
           )}
         </div>
-        <div data-action-label="Channels" style={{ position: 'relative' }}>
+        <div style={{ position: 'relative' }}>
           <button
+            data-action-label="Channels"
+            data-keep-open
             onClick={() => setLinkMenuOpen(o => !o)}
-            style={styles.linkBtn}
+            style={{ ...styles.linkBtn, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '4px 6px' }}
             title={chat.routes?.length ? 'Manage channel links' : 'Link to a channel'}
             aria-label="Connect channels"
+            aria-expanded={linkMenuOpen}
           >
-            <UIIcon name="phone" size={17} />
+            <UIIcon name="phone" size={16} color={C.fg2} />
           </button>
           {linkMenuOpen && (
             <>
@@ -1936,7 +1939,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
               <div style={styles.linkMenu} onClick={e => e.stopPropagation()}>
                 {(['telegram', 'discord', 'imessage'] as const).map(ch => {
                   const linked = chat.routes?.find(r => r.channel === ch)
-                  const label = ch === 'telegram' ? '✈ Telegram' : ch === 'discord' ? '◈ Discord' : '◐ iMessage'
+                  const label = ch === 'telegram' ? 'Telegram' : ch === 'discord' ? 'Discord' : 'iMessage'
                   return (
                     <button
                       key={ch}
@@ -1972,6 +1975,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                             boxShadow: linked ? `0 0 6px ${C.green}` : 'none',
                           }}
                         />
+                        <UIIcon name={ch} size={14} />
                         {label}
                       </span>
                       <span style={{
@@ -3094,12 +3098,12 @@ const styles: Record<string, React.CSSProperties> = {
   openInWrap: { position: 'relative', flexShrink: 0 },
   openInSplit: { display: 'inline-flex', alignItems: 'stretch', height: 32 },
   openInPrimary: {
-    border: `1px solid ${C.border2}`, borderRadius: '6px 0 0 6px', padding: '4px 8px', background: C.surface3,
+    border: 'none', borderRadius: '6px 0 0 6px', padding: '4px 8px', background: 'transparent',
     color: C.fg2, cursor: 'pointer', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 5,
     height: 32, boxSizing: 'border-box',
   },
   openInDropdown: {
-    border: `1px solid ${C.border2}`, borderLeft: 'none', borderRadius: '0 6px 6px 0', padding: '4px 6px', background: C.surface3,
+    border: 'none', borderRadius: '0 6px 6px 0', padding: '4px 6px', background: 'transparent',
     color: C.fg3, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
     height: 32, boxSizing: 'border-box',
   },

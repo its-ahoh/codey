@@ -4,7 +4,7 @@ import './chatHeaderActions.css'
 
 /** The `⋯` menu in the chat header. Children are the controls themselves, each
  *  labelled by `data-action-label`; a child that is itself a labelled button
- *  closes the menu when clicked. */
+ *  closes the menu when clicked, unless it opens a submenu (`data-keep-open`). */
 export function ChatHeaderActions({ children, onDismiss }: {
   children: React.ReactNode; onDismiss: () => void
 }) {
@@ -28,7 +28,7 @@ export function ChatHeaderActions({ children, onDismiss }: {
       onClick={() => { setOpen(value => !value); if (open) dismiss.current() }}><UIIcon name="more" size={17} /></button>
     {open && <div className="chat-header-actions-backdrop" onClick={() => { setOpen(false); dismiss.current(); trigger.current?.focus() }} />}
     <div ref={content} className="chat-header-actions-content" hidden={!open} role="dialog" aria-label="Chat actions"
-      onClick={event => { if ((event.target as HTMLElement).closest('button[data-action-label]')) { setOpen(false); dismiss.current() } }}>
+      onClick={event => { if ((event.target as HTMLElement).closest('button[data-action-label]:not([data-keep-open])')) { setOpen(false); dismiss.current() } }}>
       {children}
     </div>
   </div>
