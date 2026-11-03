@@ -76,6 +76,22 @@ jobs:
         working-directory: codey-mac
         run: npx --no-install vite build
 
+      # SwiftPM's shared cache in ~/Library/Caches can be missing on the runner,
+      # which fails every package fetch. Keep the cache inside .build instead,
+      # and retry the download a few times for flaky network.
+      - name: Resolve voice helper packages
+        if: runner.os == 'macOS'
+        working-directory: voice
+        run: |
+          for attempt in 1 2 3; do
+            swift package --cache-path .build/swiftpm-cache resolve && exit 0
+            echo "Package resolve failed (attempt $attempt), retrying..."
+            sleep 15
+          done
+          exit 1
+
       - name: Build macOS voice helper
         if: runner.os == 'macOS'
+        env:
+          SWIFT_FLAGS: --cache-path .build/swiftpm-cache
         run: npm run build:helper -w codey-mac

@@ -6,8 +6,11 @@
 all: build
 
 # ── Swift build ─────────────────────────────────────────────────────
+# Extra flags for `swift build`, e.g. SWIFT_FLAGS='--cache-path .build/swiftpm-cache' in CI.
+SWIFT_FLAGS ?=
+
 build:
-	swift build -c release
+	swift build -c release $(SWIFT_FLAGS)
 
 # ── Run ─────────────────────────────────────────────────────────────
 run: build
