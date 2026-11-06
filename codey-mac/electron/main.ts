@@ -6,6 +6,7 @@ import { hudStateCommand, hudLevelCommand, conversationToggleCommand, hudVocabul
 import { allStreamingModelIds, FileProbe, isOnDeviceVoiceProvider, selectedOnDeviceModel, streamingModelDir, streamingModelIsComplete, isBogusWarmMarkerKey, warmMarkerDeleteKeys, warmMarkerWriteKeys } from './voice-models'
 import { pathToFileURL } from 'url'
 import { findAvailablePort } from './portUtils'
+import { isTestMode, testHome, testUserDataDir } from './test-mode'
 import { clampZoom, formatZoom, zoomIn, zoomOut, DEFAULT_ZOOM } from './zoom'
 import { initAutoUpdater, registerUpdaterIpc } from './updater'
 import { createCoreStateStore } from './core-state'
@@ -239,6 +240,8 @@ function handleBrowserLoginWait(event: BrowserLoginWaitEvent): void {
 }
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
+// Verification loads the built renderer so it never depends on a running Vite.
+const usesDevServer = isDev && !isTestMode
 const isDistributionSmokeTest = process.argv.includes('--codey-distribution-smoke')
 
 function browserAgentCliPath(): string {
@@ -258,6 +261,12 @@ function chromeCompanionExtensionPath(): string {
 // second in-process core — the stale one already holds the API port and the
 // chat-platform connections. The loser quits; the winner gets told to come
 // to the foreground.
+if (testHome) {
+  // On macOS, app.getPath('home') ignores the child process' HOME variable.
+  // Redirect both Electron paths before anything can read the real ~/.codey.
+  app.setPath('home', testHome)
+  app.setPath('userData', testUserDataDir(testHome))
+}
 const gotInstanceLock = app.requestSingleInstanceLock()
 if (!gotInstanceLock) {
   app.quit()
@@ -279,7 +288,24 @@ process.on('unhandledRejection', (reason: any) => {
   console.error('[main] unhandledRejection:', reason)
 })
 
-function createWindow() {
+function loadMainWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  mainWindow.once('ready-to-show', () => {
+    // Verification runs must not pull focus from the app the user is in.
+    if (isTestMode) { mainWindow?.showInactive(); return }
+    mainWindow?.show()
+    mainWindow?.focus()
+  })
+
+  if (usesDevServer) {
+    void mainWindow.loadURL('http://localhost:5173')
+    mainWindow.webContents.openDevTools()
+  } else {
+    void mainWindow.loadFile(join(__dirname, '../dist/index.html'))
+  }
+}
+
+function createWindow(options: { deferLoad?: boolean } = {}) {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 820,
@@ -303,17 +329,7 @@ function createWindow() {
     }
   })
 
-  mainWindow.once('ready-to-show', () => {
-    mainWindow?.show()
-    mainWindow?.focus()
-  })
-
-  if (isDev) {
-    mainWindow.loadURL('http://localhost:5173')
-    mainWindow.webContents.openDevTools()
-  } else {
-    mainWindow.loadFile(join(__dirname, '../dist/index.html'))
-  }
+  if (!options.deferLoad) loadMainWindow()
 
   mainWindow.on('close', (event) => {
     if (!isQuitting) {
@@ -447,7 +463,7 @@ function createCaptureWindow(): BrowserWindow {
       nodeIntegration: false,
     },
   })
-  if (isDev) {
+  if (usesDevServer) {
     win.loadURL('http://localhost:5173/#/capture')
   } else {
     win.loadFile(join(__dirname, '../dist/index.html'), { hash: '/capture' })
@@ -543,7 +559,7 @@ async function triggerScreenshotCapture() {
 }
 
 function applyUiPreferences(rawCfg: any) {
-  try {
+  if (!isTestMode) try {
     app.setLoginItemSettings({ openAtLogin: !!rawCfg?.ui?.launchAtLogin })
   } catch (err: any) {
     sendToRenderer('gateway-log', `[ui] setLoginItemSettings failed: ${err?.message ?? err}`)
@@ -583,6 +599,11 @@ function setZoom(factor: number) {
   coreConfigManager.update({ ui: { zoom: next } } as any)
 }
 
+// System-wide hotkeys belong to the user's own Codey, never a verification copy.
+function registerGlobalShortcut(accelerator: string, callback: () => void): boolean {
+  return !isTestMode && globalShortcut.register(accelerator, callback)
+}
+
 let currentCaptureAccelerator: string | null = null
 function applyCaptureHotkey(rawCfg: any) {
   const desired = captureAccelerator(rawCfg?.capture?.hotkey)
@@ -591,7 +612,7 @@ function applyCaptureHotkey(rawCfg: any) {
     currentCaptureAccelerator = null
   }
   if (!desired || currentCaptureAccelerator === desired) return
-  const ok = globalShortcut.register(desired, toggleCaptureWindow)
+  const ok = registerGlobalShortcut(desired, toggleCaptureWindow)
   if (ok) {
     currentCaptureAccelerator = desired
   } else {
@@ -607,7 +628,7 @@ function applyScreenshotHotkey(rawCfg: any) {
     currentScreenshotAccelerator = null
   }
   if (!desired || currentScreenshotAccelerator === desired) return
-  const ok = globalShortcut.register(desired, () => { void triggerScreenshotCapture() })
+  const ok = registerGlobalShortcut(desired, () => { void triggerScreenshotCapture() })
   if (ok) {
     currentScreenshotAccelerator = desired
   } else {
@@ -832,8 +853,9 @@ function resolveDataRoot(): string {
   // Dev (unpacked): use the monorepo root so the app picks up existing
   // gateway.json, bots/, and workspaces/ from the repo.
   // Packaged: use ~/.codey/ so a real gateway.json / bots / workspaces
-  // directory can be edited in place.
-  if (isDev) return join(__dirname, '..', '..')
+  // directory can be edited in place. Verification copies use their test
+  // home's ~/.codey so runs never write into the repo.
+  if (usesDevServer) return join(__dirname, '..', '..')
   const home = app.getPath('home')
   const root = join(home, '.codey')
   try {
@@ -1326,7 +1348,7 @@ function applyVoiceConverseHotkey(rawCfg: any) {
   }
   if (!desired || currentConverseAccelerator === desired) return
 
-  const ok = globalShortcut.register(desired, () => {
+  const ok = registerGlobalShortcut(desired, () => {
     // Deliberately does NOT raise or focus the window. The feature exists for
     // times you're away from Codey; yanking it in front of whatever you're
     // doing defeats that. The floating capsule reports state instead, and the
@@ -1364,7 +1386,7 @@ function applyVoiceHotkey(rawCfg: any) {
     return
   }
 
-  const ok = globalShortcut.register(desired, () => {
+  const ok = registerGlobalShortcut(desired, () => {
     mainWindow?.webContents.send('voice:hotkey')
   })
   if (ok) {
@@ -1930,7 +1952,9 @@ async function ensureMicrophoneAccess(): Promise<boolean> {
 }
 
 async function applyVoiceHelper(rawCfg: any) {
-  if (process.platform !== 'darwin') return
+  // Voice needs microphone and Accessibility grants; verification copies never
+  // ask, so no permission dialog can block an unattended run.
+  if (process.platform !== 'darwin' || isTestMode) return
   const voice = rawCfg?.voice
   const dictationEnabled = voice?.dictationEnabled ?? voice?.enabled ?? false
   const conversationEnabled = voice?.conversationEnabled ?? voice?.enabled ?? false
@@ -2099,6 +2123,12 @@ app.whenReady().then(async () => {
     app.quit()
     return
   }
+
+  // Playwright's experimental Electron bridge must see the BrowserWindow
+  // before Codey's browser profiles and companion create other web contents.
+  // Loading still happens at the normal production point below, after the
+  // same startup work that precedes createWindow() in a regular launch.
+  if (isTestMode) createWindow({ deferLoad: true })
 
   // Global Codey skills live in ~/.codey/skills regardless of where the rest
   // of the data root sits, so the folder exists (and is linked into every
@@ -2417,12 +2447,13 @@ app.whenReady().then(async () => {
   })
 
   createAppMenu()
-  createWindow()
+  if (isTestMode) loadMainWindow()
+  else createWindow()
   createTray()
   registerUpdaterIpc(ipcMain, wrap, () => { isQuitting = true })
   initAutoUpdater(
     (payload) => sendToRenderer('updater:state', payload),
-    app.isPackaged,
+    app.isPackaged && !isTestMode,
     (m) => sendToRenderer('gateway-log', m),
   )
   // Must be registered before the boot await: the renderer can mount and
@@ -3144,7 +3175,7 @@ app.whenReady().then(async () => {
   // Check Full Disk Access by probing the iMessage database. This reminder is
   // intentionally one-time: it is guidance for the optional iMessage channel,
   // not a blocking prompt that should interrupt every app launch.
-  {
+  if (!isTestMode) {
     const fsMod = await import('fs')
     const osMod = await import('os')
     const pathMod = await import('path')

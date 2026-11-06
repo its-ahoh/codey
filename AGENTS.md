@@ -17,6 +17,7 @@ npm run configure      # Interactive config setup
 npm run status         # Show current config
 npm run set-agent      # Set default coding agent
 npm run set-model      # Set default model
+npm run test:e2e -w codey-mac  # Playwright tests against the real Mac app (isolated copy)
 ```
 
 No test runner is configured.
