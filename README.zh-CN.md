@@ -328,7 +328,7 @@ workspaces/              # 各工作区的配置
 
 ## Co-memo 共享记忆
 
-Codey 通过本地 MCP stdio 使用官方的 `co-memo` 0.8.3 包，gateway 需要 Node.js 24.12 及以上。用户记忆跨项目共享；项目记忆按对话的工作目录区分，包括它所在的 worktree。没有项目的对话只会收到个人记忆。Bot 没有私有记忆。
+Codey 通过本地 MCP stdio 使用官方的 `co-memo` 0.8.4 包，gateway 需要 Node.js 24.12 及以上。用户记忆跨项目共享；项目记忆按对话的工作目录区分，包括它所在的 worktree。没有项目的对话只会收到个人记忆。Bot 没有私有记忆。
 
 记忆可以在 **设置 → Memory** 和工作区的记忆面板里管理。运行前 gateway 会召回相关记忆，要保存什么由 Agent 自己决定，没有后台抽取器。Codey 自己创建的 worktree 会一次性复制主目录的项目记忆，之后两边互不同步。
 
