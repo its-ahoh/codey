@@ -1,6 +1,6 @@
 import { TeamAvatar } from './TeamAvatar'
 import { BotCreationGuide } from './BotCreationGuide'
-import { BotMessageSearchCache, botConversationList, readBotPins } from './botConversationList'
+import { BotMessageSearchCache, botConversationList, readBotPins, unreadReplyCount } from './botConversationList'
 import { SidebarFooter, SidebarAction, SidebarSearch, type SidebarCommonProps } from './SidebarNavigation'
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { apiService, type BotDto } from '../services/api'
@@ -113,13 +113,22 @@ export function BotListPanel(props: Props) {
         const avatarState = queued ? 'waiting' : running ? 'working'
           : unread && (unread === 'error' || last?.botStatus === 'failed') ? 'failed'
           : awaiting ? 'reply' : unread ? 'done' : 'idle'
+        const unreadCount = chat && unread ? unreadReplyCount(chat) : 0
+        const unreadLabel = `${unreadCount} unread ${unreadCount === 1 ? 'message' : 'messages'}`
         const pinned = pins.includes(key)
         const status = messageMatch?.snippet ?? (opening === bot?.name ? 'Opening…' : queued ? 'Queued' : running ? 'Working' : awaiting ? 'Waiting for you' : null)
         return <div key={key} className="sidebar-row bot-row" data-active={active || undefined} style={{ display: 'flex', alignItems: 'center', gap: 2, background: active ? C.surface3 : 'transparent', borderRadius: 8, marginBottom: 1 }}>
           <button onClick={() => chat ? selectChat(chat.id) : bot && void open(bot.name)} disabled={!chat && opening !== null} aria-pressed={active} style={{ ...textButton, flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', textAlign: 'left', gap: 9, padding: '6px 8px', fontSize: 13 }}>
-            {chat?.botChat?.kind === 'group' ? <TeamAvatar name={title} members={chat.botChat.members} bots={bots} size={26} state={avatarState} /> : <BotAvatar name={title} config={bot?.config.avatar} size={26} state={avatarState} />}
+            <span style={{ position: 'relative', display: 'inline-flex', flexShrink: 0 }}>
+              {chat?.botChat?.kind === 'group' ? <TeamAvatar name={title} members={chat.botChat.members} bots={bots} size={26} state={avatarState} /> : <BotAvatar name={title} config={bot?.config.avatar} size={26} state={avatarState} />}
+              {unreadCount > 0 && <span title={unreadLabel} aria-label={unreadLabel} style={{
+                position: 'absolute', top: -4, right: -6, minWidth: 15, height: 15, borderRadius: 8, padding: '0 4px', boxSizing: 'border-box',
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, lineHeight: 1,
+                background: unread === 'error' ? C.red : C.accent, color: unread === 'error' ? '#fff' : C.onAccent, boxShadow: `0 0 0 2px ${C.sidebarBg}`,
+              }}>{unreadCount > 99 ? '99+' : unreadCount}</span>}
+            </span>
             <span style={{ minWidth: 0, flex: 1 }}>
-              <span style={{ display: 'block', color: active ? C.fg : C.fg2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}{chat && state.unreadChats[chat.id] ? ' ·' : ''}</span>
+              <span style={{ display: 'block', color: active || unread ? C.fg : C.fg2, fontWeight: unread ? 600 : undefined, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</span>
               {status && <span title={messageMatch?.snippet} style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, color: C.fg3, marginTop: 1 }}>{status}</span>}
               {messageMatch && <span style={{ display: 'block', fontSize: 11, color: C.accent, marginTop: 3 }}>{messageMatch.count} matching {messageMatch.count === 1 ? 'message' : 'messages'}</span>}
             </span>

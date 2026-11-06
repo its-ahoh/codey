@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Chat } from '../types'
 import type { BotDto } from '../services/api'
-import { BotMessageSearchCache, botConversationList, readBotPins } from './botConversationList'
+import { BotMessageSearchCache, botConversationList, readBotPins, unreadReplyCount } from './botConversationList'
 const bot = { name: 'Alice', personality: { role: 'Designer' }, config: {} } as BotDto
 const chat = (id: string, kind: 'direct' | 'group', timestamp: number): Chat => ({
   id, title: id, workspaceName: '.bot-chats', selection: { type: 'none' }, createdAt: 1, updatedAt: 999,
@@ -82,5 +82,25 @@ describe('unified Bot chat list', () => {
     expect(readBotPins('["Alice",7]')).toEqual(['Alice'])
     expect(readBotPins('broken')).toEqual([])
     expect(botConversationList([bot], [chat('Alice', 'direct', 20)], ['deleted'])).toHaveLength(1)
+  })
+})
+
+describe('unreadReplyCount', () => {
+  const reply = (id: string, extra: Partial<Chat['messages'][number]> = {}): Chat['messages'][number] =>
+    ({ id, role: 'assistant', content: 'Done', timestamp: 2, ...extra })
+  const withMessages = (...messages: Chat['messages']): Chat => ({ ...chat('c', 'group', 1), messages })
+
+  it('counts the bot replies after the last user message', () => {
+    const c = withMessages(reply('old'), { id: 'u', role: 'user', content: 'Go', timestamp: 1 }, reply('a', { bot: 'Alice' }), reply('b', { bot: 'Ben' }), reply('f', { bot: 'Aide' }))
+    expect(unreadReplyCount(c)).toBe(3)
+  })
+
+  it('skips bots not picked for the run and empty placeholders, but counts failures', () => {
+    const c = withMessages({ id: 'u', role: 'user', content: 'Go', timestamp: 1 }, reply('p', { bot: 'Ben', botStatus: 'pending', content: '' }), reply('e', { content: ' ' }), reply('x', { bot: 'Alice', botStatus: 'failed', content: '' }))
+    expect(unreadReplyCount(c)).toBe(1)
+  })
+
+  it('never reports zero for an unread chat', () => {
+    expect(unreadReplyCount(withMessages({ id: 'u', role: 'user', content: 'Go', timestamp: 1 }))).toBe(1)
   })
 })
