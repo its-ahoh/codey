@@ -60,3 +60,18 @@ export function botConversationList(bots: BotDto[], chats: Chat[], pins: string[
 export function readBotPins(raw: string | null): string[] {
   try { const value: unknown = JSON.parse(raw ?? '[]'); return Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : [] } catch { return [] }
 }
+
+/** How many bot replies arrived since the user last spoke in this chat. Used
+ * for the unread badge, so pending roster entries (bots not picked for the
+ * run) and empty placeholders do not count. Never less than 1: the chat is
+ * only asked about when it is already marked unread. */
+export function unreadReplyCount(chat: Chat): number {
+  let count = 0
+  for (let i = chat.messages.length - 1; i >= 0; i--) {
+    const message = chat.messages[i]
+    if (message.role === 'user') break
+    if (message.botStatus === 'pending') continue
+    if (message.content.trim() || message.attachments?.length || message.botStatus === 'failed') count++
+  }
+  return Math.max(1, count)
+}

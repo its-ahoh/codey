@@ -7,7 +7,7 @@ import { CoMemoClient } from '@codey/core';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { chatTaskForMessage } from './automatic-chat-task';
 import { chatTaskContext, chatSessionScope, type ChatTaskRoute, type ChatTurnMessageIds } from '@codey/core';
-import { publishTeamFinal, composeTeamFinal, planTeamFooter, isSoloMentionRun, parseTeamResultLines, teamStepRecords, TeamStepRecord } from './team-finalizer';
+import { publishTeamFinal, composeTeamFinal, planTeamFooter, isSoloRun, parseTeamResultLines, teamStepRecords, TeamStepRecord } from './team-finalizer';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -6852,9 +6852,9 @@ Example: /model gpt-4.1 write a Python script`;
         }
       }
       const messages = this.chatManager.get(chatId)!.messages;
-      // A lone "@bot" mention speaks for itself; the Aide only closes a
-      // real team run (a named team, or an ad-hoc team with several members).
-      if (isSoloMentionRun(messages, activeTeamId, chat.selection.type === 'team')) return null;
+      // A run where only one bot answered speaks for itself; the Aide only
+      // closes a run where several members answered.
+      if (isSoloRun(messages, activeTeamId, chat.selection.type === 'team')) return null;
       const message = await publishTeamFinal({
         teamTurnId: activeTeamId, teamName: activeTeamName, messages, context, advisorSummary: advisorFinalSummary, task: pendingTeam?.task ?? userText,
         reason: reason || teamTermination, stopped, signal: abortController.signal,

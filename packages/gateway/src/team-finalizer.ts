@@ -152,15 +152,20 @@ export async function publishTeamFinal(input: TeamFinalInput, store: {
   return message;
 }
 
-/** Distinct human members that ran in a team turn (Aide/Advisor excluded). */
+/** Distinct members that ran in a team turn. Aide/Advisor are excluded, and
+ * so are `pending` roster stubs: teamStart pre-creates one for every member,
+ * and the ones never picked stay pending after the run ends. */
 export function teamMemberCount(messages: ChatMessage[], teamTurnId: string | undefined): number {
-  return new Set(messages.filter(m => m.teamTurnId === teamTurnId && m.bot && !m.builtinMember).map(m => m.bot)).size;
+  return new Set(messages.filter(m => m.teamTurnId === teamTurnId && m.bot && !m.builtinMember && m.botStatus !== 'pending').map(m => m.bot)).size;
 }
 
-/** A lone "@bot" mention in a chat not bound to a team. It gets no Aide
- * final: the single member bubble speaks for itself. */
-export function isSoloMentionRun(messages: ChatMessage[], teamTurnId: string | undefined, boundToTeam: boolean): boolean {
-  return !boundToTeam && teamMemberCount(messages, teamTurnId) < 2;
+/** A run where only one bot answered — a lone "@bot" mention, or a team
+ * that ended up using a single member. It gets no Aide final: the single
+ * member bubble speaks for itself. A team run where nobody answered still
+ * gets one, so the user learns why nothing happened. */
+export function isSoloRun(messages: ChatMessage[], teamTurnId: string | undefined, boundToTeam: boolean): boolean {
+  const members = teamMemberCount(messages, teamTurnId);
+  return members === 1 || (!boundToTeam && members === 0);
 }
 
 export type TeamFooterPlan = 'append' | 'attach' | 'none';
@@ -169,7 +174,7 @@ export type TeamFooterPlan = 'append' | 'attach' | 'none';
  *  - `append`: a group-level footer message (the transcript / question text).
  *  - `attach`: no footer; hang the run summary on the last member bubble.
  *  - `none`: nothing extra (an Aide final already closes the run).
- * A finished solo "@bot" run never gets a footer: the transcript would
+ * A finished solo run never gets a footer: the transcript would
  * repeat the member bubble word for word. While it is paused on a question
  * the footer still carries the question and its choices, so it stays. */
 export function planTeamFooter(args: {
@@ -182,7 +187,7 @@ export function planTeamFooter(args: {
   teamTurnId: string | undefined;
 }): TeamFooterPlan {
   if (args.hasFinal) return 'none';
-  const soloDone = !args.pending && isSoloMentionRun(args.messages, args.teamTurnId, args.boundToTeam);
+  const soloDone = !args.pending && isSoloRun(args.messages, args.teamTurnId, args.boundToTeam);
   if (args.footerText.trim() && !soloDone) return 'append';
   if (args.hasSummary) return 'attach';
   return 'none';

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { composeTeamFinal, publishTeamFinal, planTeamFooter } from './team-finalizer';
+import { composeTeamFinal, publishTeamFinal, planTeamFooter, isSoloRun } from './team-finalizer';
 import type { ChatMessage } from '@codey/core';
 import { ChatManager } from './chats';
 import * as fs from 'fs';
@@ -151,7 +151,42 @@ describe('planTeamFooter', () => {
     expect(planTeamFooter({ hasFinal: true, footerText: 'x', hasSummary: true, pending: false, boundToTeam: true, messages: msgs('a', 'b'), teamTurnId: 't' })).toBe('none');
   });
 
+  it('drops the transcript footer when a team run used only one member', () => {
+    expect(planTeamFooter({ hasFinal: false, footerText: 'x', hasSummary: true, pending: false, boundToTeam: true, messages: msgs('pm'), teamTurnId: 't' })).toBe('attach');
+  });
+
   it('does nothing when there is neither footer text nor a summary', () => {
     expect(planTeamFooter({ hasFinal: false, footerText: '  ', hasSummary: false, pending: false, boundToTeam: false, messages: msgs('pm'), teamTurnId: 't' })).toBe('none');
+  });
+});
+
+describe('isSoloRun', () => {
+  const msgs = (...bots: string[]): ChatMessage[] =>
+    bots.map((w, i) => bot('done', { id: `w${i}`, bot: w }));
+
+  it('skips the Aide final when only one bot answered, in a team or not', () => {
+    expect(isSoloRun(msgs('pm'), 't', true)).toBe(true);
+    expect(isSoloRun(msgs('pm'), 't', false)).toBe(true);
+    expect(isSoloRun(msgs('pm', 'pm'), 't', true)).toBe(true);
+  });
+
+  it('keeps the Aide final when several bots answered', () => {
+    expect(isSoloRun(msgs('pm', 'dev'), 't', true)).toBe(false);
+    expect(isSoloRun(msgs('pm', 'dev'), 't', false)).toBe(false);
+  });
+
+  it('ignores the Aide and Advisor when counting members', () => {
+    const messages = [...msgs('pm'), bot('done', { id: 'a', bot: 'Aide', builtinMember: 'aide' })];
+    expect(isSoloRun(messages, 't', true)).toBe(true);
+  });
+
+  it('ignores roster stubs for members that were never picked', () => {
+    const messages = [...msgs('pm'), bot('pending', { id: 'p1', bot: 'dev' }), bot('pending', { id: 'p2', bot: 'qa' })];
+    expect(isSoloRun(messages, 't', true)).toBe(true);
+    expect(planTeamFooter({ hasFinal: false, footerText: 'x', hasSummary: true, pending: false, boundToTeam: true, messages, teamTurnId: 't' })).toBe('attach');
+  });
+
+  it('keeps the Aide final for a team run where nobody answered', () => {
+    expect(isSoloRun([], 't', true)).toBe(false);
   });
 });
