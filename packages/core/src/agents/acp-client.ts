@@ -36,12 +36,22 @@ export class AcpRequestError extends Error {
 
 /** Handler for a request the agent sends us. Return the result; throw an
  *  AcpRequestError (or anything) to reply with an error. */
-export type AcpRequestHandler = (method: string, params: any) => Promise<unknown> | unknown;
-export type AcpNotificationHandler = (method: string, params: any) => void;
+export type AcpRequestHandler = (method: string, params: unknown) => Promise<unknown> | unknown;
+export type AcpNotificationHandler = (method: string, params: unknown) => void;
+
+/** Any JSON-RPC 2.0 message: a request (method + id), a notification
+ *  (method, no id), or a response (id + result | error). */
+interface JsonRpcMessage {
+  id?: number | string | null;
+  method?: unknown;
+  params?: unknown;
+  result?: unknown;
+  error?: JsonRpcError;
+}
 
 interface Pending {
   method: string;
-  resolve: (value: any) => void;
+  resolve: (value: unknown) => void;
   reject: (err: Error) => void;
 }
 
@@ -74,11 +84,12 @@ export class AcpClient {
 
   /** Send a request and wait for its result. Rejects with AcpRequestError on
    *  an error reply, or with the close reason if the process goes away. */
-  request<T = any>(method: string, params?: unknown): Promise<T> {
+  request<T = unknown>(method: string, params?: unknown): Promise<T> {
     if (this.closedError) return Promise.reject(this.closedError);
     const id = this.nextId++;
     return new Promise<T>((resolve, reject) => {
-      this.pending.set(id, { method, resolve, reject });
+      // The agent's reply is untyped JSON; the caller names what it expects.
+      this.pending.set(id, { method, resolve: value => resolve(value as T), reject });
       this.write({ jsonrpc: '2.0', id, method, params });
     });
   }
@@ -112,9 +123,9 @@ export class AcpClient {
       const line = this.buffer.slice(0, newline).trim();
       this.buffer = this.buffer.slice(newline + 1);
       if (!line.startsWith('{')) continue;
-      let message: any;
+      let message: JsonRpcMessage;
       try {
-        message = JSON.parse(line);
+        message = JSON.parse(line) as JsonRpcMessage;
       } catch {
         continue; // Not JSON — ignore, as the other adapters do.
       }
@@ -122,17 +133,18 @@ export class AcpClient {
     }
   }
 
-  private dispatch(message: any): void {
+  private dispatch(message: JsonRpcMessage): void {
     const hasId = message.id !== undefined && message.id !== null;
     if (typeof message.method === 'string') {
-      if (hasId) void this.answer(message.id, message.method, message.params);
+      if (hasId) void this.answer(message.id as number | string, message.method, message.params);
       else this.handlers.onNotification?.(message.method, message.params);
       return;
     }
     if (!hasId) return;
-    const pending = this.pending.get(message.id);
+    const id = message.id as number;
+    const pending = this.pending.get(id);
     if (!pending) return;
-    this.pending.delete(message.id);
+    this.pending.delete(id);
     if (message.error) pending.reject(new AcpRequestError(pending.method, message.error));
     else pending.resolve(message.result);
   }

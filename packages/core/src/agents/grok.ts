@@ -69,10 +69,39 @@ export interface AcpPlanEntry {
   status?: string;
 }
 
-export interface AcpSessionUpdate extends AcpToolCall {
+/** One `session/update` payload. `content` differs by kind: a single text
+ *  block for message/thought chunks, a list of blocks for tool calls. */
+export interface AcpSessionUpdate extends Omit<AcpToolCall, 'content'> {
   sessionUpdate: string;
-  content?: any;
+  content?: unknown;
   entries?: AcpPlanEntry[];
+}
+
+/** The text of a message or thought chunk, or '' for anything else. */
+export function acpChunkText(content: unknown): string {
+  if (!content || typeof content !== 'object') return '';
+  const block = content as { type?: unknown; text?: unknown };
+  return block.type === 'text' && typeof block.text === 'string' ? block.text : '';
+}
+
+/** A tool-call update's fields, with `content` only when it is the list form. */
+function asToolCall(update: AcpSessionUpdate): AcpToolCall {
+  return { ...update, content: Array.isArray(update.content) ? update.content as AcpToolCall['content'] : undefined };
+}
+
+interface AcpInitializeResult {
+  agentCapabilities?: { loadSession?: boolean };
+}
+
+interface AcpSessionResult {
+  sessionId?: string;
+  configOptions?: AcpConfigOption[];
+}
+
+interface AcpPromptResult {
+  stopReason?: string;
+  usage?: AcpUsage;
+  _meta?: { usage?: AcpUsage };
 }
 
 export interface AcpPermissionOption {
@@ -195,25 +224,26 @@ export function grokToolEvent(update: AcpSessionUpdate, names: Map<string, strin
   if (update.sessionUpdate !== 'tool_call' && update.sessionUpdate !== 'tool_call_update') return null;
   const key = update.toolCallId;
   if (!key) return null;
+  const call = asToolCall(update);
   // The opening tool_call names the call; updates reuse that name so start
   // and end always agree.
-  if (update.sessionUpdate === 'tool_call' || !names.has(key)) names.set(key, toolNameOf(update));
+  if (update.sessionUpdate === 'tool_call' || !names.has(key)) names.set(key, toolNameOf(call));
   const name = names.get(key)!;
 
   const status = update.status;
   if (status && TERMINAL_STATUSES.has(status)) {
-    const output = outputOf(update);
+    const output = outputOf(call);
     return {
       tool: name,
       key,
       phase: 'end',
       status,
-      ...(update.sessionUpdate === 'tool_call' && inputOf(update) ? { input: inputOf(update) } : {}),
+      ...(update.sessionUpdate === 'tool_call' && inputOf(call) ? { input: inputOf(call) } : {}),
       ...(output !== undefined ? { output } : {}),
     };
   }
   if (update.sessionUpdate !== 'tool_call') return null;
-  const input = inputOf(update);
+  const input = inputOf(call);
   return { tool: name, key, phase: 'start', ...(input ? { input } : {}) };
 }
 
@@ -344,11 +374,11 @@ export class GrokAdapter extends BaseAgentAdapter {
     // this turn's output.
     let replaying = false;
 
-    const onUpdate = (update: AcpSessionUpdate) => {
+    const onUpdate = (update: AcpSessionUpdate | undefined) => {
       if (replaying || !update) return;
       switch (update.sessionUpdate) {
         case 'agent_message_chunk': {
-          const chunk = update.content?.type === 'text' ? update.content.text ?? '' : '';
+          const chunk = acpChunkText(update.content);
           if (!chunk) break;
           // Text before and after a tool call are separate thoughts; keep
           // them apart instead of gluing "Let me look.Done." together.
@@ -359,7 +389,7 @@ export class GrokAdapter extends BaseAgentAdapter {
           break;
         }
         case 'agent_thought_chunk': {
-          const chunk = update.content?.type === 'text' ? update.content.text ?? '' : '';
+          const chunk = acpChunkText(update.content);
           if (chunk) {
             thinking += chunk;
             request.onThinking?.(chunk);
@@ -383,18 +413,19 @@ export class GrokAdapter extends BaseAgentAdapter {
 
     const client = new AcpClient(child.stdout!, child.stdin!, {
       onNotification: (method, params) => {
-        if (method === 'session/update') onUpdate(params?.update);
+        if (method === 'session/update') onUpdate((params as { update?: AcpSessionUpdate } | undefined)?.update);
       },
       onRequest: (method, params) => {
         if (method === 'session/request_permission') {
-          const call: AcpToolCall = params?.toolCall ?? {};
+          const ask = (params ?? {}) as { toolCall?: AcpToolCall; options?: AcpPermissionOption[] };
+          const call: AcpToolCall = ask.toolCall ?? {};
           const verdict = grokPermissionVerdict(call.kind, request);
           if (verdict.record) {
             const toolInput = inputOf(call);
             permissionDenials.push({ toolName: toolNameOf(call), ...(toolInput ? { toolInput } : {}) });
           }
           this.debug(`[grok] permission ${call.kind ?? '?'} -> ${verdict.allow ? 'allow' : 'reject'}`);
-          return grokPermissionOutcome(params?.options, verdict.allow);
+          return grokPermissionOutcome(ask.options, verdict.allow);
         }
         throw new AcpRequestError(method, { code: -32601, message: `Method not found: ${method}` });
       },
@@ -402,7 +433,6 @@ export class GrokAdapter extends BaseAgentAdapter {
 
     child.stderr?.on('data', (d: Buffer) => { stderr += d.toString(); });
 
-    let timeoutTimer: NodeJS.Timeout | undefined;
     let abortHandler: (() => void) | undefined;
     let stopReason: 'timeout' | 'aborted' | undefined;
 
@@ -426,7 +456,7 @@ export class GrokAdapter extends BaseAgentAdapter {
       terminateProcessTree(child);
     };
     const timeout = request.timeout || 900000;
-    timeoutTimer = setTimeout(() => stop('timeout'), timeout);
+    const timeoutTimer = setTimeout(() => stop('timeout'), timeout);
     if (request.signal) {
       abortHandler = () => stop('aborted');
       if (request.signal.aborted) abortHandler();
@@ -434,7 +464,7 @@ export class GrokAdapter extends BaseAgentAdapter {
     }
 
     const finish = async (response: AgentResponse): Promise<AgentResponse> => {
-      if (timeoutTimer) clearTimeout(timeoutTimer);
+      clearTimeout(timeoutTimer);
       if (abortHandler && request.signal) request.signal.removeEventListener('abort', abortHandler);
       tools.finish();
       if (this.activeProcess === child) {
@@ -456,18 +486,18 @@ export class GrokAdapter extends BaseAgentAdapter {
     };
 
     try {
-      const init = await client.request<any>('initialize', {
+      const init = await client.request<AcpInitializeResult | null>('initialize', {
         protocolVersion: 1,
         clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
         clientInfo: CLIENT_INFO,
       });
 
       const mcpServers = acpMcpServers(request.mcpServers);
-      let session: any;
+      let session: AcpSessionResult | null;
       if (request.resumeSessionId && init?.agentCapabilities?.loadSession) {
         replaying = true;
         try {
-          session = await client.request('session/load', { sessionId: request.resumeSessionId, cwd, mcpServers });
+          session = await client.request<AcpSessionResult | null>('session/load', { sessionId: request.resumeSessionId, cwd, mcpServers });
         } catch (err) {
           if (isMissingGrokSession(err)) {
             throw new Error(`Could not resume session ${request.resumeSessionId}: ${grokErrorMessage(err)}`);
@@ -478,7 +508,7 @@ export class GrokAdapter extends BaseAgentAdapter {
         }
         sessionId = request.resumeSessionId;
       } else {
-        session = await client.request('session/new', { cwd, mcpServers });
+        session = await client.request<AcpSessionResult | null>('session/new', { cwd, mcpServers });
         sessionId = session?.sessionId;
       }
       if (!sessionId) throw new Error('grok did not return a session id');
@@ -492,14 +522,14 @@ export class GrokAdapter extends BaseAgentAdapter {
         }
       }
 
-      const result = await client.request<any>('session/prompt', {
+      const result = await client.request<AcpPromptResult | null>('session/prompt', {
         sessionId,
         prompt: [{ type: 'text', text: withForegroundPolicy(request.prompt) }],
       });
 
       const tokens = grokTokensFrom(result?.usage ?? result?._meta?.usage);
       const output = text.trim();
-      const reason: string | undefined = result?.stopReason;
+      const reason = result?.stopReason;
       let error: string | undefined;
       if (reason === 'refusal') error = 'Grok refused this request';
       else if (reason === 'cancelled') error = stopReason ?? 'aborted';
