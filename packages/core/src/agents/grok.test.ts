@@ -183,7 +183,14 @@ describe('registration', () => {
 const FAKE_GROK = String.raw`#!/usr/bin/env node
 const log = process.env.FAKE_GROK_LOG;
 const fs = require('fs');
-if (log) fs.appendFileSync(log, JSON.stringify({ argv: process.argv.slice(2), key: process.env.XAI_API_KEY || null }) + '\n');
+if (log) fs.appendFileSync(log, JSON.stringify({ argv: process.argv.slice(2), key: process.env.XAI_API_KEY || null, pid: process.pid }) + '\n');
+// Like grok: stdin EOF means the client is gone, so persist and exit — unless
+// told to be stubborn, which stands in for a grok that hangs on shutdown.
+process.stdin.on('end', () => {
+  if (process.env.FAKE_GROK_STUBBORN) { setInterval(() => {}, 1000); return; }
+  if (log) fs.appendFileSync(log, JSON.stringify({ saved: true }) + '\n');
+  process.exit(0);
+});
 let buf = '';
 let nextId = 1000;
 const waiting = {};
@@ -279,7 +286,7 @@ describe('GrokAdapter against a fake ACP agent', () => {
     expect(statuses.some(s => s.type === 'checklist')).toBe(true);
 
     const log = readLog();
-    expect(log[0]).toEqual({ argv: ['agent', '--model', 'grok-build', 'stdio'], key: 'xai-test' });
+    expect(log[0]).toMatchObject({ argv: ['agent', '--model', 'grok-build', 'stdio'], key: 'xai-test' });
     expect(log).toContainEqual({ config: { sessionId: 'sess-new', configId: 'effort', value: 'high' } });
   });
 
@@ -308,6 +315,28 @@ describe('GrokAdapter against a fake ACP agent', () => {
     const res = await new GrokAdapter().run(base({ extraEnv: { FAKE_GROK_NO_AUTH: '1' } }));
     expect(res.success).toBe(false);
     expect(res.error).toMatch(/grok login/);
+  });
+
+  it('lets grok exit on its own after the turn, so it can save the session', async () => {
+    fs.writeFileSync(logFile, '');
+    const res = await new GrokAdapter().run(base());
+    expect(res.success).toBe(true);
+    expect(readLog()).toContainEqual({ saved: true });
+  });
+
+  it('kills a grok that will not exit once the grace period is over', async () => {
+    fs.writeFileSync(logFile, '');
+    const started = Date.now();
+    const res = await new GrokAdapter(undefined, { exitGraceMs: 300 }).run(base({ extraEnv: { FAKE_GROK_STUBBORN: '1' } }));
+    expect(res.success).toBe(true);
+    expect(Date.now() - started).toBeLessThan(5000);
+    const pid = readLog()[0].pid as number;
+    // Termination is a signal, not a wait; give the process a moment to go.
+    let alive = true;
+    for (let i = 0; i < 20 && alive; i++) {
+      try { process.kill(pid, 0); await new Promise(r => setTimeout(r, 100)); } catch { alive = false; }
+    }
+    expect(alive).toBe(false);
   });
 
   it('stops on abort', async () => {

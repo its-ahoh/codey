@@ -63,6 +63,13 @@ export class AcpClient {
     } = {},
   ) {
     input.on('data', (chunk: Buffer | string) => this.onData(chunk.toString()));
+    // Writing to an agent that already died fails asynchronously (EPIPE) as an
+    // 'error' event. Unheard, that event throws and takes the whole gateway
+    // down; heard, it just fails the waiting requests. The process 'close'
+    // handler reports the real reason, so this one only steps in first.
+    const onStreamError = (err: Error) => this.close(new Error(`agent pipe closed: ${err.message}`));
+    output.on('error', onStreamError);
+    input.on('error', onStreamError);
   }
 
   /** Send a request and wait for its result. Rejects with AcpRequestError on

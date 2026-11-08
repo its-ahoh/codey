@@ -286,14 +286,21 @@ export function grokErrorMessage(err: unknown): string {
 
 const CLIENT_INFO = { name: 'codey', title: 'Codey' };
 
+/** How long a finished turn waits for grok to exit on its own once its stdin
+ *  is closed. Grok may still be writing the session to disk; killing it then
+ *  could leave a session the next turn cannot load. */
+export const GROK_EXIT_GRACE_MS = 3000;
+
 export class GrokAdapter extends BaseAgentAdapter {
   name = 'grok';
   private debug: (msg: string) => void;
   private activeProcess?: ChildProcess;
+  private exitGraceMs: number;
 
-  constructor(debug?: (msg: string) => void) {
+  constructor(debug?: (msg: string) => void, opts: { exitGraceMs?: number } = {}) {
     super();
     this.debug = debug ?? (() => {});
+    this.exitGraceMs = opts.exitGraceMs ?? GROK_EXIT_GRACE_MS;
   }
 
   async run(request: AgentRequest): Promise<AgentResponse> {
@@ -426,11 +433,25 @@ export class GrokAdapter extends BaseAgentAdapter {
       else request.signal.addEventListener('abort', abortHandler, { once: true });
     }
 
-    const finish = (response: AgentResponse): AgentResponse => {
+    const finish = async (response: AgentResponse): Promise<AgentResponse> => {
       if (timeoutTimer) clearTimeout(timeoutTimer);
       if (abortHandler && request.signal) request.signal.removeEventListener('abort', abortHandler);
       tools.finish();
-      if (this.activeProcess === child) terminateProcessTree(child);
+      if (this.activeProcess === child) {
+        // EOF on stdin is ACP's "client is gone": grok wraps up and exits.
+        // Only a process that ignores it gets killed.
+        try { child.stdin?.end(); } catch { /* already closed */ }
+        let graceTimer: NodeJS.Timeout | undefined;
+        const gone = await Promise.race([
+          exited.then(() => true),
+          new Promise<boolean>(resolve => { graceTimer = setTimeout(() => resolve(false), this.exitGraceMs); }),
+        ]);
+        if (graceTimer) clearTimeout(graceTimer);
+        if (!gone) {
+          this.debug(`[grok] still running ${this.exitGraceMs}ms after the turn; terminating`);
+          terminateProcessTree(child);
+        }
+      }
       return response;
     };
 
@@ -486,7 +507,7 @@ export class GrokAdapter extends BaseAgentAdapter {
       const success = !error;
       this.debug(`[grok] stop ${reason}, ${output.length} chars, tokens: ${tokens?.total ?? 'none'}`);
 
-      return finish({
+      return await finish({
         success,
         output: output || (error ?? ''),
         error,
@@ -507,7 +528,7 @@ export class GrokAdapter extends BaseAgentAdapter {
         : stopReason === 'aborted'
           ? 'Stopped'
           : grokErrorMessage(err);
-      return finish({
+      return await finish({
         success: false,
         output: stopReason ? message : (text.trim() || message),
         error: stopReason === 'timeout' ? 'timeout' : stopReason === 'aborted' ? 'aborted' : message,
