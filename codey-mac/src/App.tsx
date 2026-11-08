@@ -30,7 +30,7 @@ import {
 } from './theme'
 
 // Clears the traffic lights and the floating sidebar toggle when the sidebar is hidden.
-const COLLAPSED_HEADER_INSET = 118
+const COLLAPSED_HEADER_INSET = 128
 
 const clampLeftPanelWidth = (width: number) => {
   const max = Math.max(180, Math.min(480, window.innerWidth - 320))

@@ -22,6 +22,7 @@ import type { ContextPanelTab } from './ChatContextPanel'
 import { useQuickQuestion } from '../hooks/useQuickQuestion'
 import { parseTeamMessage } from './teamMessageFormat'
 import { groupMessages, isLatestChatMessage } from './teamGroup'
+import { InlineRenameTitle } from './InlineRenameTitle'
 import { BotAvatar } from './BotAvatar'
 import { botAvatarState } from './botAvatarModel'
 import { StatusSidecar } from './StatusSidecar'
@@ -458,7 +459,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
   chat,
 }) => {
   const outerRef = useRef<HTMLDivElement>(null)
-  const { state, createChat, sendMessage, removeQueuedMessage, resumeQueue, stopChat, clearRestore, setSelection, setAgentModel, setEffort, setExecutionMode, bindWorktree, createWorktree, setPullRequest, setContextPanelOpen, setSoloAdvisor, linkChannel, unlinkChannel, resolvePermission, generateTaskBrief } = useChats()
+  const { state, createChat, renameChat, sendMessage, removeQueuedMessage, resumeQueue, stopChat, clearRestore, setSelection, setAgentModel, setEffort, setExecutionMode, bindWorktree, createWorktree, setPullRequest, setContextPanelOpen, setSoloAdvisor, linkChannel, unlinkChannel, resolvePermission, generateTaskBrief } = useChats()
   const flight = state.inFlight[chatId]
   const queuedMessages = state.queuedMessages[chatId] ?? []
   // A stop holds the queue instead of emptying it, so these prompts stay put
@@ -1835,7 +1836,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
         <div style={styles.headerIdentity}>
           <span style={styles.workspaceTag} title={chat.botChat ? undefined : chat.workspaceName}>{chat.botChat?.kind === 'direct'
             ? <BotAvatar name={chat.botChat.members[0]} config={bots.find(bot => bot.name === chat.botChat!.members[0])?.config.avatar} state={flight?.queuedPosition ? 'waiting' : isSending ? 'working' : 'idle'} size={24} />
-            : chat.botChat?.kind === 'group' ? <TeamAvatar name={chat.title} members={chat.botChat.members} bots={bots} size={24} state={flight?.queuedPosition ? 'waiting' : isSending ? 'working' : 'idle'} /> : null}{chat.botChat ? (chat.botChat.kind === 'direct' && chat.title === chat.botChat.members[0] ? bots.find(bot => bot.name === chat.botChat!.members[0])?.config.displayName || chat.title : chat.title) : chat.title?.trim() || 'New Chat'}</span>
+            : chat.botChat?.kind === 'group' ? <TeamAvatar name={chat.title} members={chat.botChat.members} bots={bots} size={24} state={flight?.queuedPosition ? 'waiting' : isSending ? 'working' : 'idle'} /> : null}<InlineRenameTitle title={chat.botChat ? (chat.botChat.kind === 'direct' && chat.title === chat.botChat.members[0] ? bots.find(bot => bot.name === chat.botChat!.members[0])?.config.displayName || chat.title : chat.title) : chat.title?.trim() || 'New Chat'} onRename={title => renameChat(chat.id, title)} /></span>
           {chat.botChat?.kind === 'direct' && isSending && <span role="status" style={{ fontSize: 12, color: C.fg3 }}>{flight?.queuedPosition ? 'Queued' : 'Working…'}</span>}
           {chat.botChat && <BotMembers key={chat.id} chat={chat} />}
         {!chat.botChat && <div><BranchPicker

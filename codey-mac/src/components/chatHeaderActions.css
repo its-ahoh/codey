@@ -1,4 +1,4 @@
-.chat-header button, .chat-header a, .chat-header input, .chat-header select { -webkit-app-region: no-drag; }
+.chat-header button, .chat-header a, .chat-header input, .chat-header select, .inline-rename-title { -webkit-app-region: no-drag; }
 .chat-header-actions { position: relative; flex-shrink: 0; min-width: 0; }
 .chat-header-actions-trigger { width: 32px; height: 32px; display: grid; place-items: center; border: none; border-radius: 8px; background: transparent; color: var(--fg2); cursor: pointer; }
 .chat-header-actions-trigger:hover { background: var(--surface2); }
