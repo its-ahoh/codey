@@ -34,7 +34,7 @@ export interface GatewayResponse {
 }
 
 // Coding agent types
-export const CODING_AGENTS = ['claude-code', 'opencode', 'codex', 'pi'] as const;
+export const CODING_AGENTS = ['claude-code', 'opencode', 'codex', 'pi', 'cursor'] as const;
 export type CodingAgent = typeof CODING_AGENTS[number];
 
 /** Runtime guard for agent ids arriving from JSON config or chat commands. */
@@ -49,11 +49,15 @@ export function isCodingAgent(v: unknown): v is CodingAgent {
 // third-party providers and proxies that expose both protocol variants behind
 // one token — such a model is usable by every agent, so it doesn't have to be
 // duplicated once per protocol.
-export type ApiType = 'anthropic' | 'openai' | 'all';
+//
+// 'cursor' is the exception to "protocol, not vendor": Cursor's CLI signs in
+// with a Cursor API key and only knows Cursor's own model names, so a cursor
+// model and the cursor agent belong only to each other.
+export type ApiType = 'anthropic' | 'openai' | 'all' | 'cursor';
 
 /** Runtime guard for values arriving from JSON config or IPC. */
 export function isApiType(v: unknown): v is ApiType {
-  return v === 'anthropic' || v === 'openai' || v === 'all';
+  return v === 'anthropic' || v === 'openai' || v === 'all' || v === 'cursor';
 }
 
 /**
@@ -61,8 +65,13 @@ export function isApiType(v: unknown): v is ApiType {
  * `agentApiType`. 'all' fits everything on either side — an 'all' model
  * serves any agent, and an 'all' agent (provider-agnostic CLI) accepts any
  * model; an undefined want (agent with no declared protocol) accepts anything.
+ *
+ * 'cursor' sits outside all of that: a cursor model fits only the cursor
+ * agent, and the cursor agent takes only cursor models. That holds even
+ * against 'all' and an undefined want, because neither side can use the other.
  */
 export function modelFitsApiType(modelApiType: ApiType, agentApiType?: ApiType): boolean {
+  if (modelApiType === 'cursor' || agentApiType === 'cursor') return modelApiType === agentApiType;
   if (!agentApiType || agentApiType === 'all') return true;
   return modelApiType === 'all' || modelApiType === agentApiType;
 }
@@ -133,6 +142,7 @@ export interface ModelConfig {
    * anthropic → ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN
    * openai   → OPENAI_BASE_URL   + OPENAI_API_KEY
    * all      → both pairs, each with its own base URL
+   * cursor   → CURSOR_API_KEY, no base URL (cursor agent only)
    * Inferred from the referenced ModelEntry in gateway.json.
    */
   apiType?: ApiType;
@@ -301,7 +311,7 @@ export interface AgentResponse {
   states?: AgentStateEntry[];
   /**
    * Session id captured from the CLI on this run when the CLI generates
-   * its own id (codex `thread_id`, opencode `sessionID`, pi `session.id`).
+   * its own id (codex `thread_id`, opencode `sessionID`, pi `session.id`, cursor `session_id`).
    * Adapters that
    * accept a pre-allocated `newSessionId` (claude-code) leave this unset —
    * the gateway already knows the id it sent.
@@ -409,6 +419,7 @@ export interface GatewayConfig {
     'opencode'?: AgentModelConfig;
     'codex'?: AgentModelConfig;
     'pi'?: AgentModelConfig;
+    'cursor'?: AgentModelConfig;
   };
   /** Global model catalog — mirrors GatewayConfigJson.models. */
   models?: ModelEntry[];

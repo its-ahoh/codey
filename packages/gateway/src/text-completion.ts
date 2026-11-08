@@ -27,9 +27,11 @@ export interface TextCompletionOptions {
   timeoutMs?: number;
 }
 
-/** True when `model` carries enough credentials to be callable directly. */
+/** True when `model` carries enough credentials to be callable directly.
+ *  A Cursor key never is: Cursor has no public completion endpoint, so that
+ *  model must run through cursor-agent instead. */
 export function canRunDirectly(model: ModelConfig | undefined): model is ModelConfig {
-  return Boolean(model?.apiKey && model.model);
+  return Boolean(model?.apiKey && model.model && model.apiType !== 'cursor');
 }
 
 interface BuiltCompletion {

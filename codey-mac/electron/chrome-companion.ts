@@ -146,7 +146,7 @@ export interface ChromeCompanionAttachment {
 export interface ChromeCompanionFeatures {
   options: (chatId?: string | null) => Promise<{
     agents: Array<{ id: string; installed: boolean }>
-    models: Array<{ model: string; apiType: 'anthropic' | 'openai' | 'all'; provider?: string }>
+    models: Array<{ model: string; apiType: 'anthropic' | 'openai' | 'all' | 'cursor'; provider?: string }>
     defaultAgent: string | null
     defaultModel: string | null
     defaultModels: Record<string, string>
