@@ -1,0 +1,107 @@
+// @vitest-environment jsdom
+import React, { act } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const renameChat = vi.fn(async () => {})
+const selectChat = vi.fn()
+const chat = {
+  id: 'chat-1', title: 'Sample Room', messages: [],
+  botChat: { kind: 'group', members: ['alpha', 'beta'] },
+}
+const directChat = {
+  id: 'chat-2', title: 'Old Title', messages: [],
+  botChat: { kind: 'direct', members: ['helper'] },
+}
+const helperBot = { name: 'helper', personality: { role: 'r', soul: 's', instructions: 'i' }, config: { displayName: 'Sample Bot', tools: [] } }
+const updateBot = vi.fn(async () => {})
+let chatsInState: Record<string, unknown> = { 'chat-1': chat }
+
+vi.mock('../hooks/useChats', () => ({
+  useChats: () => ({
+    state: { order: Object.keys(chatsInState), chats: chatsInState, selectedChatId: null, inFlight: {}, unreadChats: {} },
+    openBot: vi.fn(), selectChat, renameChat,
+  }),
+}))
+vi.mock('../services/api', () => ({ apiService: { listBots: vi.fn(async () => Object.keys(chatsInState).includes('chat-2') ? [helperBot] : []), updateBot } }))
+
+vi.mock('./SidebarNavigation', () => ({
+  SidebarFooter: () => null,
+  SidebarAction: () => null,
+  SidebarSearch: () => null,
+}))
+
+const { BotListPanel } = await import('./BotListPanel')
+
+let host: HTMLDivElement
+let root: Root
+
+beforeEach(() => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => {} })
+  renameChat.mockClear()
+  updateBot.mockClear()
+  chatsInState = { 'chat-1': chat }
+  selectChat.mockClear()
+  host = document.createElement('div')
+  document.body.append(host)
+  root = createRoot(host)
+})
+afterEach(async () => {
+  await act(async () => root.unmount())
+  host.remove()
+  vi.unstubAllGlobals()
+})
+
+const render = async () => {
+  await act(async () => root.render(React.createElement(BotListPanel, {
+    newBotRequested: false, onNewBotHandled: () => {}, onOpenSettings: () => {},
+  } as never)))
+}
+const label = () => host.querySelector<HTMLElement>('[data-testid="inline-rename-label"]')
+
+describe('BotListPanel rename', () => {
+  it('renames a chat when its name is double-clicked in the list', async () => {
+    await render()
+    expect(label()?.textContent).toBe('Sample Room')
+    await act(async () => { label()!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })) })
+    const input = host.querySelector<HTMLInputElement>('input[aria-label="Rename chat"]')!
+    expect(input).not.toBeNull()
+    expect(input.closest('button')).toBeNull()
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    await act(async () => {
+      setter.call(input, 'Example Room')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => { input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })) })
+    expect(renameChat).toHaveBeenCalledWith('chat-1', 'Example Room')
+  })
+
+  it('still opens the chat on a single click', async () => {
+    await render()
+    await act(async () => { label()!.click() })
+    expect(selectChat).toHaveBeenCalledWith('chat-1')
+  })
+
+  it('renames the bot itself in a one-bot chat', async () => {
+    chatsInState = { 'chat-2': directChat }
+    const changed = vi.fn()
+    window.addEventListener('codey:bots-changed', changed)
+    await render()
+    await act(async () => {})
+    expect(label()?.textContent).toBe('Old Title')
+    await act(async () => { label()!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })) })
+    const input = host.querySelector<HTMLInputElement>('input')!
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    await act(async () => {
+      setter.call(input, 'Demo Bot')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => { input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })) })
+    expect(updateBot).toHaveBeenCalledWith('helper', { personality: helperBot.personality, config: { ...helperBot.config, displayName: 'Demo Bot' } })
+    // The chat title goes back to the bot's id so the list shows the new bot name.
+    expect(renameChat).toHaveBeenCalledWith('chat-2', 'helper')
+    expect(changed).toHaveBeenCalled()
+    window.removeEventListener('codey:bots-changed', changed)
+  })
+})
