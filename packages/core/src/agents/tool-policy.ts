@@ -45,3 +45,10 @@ export function opencodeToolPolicyEnv(policy: ToolPolicy): Record<string, string
     : OPENCODE_WRITE_PERMISSIONS;
   return { OPENCODE_PERMISSION: JSON.stringify(Object.fromEntries(denied.map(k => [k, 'deny']))) };
 }
+
+/** cursor-agent has no tool allow-list either. `--mode ask` is its read-only
+ *  Q&A mode (no edits, no writes), and the adapter never adds `--force` under
+ *  a policy. 'none' cannot be expressed: reads stay available. */
+export function cursorToolPolicyArgs(_policy: ToolPolicy): string[] {
+  return ['--mode', 'ask'];
+}

@@ -32,6 +32,7 @@ export const AGENT_INSTALL_URL: Record<string, string> = {
   'opencode':    'https://opencode.ai',
   'codex':       'https://github.com/openai/codex',
   'pi':          'https://pi.dev',
+  'cursor':      'https://cursor.com/docs/cli/installation',
 }
 
 // The install chip and the env editor moved to agentSettingsUi.tsx, next to
@@ -136,6 +137,7 @@ const ModelRow: React.FC<{
           <option value="anthropic">anthropic (ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN)</option>
           <option value="openai">openai (OPENAI_BASE_URL + OPENAI_API_KEY)</option>
           <option value="all">all (third-party providers &amp; proxies)</option>
+          <option value="cursor">cursor (Cursor CLI only, CURSOR_API_KEY)</option>
         </select>
         <label style={{ color: C.fg3, fontSize: 12 }}>API Key</label>
         <select

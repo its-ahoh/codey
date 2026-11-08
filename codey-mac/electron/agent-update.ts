@@ -21,6 +21,7 @@ const SELF_UPDATE: Record<string, string> = {
   'opencode': 'opencode upgrade',
   'codex': 'codex update',
   'pi': 'pi update',
+  'cursor': 'cursor-agent update',
 }
 
 export type UpdatePlan = {

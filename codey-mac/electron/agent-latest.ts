@@ -20,6 +20,8 @@ export const AGENT_PACKAGES: Record<string, string> = {
   'opencode': 'opencode-ai',
   'codex': '@openai/codex',
   'pi': '@earendil-works/pi-coding-agent',
+  // cursor-agent is not on npm (it installs from cursor.com), so it has no
+  // registry entry and its latest version always reads as unknown.
 }
 
 /**

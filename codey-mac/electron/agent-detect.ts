@@ -18,6 +18,7 @@ export const AGENT_BINARIES: Record<string, string> = {
   'opencode': 'opencode',
   'codex': 'codex',
   'pi': 'pi',
+  'cursor': 'cursor-agent',
 }
 
 export type InstallStatus = {

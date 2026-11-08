@@ -40,6 +40,10 @@ beforeEach(() => {
 });
 
 describe('canRunDirectly', () => {
+  it('never calls a cursor model directly, even with a key', () => {
+    expect(canRunDirectly({ provider: 'cursor', model: 'gpt-5', apiKey: 'key', apiType: 'cursor' })).toBe(false);
+  });
+
   it('requires both an api key and a model id', () => {
     expect(canRunDirectly(ANTHROPIC_MODEL)).toBe(true);
     expect(canRunDirectly(undefined)).toBe(false);

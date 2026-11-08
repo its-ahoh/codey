@@ -6,7 +6,7 @@
  * builtins, which blanks the packaged window).
  */
 
-export type ApiType = 'anthropic' | 'openai' | 'all'
+export type ApiType = 'anthropic' | 'openai' | 'all' | 'cursor'
 
 /**
  * The protocol each agent's CLI authenticates against. 'all' marks a
@@ -18,9 +18,11 @@ export const AGENT_API_TYPE: Record<string, ApiType> = {
   'opencode': 'all',
   'codex': 'openai',
   'pi': 'all',
+  // Cursor takes a Cursor API key and only Cursor's own model names.
+  'cursor': 'cursor',
 }
 
-export const AGENT_NAMES = ['claude-code', 'opencode', 'codex', 'pi'] as const
+export const AGENT_NAMES = ['claude-code', 'opencode', 'codex', 'pi', 'cursor'] as const
 
 /**
  * True when a model can drive an agent that speaks `want`. An 'all' model
@@ -29,6 +31,9 @@ export const AGENT_NAMES = ['claude-code', 'opencode', 'codex', 'pi'] as const
  * `want` means the agent declares no protocol, so anything goes.
  */
 export function modelFitsApiType(modelApiType: ApiType, want?: ApiType): boolean {
+  // A cursor model and the cursor agent only fit each other, even against
+  // 'all' and an undefined want.
+  if (modelApiType === 'cursor' || want === 'cursor') return modelApiType === want
   if (!want || want === 'all') return true
   return modelApiType === 'all' || modelApiType === want
 }

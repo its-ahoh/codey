@@ -235,13 +235,16 @@ export function bindModelToApiKey(
   apiKey?: { apiKey: string; anthropicBaseUrl?: string; openaiBaseUrl?: string },
 ): ModelConfig {
   const isAll = entry.apiType === 'all';
-  const baseUrl = apiKey
+  // A Cursor key has no endpoint to point at: cursor-agent always talks to
+  // Cursor, so any base URL on the key entry is ignored.
+  const baseUrl = apiKey && entry.apiType !== 'cursor'
     ? (entry.apiType === 'anthropic' ? apiKey.anthropicBaseUrl
       : entry.apiType === 'openai' ? apiKey.openaiBaseUrl
       : apiKey.anthropicBaseUrl ?? apiKey.openaiBaseUrl)
     : undefined;
   return {
-    provider: entry.provider ?? (entry.apiType === 'openai' ? 'openai' : 'anthropic'),
+    provider: entry.provider
+      ?? (entry.apiType === 'openai' ? 'openai' : entry.apiType === 'cursor' ? 'cursor' : 'anthropic'),
     model: entry.model,
     apiKey: apiKey?.apiKey,
     baseUrl,
@@ -1828,7 +1831,7 @@ export class Codey {
       context: () => ({
         workspaces: this.getWorkspaceList(),
         teams: Object.keys(this.configManager?.getTeams() ?? {}),
-        agents: ['claude-code', 'opencode', 'codex', 'pi'] as CodingAgent[],
+        agents: ['claude-code', 'opencode', 'codex', 'pi', 'cursor'] as CodingAgent[],
         models: (this.configManager?.listModels() ?? this.config.models ?? []).map(m => m.model),
         tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
         nowIso: new Date().toString(),
@@ -2894,8 +2897,8 @@ export class Codey {
         await this.cmdAgent(args, chatId, channel);
         if (this.isPairableChannel(channel) && args.length > 0) {
           const a = args[0].toLowerCase();
-          if (['claude-code', 'opencode', 'codex', 'pi'].includes(a)) {
-            this.pairingStore.updatePrefs(channel, message.userId, { agent: a as 'claude-code' | 'opencode' | 'codex' | 'pi' });
+          if (['claude-code', 'opencode', 'codex', 'pi', 'cursor'].includes(a)) {
+            this.pairingStore.updatePrefs(channel, message.userId, { agent: a as 'claude-code' | 'opencode' | 'codex' | 'pi' | 'cursor' });
           }
         }
         break;
@@ -3148,7 +3151,7 @@ export class Codey {
   private async cmdAgent(args: string[], chatId: string, channel: ChannelType): Promise<void> {
     if (args.length > 0) {
       const agentName = args[0].toLowerCase();
-      const validAgents: CodingAgent[] = ['claude-code', 'opencode', 'codex', 'pi'];
+      const validAgents: CodingAgent[] = ['claude-code', 'opencode', 'codex', 'pi', 'cursor'];
       if (validAgents.includes(agentName as CodingAgent)) {
         // Persist via the canonical setter so fallback.order[0] stays in sync;
         // the runtime config gets refreshed on the next applyConfig() event.
@@ -3164,7 +3167,7 @@ export class Codey {
         await this.sendResponse({
           chatId,
           channel,
-          text: `Unknown agent: ${agentName}\n\nAvailable: claude-code, opencode, codex, pi`,
+          text: `Unknown agent: ${agentName}\n\nAvailable: claude-code, opencode, codex, pi, cursor`,
         });
       }
     } else {
@@ -3893,7 +3896,7 @@ Example: /model gpt-4.1 write a Python script`;
     });
 
     // Get enabled agents
-    const enabledAgents: CodingAgent[] = ['claude-code', 'opencode', 'codex', 'pi'];
+    const enabledAgents: CodingAgent[] = ['claude-code', 'opencode', 'codex', 'pi', 'cursor'];
 
     // Run all agents in parallel (with per-agent fallback)
     const results = await Promise.allSettled(
@@ -5690,7 +5693,7 @@ Example: /model gpt-4.1 write a Python script`;
       let prompt = '';
 
       // Check if combined with prompt
-      const promptMatch = text.match(/\/agent\s+(claude-code|opencode|codex|pi)\s+(.+)/i);
+      const promptMatch = text.match(/\/agent\s+(claude-code|opencode|codex|pi|cursor)\s+(.+)/i);
       if (promptMatch) {
         agent = promptMatch[1] as CodingAgent;
         prompt = promptMatch[2];
@@ -5708,7 +5711,7 @@ Example: /model gpt-4.1 write a Python script`;
     }
 
     // Not a command - parse agent/model from anywhere in text
-    const agentMatch = text.match(/\/agent\s+(claude-code|opencode|codex|pi)/i);
+    const agentMatch = text.match(/\/agent\s+(claude-code|opencode|codex|pi|cursor)/i);
     const agent = (agentMatch ? agentMatch[1] : this.getDefaultAgent()) as CodingAgent;
 
     const modelMatch = text.match(/\/model\s+(\S+)/i);
@@ -5719,7 +5722,7 @@ Example: /model gpt-4.1 write a Python script`;
 
     // Remove inline commands from prompt, but preserve the rest
     const prompt = text
-      .replace(/\/agent\s+(claude-code|opencode|codex|pi)\s*/i, '')
+      .replace(/\/agent\s+(claude-code|opencode|codex|pi|cursor)\s*/i, '')
       .replace(/\/model\s+\S+\s*/i, '')
       .replace(/^\/(help|status|clear|reset|model|agents|config)\s*/i, '')
       .trim();
@@ -5727,7 +5730,7 @@ Example: /model gpt-4.1 write a Python script`;
     return { command: '', args: [], agent, model, prompt };
   }
 
-  private static readonly ALL_AGENTS: CodingAgent[] = ['claude-code', 'opencode', 'codex', 'pi'];
+  private static readonly ALL_AGENTS: CodingAgent[] = ['claude-code', 'opencode', 'codex', 'pi', 'cursor'];
 
   private getEnabledAgents(): CodingAgent[] {
     // Enablement is membership in fallback.order. Order matters: the priority

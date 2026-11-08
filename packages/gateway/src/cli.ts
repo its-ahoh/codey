@@ -81,9 +81,10 @@ export class CLI {
     this.logger.info('2. opencode');
     this.logger.info('3. codex');
     this.logger.info('4. pi');
+    this.logger.info('5. cursor');
 
-    const choice = await this.prompt('\nSelect agent (1-4): ');
-    const agents = ['claude-code', 'opencode', 'codex', 'pi'];
+    const choice = await this.prompt('\nSelect agent (1-5): ');
+    const agents = ['claude-code', 'opencode', 'codex', 'pi', 'cursor'];
     const agent = agents[parseInt(choice) - 1];
 
     if (agent) {
