@@ -285,7 +285,7 @@ const Shell: React.FC = () => {
       aria-label={leftCollapsed ? 'Show sidebar' : 'Hide sidebar'}
       style={styles.sidebarToggle}
     >
-      <UIIcon name="panel" size={16} />
+      <UIIcon name="panel-left" size={16} filled={!leftCollapsed} />
     </button>
   )
 
@@ -337,7 +337,6 @@ const Shell: React.FC = () => {
             />
           </div>
         )}
-        {leftCollapsed && <div style={styles.floatingToggle}>{sidebarToggle}</div>}
         <div style={styles.content}>
           <CoreOfflineBanner state={coreState} onRelaunch={relaunchApp} />
           {activeChat && (
@@ -371,6 +370,10 @@ const Shell: React.FC = () => {
             </div>
           )}
         </div>
+        {/* Keep this after the content: Electron applies drag regions in page
+            order, so the chat header's drag region would otherwise cover the
+            button and swallow the click that shows the sidebar again. */}
+        {leftCollapsed && <div style={styles.floatingToggle}>{sidebarToggle}</div>}
         {settingsOpen && <SettingsOverlay initialTab={settingsTab} onClose={() => { setSettingsOpen(false); setSettingsTab(undefined); refreshWorkspaces(); refreshChats(); window.dispatchEvent(new Event('codey:bots-changed')) }} />}
         {automationsOpen && (
           <AutomationsView
