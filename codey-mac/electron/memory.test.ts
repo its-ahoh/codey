@@ -30,7 +30,7 @@ const write = (file: string, body: string) => {
 
 describe('agent memory locations', () => {
   it('covers every agent Codey can route to', () => {
-    expect(Object.keys(AGENT_MEMORY).sort()).toEqual(['claude-code', 'codex', 'cursor', 'opencode', 'pi'])
+    expect(Object.keys(AGENT_MEMORY).sort()).toEqual(['claude-code', 'codex', 'cursor', 'grok', 'opencode', 'pi'])
   })
 
   it('slugs a project path the way Claude Code does', () => {

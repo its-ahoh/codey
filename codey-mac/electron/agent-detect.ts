@@ -19,6 +19,7 @@ export const AGENT_BINARIES: Record<string, string> = {
   'codex': 'codex',
   'pi': 'pi',
   'cursor': 'cursor-agent',
+  'grok': 'grok',
 }
 
 export type InstallStatus = {

@@ -34,7 +34,7 @@ export interface GatewayResponse {
 }
 
 // Coding agent types
-export const CODING_AGENTS = ['claude-code', 'opencode', 'codex', 'pi', 'cursor'] as const;
+export const CODING_AGENTS = ['claude-code', 'opencode', 'codex', 'pi', 'cursor', 'grok'] as const;
 export type CodingAgent = typeof CODING_AGENTS[number];
 
 /** Runtime guard for agent ids arriving from JSON config or chat commands. */
@@ -50,14 +50,18 @@ export function isCodingAgent(v: unknown): v is CodingAgent {
 // one token — such a model is usable by every agent, so it doesn't have to be
 // duplicated once per protocol.
 //
-// 'cursor' is the exception to "protocol, not vendor": Cursor's CLI signs in
-// with a Cursor API key and only knows Cursor's own model names, so a cursor
-// model and the cursor agent belong only to each other.
-export type ApiType = 'anthropic' | 'openai' | 'all' | 'cursor';
+// 'cursor' and 'grok' are the exceptions to "protocol, not vendor": those CLIs
+// sign in with their own vendor key (CURSOR_API_KEY / XAI_API_KEY) and only
+// know their own model names, so such a model and its agent belong only to
+// each other. See DEDICATED_API_TYPES.
+export type ApiType = 'anthropic' | 'openai' | 'all' | 'cursor' | 'grok';
+
+/** API types tied to exactly one agent of the same name. */
+export const DEDICATED_API_TYPES: ReadonlySet<ApiType> = new Set<ApiType>(['cursor', 'grok']);
 
 /** Runtime guard for values arriving from JSON config or IPC. */
 export function isApiType(v: unknown): v is ApiType {
-  return v === 'anthropic' || v === 'openai' || v === 'all' || v === 'cursor';
+  return v === 'anthropic' || v === 'openai' || v === 'all' || v === 'cursor' || v === 'grok';
 }
 
 /**
@@ -66,12 +70,15 @@ export function isApiType(v: unknown): v is ApiType {
  * serves any agent, and an 'all' agent (provider-agnostic CLI) accepts any
  * model; an undefined want (agent with no declared protocol) accepts anything.
  *
- * 'cursor' sits outside all of that: a cursor model fits only the cursor
- * agent, and the cursor agent takes only cursor models. That holds even
- * against 'all' and an undefined want, because neither side can use the other.
+ * Dedicated types ('cursor', 'grok') sit outside all of that: such a model
+ * fits only its own agent, and that agent takes only its own models. That
+ * holds even against 'all' and an undefined want, because neither side can
+ * use the other.
  */
 export function modelFitsApiType(modelApiType: ApiType, agentApiType?: ApiType): boolean {
-  if (modelApiType === 'cursor' || agentApiType === 'cursor') return modelApiType === agentApiType;
+  if (DEDICATED_API_TYPES.has(modelApiType) || (agentApiType && DEDICATED_API_TYPES.has(agentApiType))) {
+    return modelApiType === agentApiType;
+  }
   if (!agentApiType || agentApiType === 'all') return true;
   return modelApiType === 'all' || modelApiType === agentApiType;
 }
@@ -143,6 +150,7 @@ export interface ModelConfig {
    * openai   → OPENAI_BASE_URL   + OPENAI_API_KEY
    * all      → both pairs, each with its own base URL
    * cursor   → CURSOR_API_KEY, no base URL (cursor agent only)
+   * grok     → XAI_API_KEY, no base URL (grok agent only)
    * Inferred from the referenced ModelEntry in gateway.json.
    */
   apiType?: ApiType;
@@ -420,6 +428,7 @@ export interface GatewayConfig {
     'codex'?: AgentModelConfig;
     'pi'?: AgentModelConfig;
     'cursor'?: AgentModelConfig;
+    'grok'?: AgentModelConfig;
   };
   /** Global model catalog — mirrors GatewayConfigJson.models. */
   models?: ModelEntry[];

@@ -11,7 +11,7 @@ import { publishTeamFinal, composeTeamFinal, planTeamFooter, isSoloRun, parseTea
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { writeTranscriptSlice, TranscriptSlice, AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, runAide, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, parseBotMentions, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, BlackboardSnapshot, BotAnchor, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, applySkill, playbookSkillName, playbookNameTaken, writePlaybookSkill, removePlaybookSkill, absorbPlaybookEdit, reconcilePlaybookSkills, playbookSkillsUsed, PlaybookHome, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, AutomationCheck, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, pickVoiceAck, needsDigest, buildSpeechDigestPrompt, stripForSpeech, needsPolish, buildVoicePolishPrompt, sanitizePolished, DEFAULT_POLISH_TIMEOUT_MS, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort, DEFAULT_THINKING_EFFORT, ApiType, unwiredAllProtocols } from '@codey/core';
+import { writeTranscriptSlice, TranscriptSlice, AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, runAide, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, parseBotMentions, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, BlackboardSnapshot, BotAnchor, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, applySkill, playbookSkillName, playbookNameTaken, writePlaybookSkill, removePlaybookSkill, absorbPlaybookEdit, reconcilePlaybookSkills, playbookSkillsUsed, PlaybookHome, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, AutomationCheck, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, pickVoiceAck, needsDigest, buildSpeechDigestPrompt, stripForSpeech, needsPolish, buildVoicePolishPrompt, sanitizePolished, DEFAULT_POLISH_TIMEOUT_MS, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort, DEFAULT_THINKING_EFFORT, ApiType, DEDICATED_API_TYPES, unwiredAllProtocols } from '@codey/core';
 import { randomUUID, createHash } from 'crypto';
 import { AutomationStore } from './automations/store';
 import { AutomationEngine, TargetResult } from './automations/engine';
@@ -235,16 +235,16 @@ export function bindModelToApiKey(
   apiKey?: { apiKey: string; anthropicBaseUrl?: string; openaiBaseUrl?: string },
 ): ModelConfig {
   const isAll = entry.apiType === 'all';
-  // A Cursor key has no endpoint to point at: cursor-agent always talks to
-  // Cursor, so any base URL on the key entry is ignored.
-  const baseUrl = apiKey && entry.apiType !== 'cursor'
+  // A dedicated key (Cursor, xAI) has no endpoint to point at: those CLIs
+  // always talk to their own vendor, so any base URL on the key is ignored.
+  const baseUrl = apiKey && !DEDICATED_API_TYPES.has(entry.apiType)
     ? (entry.apiType === 'anthropic' ? apiKey.anthropicBaseUrl
       : entry.apiType === 'openai' ? apiKey.openaiBaseUrl
       : apiKey.anthropicBaseUrl ?? apiKey.openaiBaseUrl)
     : undefined;
   return {
     provider: entry.provider
-      ?? (entry.apiType === 'openai' ? 'openai' : entry.apiType === 'cursor' ? 'cursor' : 'anthropic'),
+      ?? (entry.apiType === 'openai' ? 'openai' : DEDICATED_API_TYPES.has(entry.apiType) ? entry.apiType : 'anthropic'),
     model: entry.model,
     apiKey: apiKey?.apiKey,
     baseUrl,
@@ -1831,7 +1831,7 @@ export class Codey {
       context: () => ({
         workspaces: this.getWorkspaceList(),
         teams: Object.keys(this.configManager?.getTeams() ?? {}),
-        agents: ['claude-code', 'opencode', 'codex', 'pi', 'cursor'] as CodingAgent[],
+        agents: ['claude-code', 'opencode', 'codex', 'pi', 'cursor', 'grok'] as CodingAgent[],
         models: (this.configManager?.listModels() ?? this.config.models ?? []).map(m => m.model),
         tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
         nowIso: new Date().toString(),
@@ -2897,8 +2897,8 @@ export class Codey {
         await this.cmdAgent(args, chatId, channel);
         if (this.isPairableChannel(channel) && args.length > 0) {
           const a = args[0].toLowerCase();
-          if (['claude-code', 'opencode', 'codex', 'pi', 'cursor'].includes(a)) {
-            this.pairingStore.updatePrefs(channel, message.userId, { agent: a as 'claude-code' | 'opencode' | 'codex' | 'pi' | 'cursor' });
+          if (['claude-code', 'opencode', 'codex', 'pi', 'cursor', 'grok'].includes(a)) {
+            this.pairingStore.updatePrefs(channel, message.userId, { agent: a as 'claude-code' | 'opencode' | 'codex' | 'pi' | 'cursor' | 'grok' });
           }
         }
         break;
@@ -3151,7 +3151,7 @@ export class Codey {
   private async cmdAgent(args: string[], chatId: string, channel: ChannelType): Promise<void> {
     if (args.length > 0) {
       const agentName = args[0].toLowerCase();
-      const validAgents: CodingAgent[] = ['claude-code', 'opencode', 'codex', 'pi', 'cursor'];
+      const validAgents: CodingAgent[] = ['claude-code', 'opencode', 'codex', 'pi', 'cursor', 'grok'];
       if (validAgents.includes(agentName as CodingAgent)) {
         // Persist via the canonical setter so fallback.order[0] stays in sync;
         // the runtime config gets refreshed on the next applyConfig() event.
@@ -3167,7 +3167,7 @@ export class Codey {
         await this.sendResponse({
           chatId,
           channel,
-          text: `Unknown agent: ${agentName}\n\nAvailable: claude-code, opencode, codex, pi, cursor`,
+          text: `Unknown agent: ${agentName}\n\nAvailable: claude-code, opencode, codex, pi, cursor, grok`,
         });
       }
     } else {
@@ -3896,7 +3896,7 @@ Example: /model gpt-4.1 write a Python script`;
     });
 
     // Get enabled agents
-    const enabledAgents: CodingAgent[] = ['claude-code', 'opencode', 'codex', 'pi', 'cursor'];
+    const enabledAgents: CodingAgent[] = ['claude-code', 'opencode', 'codex', 'pi', 'cursor', 'grok'];
 
     // Run all agents in parallel (with per-agent fallback)
     const results = await Promise.allSettled(
@@ -5693,7 +5693,7 @@ Example: /model gpt-4.1 write a Python script`;
       let prompt = '';
 
       // Check if combined with prompt
-      const promptMatch = text.match(/\/agent\s+(claude-code|opencode|codex|pi|cursor)\s+(.+)/i);
+      const promptMatch = text.match(/\/agent\s+(claude-code|opencode|codex|pi|cursor|grok)\s+(.+)/i);
       if (promptMatch) {
         agent = promptMatch[1] as CodingAgent;
         prompt = promptMatch[2];
@@ -5711,7 +5711,7 @@ Example: /model gpt-4.1 write a Python script`;
     }
 
     // Not a command - parse agent/model from anywhere in text
-    const agentMatch = text.match(/\/agent\s+(claude-code|opencode|codex|pi|cursor)/i);
+    const agentMatch = text.match(/\/agent\s+(claude-code|opencode|codex|pi|cursor|grok)/i);
     const agent = (agentMatch ? agentMatch[1] : this.getDefaultAgent()) as CodingAgent;
 
     const modelMatch = text.match(/\/model\s+(\S+)/i);
@@ -5722,7 +5722,7 @@ Example: /model gpt-4.1 write a Python script`;
 
     // Remove inline commands from prompt, but preserve the rest
     const prompt = text
-      .replace(/\/agent\s+(claude-code|opencode|codex|pi|cursor)\s*/i, '')
+      .replace(/\/agent\s+(claude-code|opencode|codex|pi|cursor|grok)\s*/i, '')
       .replace(/\/model\s+\S+\s*/i, '')
       .replace(/^\/(help|status|clear|reset|model|agents|config)\s*/i, '')
       .trim();
@@ -5730,7 +5730,7 @@ Example: /model gpt-4.1 write a Python script`;
     return { command: '', args: [], agent, model, prompt };
   }
 
-  private static readonly ALL_AGENTS: CodingAgent[] = ['claude-code', 'opencode', 'codex', 'pi', 'cursor'];
+  private static readonly ALL_AGENTS: CodingAgent[] = ['claude-code', 'opencode', 'codex', 'pi', 'cursor', 'grok'];
 
   private getEnabledAgents(): CodingAgent[] {
     // Enablement is membership in fallback.order. Order matters: the priority

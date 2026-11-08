@@ -6,7 +6,7 @@
  * builtins, which blanks the packaged window).
  */
 
-export type ApiType = 'anthropic' | 'openai' | 'all' | 'cursor'
+export type ApiType = 'anthropic' | 'openai' | 'all' | 'cursor' | 'grok'
 
 /**
  * The protocol each agent's CLI authenticates against. 'all' marks a
@@ -20,9 +20,14 @@ export const AGENT_API_TYPE: Record<string, ApiType> = {
   'pi': 'all',
   // Cursor takes a Cursor API key and only Cursor's own model names.
   'cursor': 'cursor',
+  // Grok Build takes an xAI API key and only Grok's own model names.
+  'grok': 'grok',
 }
 
-export const AGENT_NAMES = ['claude-code', 'opencode', 'codex', 'pi', 'cursor'] as const
+/** Mirrors DEDICATED_API_TYPES in @codey/core: types tied to one agent. */
+const DEDICATED: ReadonlySet<ApiType> = new Set<ApiType>(['cursor', 'grok'])
+
+export const AGENT_NAMES = ['claude-code', 'opencode', 'codex', 'pi', 'cursor', 'grok'] as const
 
 /**
  * True when a model can drive an agent that speaks `want`. An 'all' model
@@ -31,9 +36,9 @@ export const AGENT_NAMES = ['claude-code', 'opencode', 'codex', 'pi', 'cursor'] 
  * `want` means the agent declares no protocol, so anything goes.
  */
 export function modelFitsApiType(modelApiType: ApiType, want?: ApiType): boolean {
-  // A cursor model and the cursor agent only fit each other, even against
-  // 'all' and an undefined want.
-  if (modelApiType === 'cursor' || want === 'cursor') return modelApiType === want
+  // A dedicated model (cursor, grok) and its agent only fit each other, even
+  // against 'all' and an undefined want.
+  if (DEDICATED.has(modelApiType) || (want && DEDICATED.has(want))) return modelApiType === want
   if (!want || want === 'all') return true
   return modelApiType === 'all' || modelApiType === want
 }
