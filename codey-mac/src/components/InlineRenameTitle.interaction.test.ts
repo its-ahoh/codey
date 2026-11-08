@@ -85,6 +85,20 @@ describe('InlineRenameTitle', () => {
     expect(label().textContent).toBe('Sample Chat')
   })
 
+  it('does not save when Esc removes the input and Chromium fires blur', async () => {
+    const onRename = vi.fn(async () => {})
+    await render(onRename)
+    await startEditing()
+    await type('Demo Space')
+    const el = input()!
+    await act(async () => {
+      el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      el.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
+    })
+    expect(onRename).not.toHaveBeenCalled()
+    expect(input()).toBeNull()
+  })
+
   it('rejects an empty name and keeps the old one', async () => {
     const onRename = vi.fn(async () => {})
     await render(onRename)

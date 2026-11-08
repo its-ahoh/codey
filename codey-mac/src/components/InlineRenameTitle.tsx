@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useRef, useState } from 'react'
 import { C } from '../theme'
 import './chatHeaderActions.css'
 
@@ -11,6 +11,8 @@ export function InlineRenameTitle({ title, onRename, style }: {
   const [draft, setDraft] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
+  // Esc removes the input; Chromium may then fire blur, which must not save.
+  const cancelledRef = useRef(false)
 
   const close = () => {
     setDraft(null)
@@ -18,7 +20,7 @@ export function InlineRenameTitle({ title, onRename, style }: {
   }
 
   const save = async () => {
-    if (draft === null || saving) return
+    if (draft === null || saving || cancelledRef.current) return
     const next = draft.trim()
     if (!next) {
       setError('Name cannot be empty')
@@ -48,6 +50,7 @@ export function InlineRenameTitle({ title, onRename, style }: {
       title="Double-click to rename"
       onDoubleClick={event => {
         event.stopPropagation()
+        cancelledRef.current = false
         setError('')
         setDraft(title)
       }}
@@ -78,7 +81,10 @@ export function InlineRenameTitle({ title, onRename, style }: {
         } else if (event.key === 'Escape') {
           event.preventDefault()
           event.stopPropagation()
-          if (!saving) close()
+          if (!saving) {
+            cancelledRef.current = true
+            close()
+          }
         }
       }}
       style={{
