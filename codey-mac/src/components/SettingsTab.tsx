@@ -33,6 +33,7 @@ export const AGENT_INSTALL_URL: Record<string, string> = {
   'codex':       'https://github.com/openai/codex',
   'pi':          'https://pi.dev',
   'cursor':      'https://cursor.com/docs/cli/installation',
+  'grok':        'https://x.ai/cli',
 }
 
 // The install chip and the env editor moved to agentSettingsUi.tsx, next to
@@ -138,6 +139,7 @@ const ModelRow: React.FC<{
           <option value="openai">openai (OPENAI_BASE_URL + OPENAI_API_KEY)</option>
           <option value="all">all (third-party providers &amp; proxies)</option>
           <option value="cursor">cursor (Cursor CLI only, CURSOR_API_KEY)</option>
+          <option value="grok">grok (Grok Build only, XAI_API_KEY)</option>
         </select>
         <label style={{ color: C.fg3, fontSize: 12 }}>API Key</label>
         <select

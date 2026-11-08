@@ -4,6 +4,7 @@ import { BaseAgentAdapter } from './base';
 import { AgentSpawnError } from '../errors';
 import { ObservedToolEvent, ToolCallCollector } from './tool-events';
 import { ChecklistTracker } from './checklist';
+import { withCommonBinPaths } from './env';
 import { cursorToolPolicyArgs } from './tool-policy';
 import { agentSpawnOptions, cleanupProcessTreeAfterClose, terminateProcessTree, withForegroundPolicy } from './process-tree';
 
@@ -292,7 +293,6 @@ export class CursorAdapter extends BaseAgentAdapter {
       const args = cursorArgs(request);
       this.debug(`[cursor] Spawning: cursor-agent ${args.slice(0, -1).join(' ')} "<prompt>"`);
 
-      const { withCommonBinPaths } = require('./env') as typeof import('./env');
       // Cursor authenticates with a Cursor key, never with Anthropic/OpenAI
       // keys, so applyModelEnv is not used. The key travels in env, not as
       // `--api-key`, so it never shows up in a process listing. A key bound to

@@ -43,7 +43,7 @@
 ## 功能特性
 
 **Agent 管理**
-- **多种编码代理**：Claude Code、OpenCode、Codex、[pi](https://pi.dev)、[Cursor CLI](https://cursor.com/cli)（支持会话恢复）
+- **多种编码代理**：Claude Code、OpenCode、Codex、[pi](https://pi.dev)、[Cursor CLI](https://cursor.com/cli)、[Grok Build](https://x.ai/cli)（支持会话恢复）
 - **并行执行**：同一个 prompt 让多个 Agent 同时跑，方便对比
 - **每个对话独立设置**：每个对话选自己的 Agent、模型和思考强度
 - **思考强度**：一个 low → max 的统一档位，自动映射到各家 CLI 自己的推理参数
@@ -308,7 +308,7 @@ npm run build                  # 构建所有工作区
 packages/
 ├── core/                # 共享类型、Agent、工作区与 Bot 管理器
 │   └── src/
-│       └── agents/      # 编码 Agent 适配器（claude-code、opencode、codex、pi、cursor）
+│       └── agents/      # 编码 Agent 适配器（claude-code、opencode、codex、pi、cursor、grok）
 └── gateway/             # 网关服务与渠道
     └── src/
         ├── channels/    # 聊天平台处理器（telegram、discord、imessage）

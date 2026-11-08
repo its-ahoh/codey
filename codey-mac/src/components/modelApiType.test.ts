@@ -45,8 +45,8 @@ describe('modelFitsAgent', () => {
   })
 
   it('makes an "all" model available to every protocol-based agent', () => {
-    // Cursor is the one exception: it only takes its own Cursor-key models.
-    for (const agent of Object.keys(AGENT_API_TYPE).filter(a => a !== 'cursor')) {
+    // Cursor and Grok are the exceptions: each only takes its own vendor-key models.
+    for (const agent of Object.keys(AGENT_API_TYPE).filter(a => a !== 'cursor' && a !== 'grok')) {
       expect(modelFitsAgent('all', agent)).toBe(true)
     }
   })

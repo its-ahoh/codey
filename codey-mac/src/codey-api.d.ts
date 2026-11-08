@@ -144,7 +144,7 @@ export interface AgentMcpServer {
 
 export interface ModelEntry {
   /** 'all' = dual-protocol provider, usable by every agent. */
-  apiType: 'anthropic' | 'openai' | 'all' | 'cursor'
+  apiType: 'anthropic' | 'openai' | 'all' | 'cursor' | 'grok'
   model: string
   apiKeyRef?: string
   provider?: string

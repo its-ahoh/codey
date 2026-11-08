@@ -2158,7 +2158,7 @@ app.whenReady().then(async () => {
     return chat
   }
   const validateChromeAgentModel = (agent: string | null, model: string | null) => {
-    const agents = ['claude-code', 'opencode', 'codex', 'pi', 'cursor']
+    const agents = ['claude-code', 'opencode', 'codex', 'pi', 'cursor', 'grok']
     if (agent && !agents.includes(agent)) throw new Error(`Unknown agent: ${agent}`)
     if (model && !coreConfigManager?.listModels().some(entry => entry.model === model)) throw new Error(`Unknown model: ${model}`)
   }
@@ -2253,7 +2253,7 @@ app.whenReady().then(async () => {
         const installed = await getInstalledAgents(false)
         const chat = chatId ? await chromeChat(chatId) : null
         return {
-          agents: ['claude-code', 'opencode', 'codex', 'pi', 'cursor'].map(id => ({
+          agents: ['claude-code', 'opencode', 'codex', 'pi', 'cursor', 'grok'].map(id => ({
             id,
             installed: installed.status[id]?.installed === true,
           })),
@@ -2265,7 +2265,7 @@ app.whenReady().then(async () => {
           defaultAgent: fallback.order[0]?.agent ?? null,
           defaultModel: fallback.order[0]?.model ?? null,
           defaultModels: Object.fromEntries(
-            ['claude-code', 'opencode', 'codex', 'pi', 'cursor']
+            ['claude-code', 'opencode', 'codex', 'pi', 'cursor', 'grok']
               .map(id => [id, coreConfigManager!.getAgentModel(id)?.model])
               .filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
           ),
@@ -4591,8 +4591,8 @@ app.whenReady().then(async () => {
     wrap(async () => {
       if (!coreConfigManager) throw new Error('Config manager not initialized')
       if (!entry?.model) throw new Error('Model id is required')
-      if (entry.apiType !== 'anthropic' && entry.apiType !== 'openai' && entry.apiType !== 'all' && entry.apiType !== 'cursor') {
-        throw new Error('Model apiType must be "anthropic", "openai", "all", or "cursor"')
+      if (!['anthropic', 'openai', 'all', 'cursor', 'grok'].includes(entry.apiType)) {
+        throw new Error('Model apiType must be "anthropic", "openai", "all", "cursor", or "grok"')
       }
       coreConfigManager.saveModel(entry)
     })
@@ -4750,6 +4750,8 @@ app.whenReady().then(async () => {
     'pi':          { userDirs: ['.pi/agent/skills', '.agents/skills'], projectSubdirs: [CODEY_SKILLS_SUBDIR, '.pi/skills', '.agents/skills'] },
     // cursor-agent also reads the .claude and .agents conventions.
     'cursor':      { userDirs: ['.cursor/skills', '.agents/skills'], projectSubdirs: [CODEY_SKILLS_SUBDIR, '.cursor/skills', '.agents/skills'] },
+    // grok also reads the .claude and ~/.cursor skill folders.
+    'grok':        { userDirs: ['.grok/skills'], projectSubdirs: [CODEY_SKILLS_SUBDIR, '.grok/skills'] },
   }
 
   function configuredUserSkillDirs(agentKey: string, home: string, pathMod: typeof import('path')): string[] {

@@ -8,13 +8,14 @@ import type { SkillSortMode } from './skillsSort'
 import type { SkillEntry, SkillPackInfo, SkillUsageMap, SkillsListResult } from '../codey-api'
 import { SKILL_PACK_PLACEHOLDER, describeSkillPack, skillPackConflictPrompt } from './skillPackDisplay'
 
-type AgentFilter = 'claude-code' | 'opencode' | 'codex' | 'pi' | 'cursor'
+type AgentFilter = 'claude-code' | 'opencode' | 'codex' | 'pi' | 'cursor' | 'grok'
 const AGENTS: { key: AgentFilter; label: string }[] = [
   { key: 'claude-code', label: 'Claude Code' },
   { key: 'opencode',    label: 'OpenCode' },
   { key: 'codex',       label: 'Codex' },
   { key: 'pi',          label: 'Pi' },
   { key: 'cursor',      label: 'Cursor' },
+  { key: 'grok',        label: 'Grok' },
 ]
 
 /** Codey's own skills are global; a workspace can still hold repo-local ones. */
@@ -26,6 +27,7 @@ const AGENT_SKILL_HINTS: Record<AgentFilter, string> = {
   'opencode': '~/.config/opencode/skills/',
   'pi': '~/.pi/agent/skills/',
   'cursor': '~/.cursor/skills/',
+  'grok': '~/.grok/skills/',
 }
 
 /** Same rule the gateway uses to tell a folder from a git source. */

@@ -11,6 +11,7 @@ import { resolveUserPath } from './skills'
  *   codex        ~/.codex/AGENTS.md, <project>/AGENTS.md
  *   opencode     ~/.config/opencode/AGENTS.md, <project>/AGENTS.md
  *   pi           ~/.pi/agent/AGENTS.md, <project>/AGENTS.md or CLAUDE.md
+ *   grok         ~/.grok/AGENTS.md, <project>/AGENTS.md or CLAUDE.md
  *   cursor       <project>/AGENTS.md, CLAUDE.md, .cursorrules (user rules live in
  *                Cursor's cloud settings, not on disk)
  *
@@ -63,6 +64,10 @@ export const AGENT_MEMORY: Record<string, AgentMemorySpec> = {
     // pi prefers AGENTS.override.md when a directory has one.
     userFiles: ['.pi/agent/AGENTS.md'],
     projectFiles: ['AGENTS.override.md', 'AGENTS.md', 'CLAUDE.md'],
+  },
+  'grok': {
+    userFiles: ['.grok/AGENTS.md'],
+    projectFiles: ['AGENTS.md', 'CLAUDE.md', 'CLAUDE.local.md'],
   },
   'cursor': {
     userFiles: [],

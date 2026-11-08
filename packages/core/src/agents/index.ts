@@ -5,6 +5,7 @@ import { OpenCodeAdapter } from './opencode';
 import { CodexAdapter } from './codex';
 import { PiAdapter } from './pi';
 import { CursorAdapter } from './cursor';
+import { GrokAdapter } from './grok';
 import { syncCodeyGlobalSkills, syncCodeyProjectSkills } from './codey-skills';
 import { isBrowserSkillActive } from './browser-skill';
 import { isChromeCompanionSkillActive } from './chrome-companion-skill';
@@ -15,6 +16,7 @@ export { OpenCodeAdapter } from './opencode';
 export { CodexAdapter } from './codex';
 export { PiAdapter } from './pi';
 export { CursorAdapter } from './cursor';
+export { GrokAdapter } from './grok';
 export { applyModelEnv, unwiredAllProtocols } from './env';
 export * from './codey-skills';
 export * from './browser-skill';
@@ -104,6 +106,7 @@ export class AgentFactory {
     this.register('codex', new CodexAdapter());
     this.register('pi', new PiAdapter());
     this.register('cursor', new CursorAdapter());
+    this.register('grok', new GrokAdapter());
   }
 
   register(agent: CodingAgent, adapter: CodingAgentAdapter): void {
