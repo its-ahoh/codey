@@ -9,6 +9,7 @@ import { C } from '../theme'
 import { BotAvatar } from './BotAvatar'
 import { UIIcon } from './UIIcons'
 import { InlineRenameTitle } from './InlineRenameTitle'
+import { renameBotChat } from './renameBotChat'
 
 interface Props extends SidebarCommonProps {
   newBotRequested: boolean
@@ -140,7 +141,7 @@ export function BotListPanel(props: Props) {
             </span>
             <span style={{ minWidth: 0, flex: 1 }}>
               {chat
-                ? <InlineRenameTitle title={title} onRename={next => renameChat(chat.id, next)} style={{ display: 'block', color: active || unread ? C.fg : C.fg2, fontWeight: unread ? 600 : undefined, cursor: 'pointer' }} />
+                ? <InlineRenameTitle title={title} onRename={next => renameBotChat(chat, bot, next, renameChat)} style={{ display: 'block', color: active || unread ? C.fg : C.fg2, fontWeight: unread ? 600 : undefined, cursor: 'pointer' }} />
                 : <span style={{ display: 'block', color: active || unread ? C.fg : C.fg2, fontWeight: unread ? 600 : undefined, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</span>}
               {status && <span title={messageMatch?.snippet} style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, color: C.fg3, marginTop: 1 }}>{status}</span>}
               {messageMatch && <span style={{ display: 'block', fontSize: 11, color: C.accent, marginTop: 3 }}>{messageMatch.count} matching {messageMatch.count === 1 ? 'message' : 'messages'}</span>}

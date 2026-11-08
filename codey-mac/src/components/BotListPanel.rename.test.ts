@@ -9,14 +9,21 @@ const chat = {
   id: 'chat-1', title: 'Sample Room', messages: [],
   botChat: { kind: 'group', members: ['alpha', 'beta'] },
 }
+const directChat = {
+  id: 'chat-2', title: 'Old Title', messages: [],
+  botChat: { kind: 'direct', members: ['helper'] },
+}
+const helperBot = { name: 'helper', personality: { role: 'r', soul: 's', instructions: 'i' }, config: { displayName: 'Sample Bot', tools: [] } }
+const updateBot = vi.fn(async () => {})
+let chatsInState: Record<string, unknown> = { 'chat-1': chat }
 
 vi.mock('../hooks/useChats', () => ({
   useChats: () => ({
-    state: { order: ['chat-1'], chats: { 'chat-1': chat }, selectedChatId: null, inFlight: {}, unreadChats: {} },
+    state: { order: Object.keys(chatsInState), chats: chatsInState, selectedChatId: null, inFlight: {}, unreadChats: {} },
     openBot: vi.fn(), selectChat, renameChat,
   }),
 }))
-vi.mock('../services/api', () => ({ apiService: { listBots: vi.fn(async () => []) } }))
+vi.mock('../services/api', () => ({ apiService: { listBots: vi.fn(async () => Object.keys(chatsInState).includes('chat-2') ? [helperBot] : []), updateBot } }))
 
 vi.mock('./SidebarNavigation', () => ({
   SidebarFooter: () => null,
@@ -33,6 +40,8 @@ beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => {} })
   renameChat.mockClear()
+  updateBot.mockClear()
+  chatsInState = { 'chat-1': chat }
   selectChat.mockClear()
   host = document.createElement('div')
   document.body.append(host)
@@ -72,5 +81,27 @@ describe('BotListPanel rename', () => {
     await render()
     await act(async () => { label()!.click() })
     expect(selectChat).toHaveBeenCalledWith('chat-1')
+  })
+
+  it('renames the bot itself in a one-bot chat', async () => {
+    chatsInState = { 'chat-2': directChat }
+    const changed = vi.fn()
+    window.addEventListener('codey:bots-changed', changed)
+    await render()
+    await act(async () => {})
+    expect(label()?.textContent).toBe('Old Title')
+    await act(async () => { label()!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })) })
+    const input = host.querySelector<HTMLInputElement>('input')!
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    await act(async () => {
+      setter.call(input, 'Demo Bot')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => { input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })) })
+    expect(updateBot).toHaveBeenCalledWith('helper', { personality: helperBot.personality, config: { ...helperBot.config, displayName: 'Demo Bot' } })
+    // The chat title goes back to the bot's id so the list shows the new bot name.
+    expect(renameChat).toHaveBeenCalledWith('chat-2', 'helper')
+    expect(changed).toHaveBeenCalled()
+    window.removeEventListener('codey:bots-changed', changed)
   })
 })
