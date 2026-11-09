@@ -7,6 +7,7 @@ import { ChecklistTracker } from './checklist';
 import { AcpClient, AcpRequestError } from './acp-client';
 import { withCommonBinPaths } from './env';
 import { agentSpawnOptions, cleanupProcessTreeAfterClose, terminateProcessTree, withForegroundPolicy } from './process-tree';
+import { CODEY_VERSION } from '../version';
 
 /**
  * Grok Build (`grok`) adapter, driven over the Agent Client Protocol.
@@ -315,7 +316,6 @@ export function grokErrorMessage(err: unknown): string {
 // ── Adapter ────────────────────────────────────────────────────────────
 
 // ACP requires `version` here; grok rejects initialize without it.
-const { version: CODEY_VERSION } = require('../../package.json') as { version: string };
 export const CLIENT_INFO = { name: 'codey', title: 'Codey', version: CODEY_VERSION };
 
 /** How long a finished turn waits for grok to exit on its own once its stdin

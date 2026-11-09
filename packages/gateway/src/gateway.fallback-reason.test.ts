@@ -13,13 +13,32 @@ describe('failed chat turn text', () => {
       .toBe('❌ Error: Authentication required');
   });
 
-  it('keeps what the agent already streamed', () => {
-    expect(failedTurnText({ success: false, output: '', error: 'timeout' }, 'partial answer')).toBe('partial answer');
+  it('keeps what the agent already streamed and still says it failed', () => {
+    expect(failedTurnText({ success: false, output: '', error: 'timeout' }, 'partial answer'))
+      .toBe('partial answer\n\n❌ Error: timeout');
   });
 
-  it('stays empty with no response and no reason', () => {
-    expect(failedTurnText(undefined, '')).toBe('');
-    expect(failedTurnText({ success: false, output: '' }, '')).toBe('');
+  it('shows a reply that came with no error in full, not as the error', () => {
+    const answer = 'x'.repeat(1000);
+    expect(failedTurnText({ success: false, output: answer }, ''))
+      .toBe(`${answer}\n\n❌ The agent stopped before finishing.`);
+  });
+
+  it('does not repeat an error that the adapter also put in output', () => {
+    expect(failedTurnText({ success: false, output: 'Error: Authentication required', error: 'Error: Authentication required' }, ''))
+      .toBe('❌ Error: Authentication required');
+  });
+
+  it('never leaves the reply blank', () => {
+    expect(failedTurnText(undefined, '')).toBe('❌ The agent stopped before finishing.');
+    expect(failedTurnText({ success: false, output: '' }, '')).toBe('❌ The agent stopped before finishing.');
+  });
+
+  it('lists why each fallback failed', () => {
+    expect(failedTurnText({
+      success: false, output: '', error: 'missing field version',
+      fallbackFailures: [{ agent: 'cursor(auto)', reason: 'Authentication required' }, { agent: 'codex(gpt-5)' }],
+    }, '')).toBe('❌ Error: missing field version\n\nFallbacks also failed:\n- cursor(auto): Authentication required\n- codex(gpt-5)');
   });
 });
 
