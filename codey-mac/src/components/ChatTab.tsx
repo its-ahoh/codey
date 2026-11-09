@@ -44,7 +44,7 @@ import { statusLine } from './checklistView'
 import { composerPlaceholder } from './coreOfflineView'
 import { getDraft, setDraft, subscribeDrafts } from './chatDrafts'
 import { isBottomTerminalOpen, setBottomTerminalOpen as rememberBottomTerminalOpen } from './terminalVisibility'
-import { AGENT_API_TYPE, AGENT_NAMES, ApiType, CLI_DEFAULT_MODEL, inheritedModelFor, modelFitsApiType } from './modelApiType'
+import { AGENT_API_TYPE, AGENT_NAMES, ApiType, CLI_DEFAULT_MODEL, modelFitsApiType } from './modelApiType'
 import { useInstalledAgents } from './installedAgents'
 import {
   appendMentionContext, applyMention, filterEntries, findActiveMention, findResourceMentions,
@@ -1190,8 +1190,9 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
   // Resolve which agent/model are *actually* used for this chat.
   // Priority: per-chat override → gateway fallback default.
   const effectiveAgent: string = chat.agent ?? defaultAgent ?? 'claude-code'
-  // Same rule as the gateway, so the header does not change name when the reply lands.
-  const inheritedModel: string | undefined = inheritedModelFor(effectiveAgent, agentDefaultModels[effectiveAgent], models)
+  // Same rule as the gateway: the model pinned in Settings, else none (the
+  // agent's own default). Codey never guesses one from the catalog.
+  const inheritedModel: string | undefined = agentDefaultModels[effectiveAgent]
   const effectiveModel: string | undefined = chat.model ?? inheritedModel
   const effectiveEffort: string = chat.effort ?? agentDefaultEfforts[effectiveAgent] ?? 'medium'
   // What each run setting resolves to with no per-chat override — the value the
@@ -2726,8 +2727,11 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                         title={`Model: ${effectiveModel ?? 'unset'}${chat.model ? ' (override)' : ' (default)'}`}
                       >
                         <option value="">{`${inheritedModel ?? CLI_DEFAULT_MODEL} (from Settings)`}</option>
-                        {/* Always offered: Codey passes no model and the agent's CLI picks its own. */}
-                        <option value={CLI_DEFAULT_MODEL}>{`${CLI_DEFAULT_MODEL} (agent's own model)`}</option>
+                        {/* Overrides a model pinned in Settings; with none pinned, the
+                            empty choice already means the same thing. */}
+                        {(inheritedModel || chat.model === CLI_DEFAULT_MODEL) && (
+                          <option value={CLI_DEFAULT_MODEL}>{`${CLI_DEFAULT_MODEL} (agent's own model)`}</option>
+                        )}
                         {modelsForAgent.filter(m => m.model !== inheritedModel || m.model === chat.model).map(m => (
                           <option key={m.model} value={m.model}>{m.model}</option>
                         ))}

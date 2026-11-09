@@ -11,7 +11,7 @@ import { publishTeamFinal, composeTeamFinal, planTeamFooter, isSoloRun, parseTea
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { writeTranscriptSlice, TranscriptSlice, AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, runAide, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, parseBotMentions, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, BlackboardSnapshot, BotAnchor, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, applySkill, playbookSkillName, playbookNameTaken, writePlaybookSkill, removePlaybookSkill, absorbPlaybookEdit, reconcilePlaybookSkills, playbookSkillsUsed, PlaybookHome, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, AutomationCheck, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, pickVoiceAck, needsDigest, buildSpeechDigestPrompt, stripForSpeech, needsPolish, buildVoicePolishPrompt, sanitizePolished, DEFAULT_POLISH_TIMEOUT_MS, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort, DEFAULT_THINKING_EFFORT, ApiType, DEDICATED_API_TYPES, AGENT_API_TYPE, CLI_DEFAULT_MODEL, modelFitsApiType, unwiredAllProtocols } from '@codey/core';
+import { writeTranscriptSlice, TranscriptSlice, AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, runAide, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, parseBotMentions, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, BlackboardSnapshot, BotAnchor, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, applySkill, playbookSkillName, playbookNameTaken, writePlaybookSkill, removePlaybookSkill, absorbPlaybookEdit, reconcilePlaybookSkills, playbookSkillsUsed, PlaybookHome, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, AutomationCheck, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, pickVoiceAck, needsDigest, buildSpeechDigestPrompt, stripForSpeech, needsPolish, buildVoicePolishPrompt, sanitizePolished, DEFAULT_POLISH_TIMEOUT_MS, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort, DEFAULT_THINKING_EFFORT, ApiType, DEDICATED_API_TYPES, AGENT_API_TYPE, CLI_DEFAULT_MODEL, unwiredAllProtocols } from '@codey/core';
 import { randomUUID, createHash } from 'crypto';
 import { AutomationStore } from './automations/store';
 import { AutomationEngine, TargetResult } from './automations/engine';
@@ -198,13 +198,6 @@ export function failedTurnReason(response: AgentResponse | undefined): string | 
   const raw = response?.error?.trim().replace(/^error:\s*/i, '');
   if (!raw) return undefined;
   return raw.length > FALLBACK_REASON_MAX ? `${raw.slice(0, FALLBACK_REASON_MAX).trimEnd()}…` : raw;
-}
-
-/** The first catalog model this agent can actually run, or undefined so the
- *  agent's CLI uses its own default. Never a model it would silently ignore
- *  (an Anthropic model for Cursor), which would then label the reply wrong. */
-export function firstFittingModel(agent: CodingAgent, catalog?: Array<{ model: string; apiType: ApiType }>): string | undefined {
-  return catalog?.find(m => modelFitsApiType(m.apiType, AGENT_API_TYPE[agent]))?.model;
 }
 
 /** The model name a reply is labelled with. "default" when the agent ran on
@@ -594,20 +587,15 @@ export class Codey {
   }
 
   /**
-   * Per-agent default model name. Looks up the first fallback entry for the
-   * agent that pins a model. When no entry pins a model for this agent, falls
-   * back to the first model in the global catalog so fallback entries without
-   * a pinned model don't get silently skipped.
+   * Per-agent default model name: the first fallback entry for the agent that
+   * pins a model. Nothing pinned means undefined — Codey passes no model and
+   * the agent's CLI uses its own default. Codey never guesses one from the
+   * catalog: a guessed model may not be the one the user wants, or one the
+   * agent can run at all.
    */
   private getDefaultModelName(agent: CodingAgent): string | undefined {
     const fb = this.configManager?.getFallback() ?? this.config.fallback;
-    const pinned = fb?.order.find(e => e.agent === agent && !!e.model)?.model;
-    if (pinned) return pinned;
-    // No model pinned for this agent in the fallback order — pick the first
-    // catalog model it can run. None fits (Cursor with no Cursor model):
-    // undefined, so the CLI runs on its own default and the reply says so.
-    const catalog = this.configManager?.listModels() ?? this.config.models;
-    return firstFittingModel(agent, catalog);
+    return fb?.order.find(e => e.agent === agent && !!e.model)?.model;
   }
 
   private getEffectiveModel(agent?: CodingAgent): string {

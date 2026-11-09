@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AGENT_API_TYPE, CODING_AGENTS } from '@codey/core';
-import { Codey, firstFittingModel, turnModelLabel } from './gateway';
+import { Codey, turnModelLabel } from './gateway';
 
 const catalog = [
   { model: 'sonnet-x', apiType: 'anthropic' as const },
@@ -8,14 +8,24 @@ const catalog = [
   { model: 'grok-x', apiType: 'grok' as const },
 ];
 
-describe('firstFittingModel', () => {
-  it('skips models the agent cannot run', () => {
-    expect(firstFittingModel('codex', catalog)).toBe('gpt-x');
-    expect(firstFittingModel('grok', catalog)).toBe('grok-x');
+describe('no model chosen', () => {
+  const gatewayWith = (order: Array<{ agent: string; model?: string }>) => Object.assign(Object.create(Codey.prototype), {
+    configManager: {
+      getFallback: () => ({ enabled: true, order }),
+      listModels: () => catalog,
+      getModel: (name: string) => catalog.find(m => m.model === name),
+      getApiKey: () => undefined,
+    },
+    warnUnwiredAllModel: () => {},
+  }) as Codey;
+
+  it('never guesses a catalog model, so the CLI uses its own default', () => {
+    expect(gatewayWith([]).getDefaultModelConfig('claude-code')).toBeUndefined();
+    expect(gatewayWith([]).getDefaultModelConfig('cursor')).toBeUndefined();
   });
 
-  it('is undefined when nothing fits, so the CLI uses its own default', () => {
-    expect(firstFittingModel('cursor', catalog)).toBeUndefined();
+  it('uses the model pinned in Settings', () => {
+    expect(gatewayWith([{ agent: 'codex', model: 'gpt-x' }]).getDefaultModelConfig('codex')?.model).toBe('gpt-x');
   });
 
   it('covers every agent', () => {

@@ -51,19 +51,6 @@ export function modelFitsAgent(modelApiType: ApiType, agent?: string): boolean {
   return modelFitsApiType(modelApiType, agent ? AGENT_API_TYPE[agent] : undefined)
 }
 
-/**
- * The model an agent runs when the chat picks none. Mirrors the gateway: the
- * model pinned for it in fallback.order, else the first catalog model it can
- * run, else undefined — the CLI's own default, shown as "default".
- */
-export function inheritedModelFor(
-  agent: string,
-  pinned: string | undefined,
-  models: Array<{ model: string; apiType: ApiType }>,
-): string | undefined {
-  return pinned ?? models.find(m => modelFitsAgent(m.apiType, agent))?.model
-}
-
 /** The base URLs an API key entry defines, as far as this check cares. */
 export interface KeyEndpoints {
   anthropicBaseUrl?: string

@@ -271,12 +271,11 @@ const FallbackList: React.FC<{
                 ))}
               </select>
               <select
-                value={entry.model ?? ''}
+                value={entry.model === CLI_DEFAULT_MODEL ? '' : entry.model ?? ''}
                 onChange={e => update(i, { model: e.target.value || undefined })}
                 style={{ ...selectStyle, flex: 1, minWidth: 0 }}
               >
-                <option value="">(first matching model)</option>
-                <option value={CLI_DEFAULT_MODEL}>{`${CLI_DEFAULT_MODEL} (agent's own model)`}</option>
+                <option value="">{`${CLI_DEFAULT_MODEL} (agent's own model)`}</option>
                 {modelsForAgent(entry.agent).map(m => (
                   <option key={m.model} value={m.model}>{m.model} [{m.apiType}]</option>
                 ))}
