@@ -3,7 +3,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { ChatManager } from './chats';
-import { buildChatCatchupPrompt, CATCHUP_INLINE_LIMIT } from './chat-runner';
+import { writeTranscriptSlice } from '@codey/core';
+import { buildChatCatchupPrompt, buildChatPrompt, CATCHUP_INLINE_LIMIT } from './chat-runner';
 
 function lines(file: string): string[] {
   return fs.readFileSync(file, 'utf8').split('\n').filter(Boolean);
@@ -31,6 +32,31 @@ describe('ChatManager transcript sidecar', () => {
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({ id: 'u1', role: 'user', content: 'first' });
     expect(rows[1]).toMatchObject({ id: 'a1', role: 'assistant', content: 'second', agent: 'codex', model: 'm' });
+  });
+
+  it('keeps a failed reply on its line but out of long-chat history and catch-up', () => {
+    const chat = mgr.create({ workspaceName: 'ws' });
+    for (let i = 0; i < 30; i++) {
+      const failed = i === 11;
+      mgr.appendMessage(chat.id, { id: `m${i}`, role: i % 2 ? 'assistant' : 'user', content: failed ? 'SHOWN ERROR' : `body ${i}`, timestamp: i, isComplete: true, ...(failed ? { failed: true } : {}) });
+    }
+    const file = mgr.transcriptPath(chat.id)!;
+    const rows = lines(file).map(l => JSON.parse(l));
+    expect(rows).toHaveLength(30);
+    expect(rows[11]).toMatchObject({ id: 'm11', failed: true });
+
+    const opts = { transcriptPath: file, writeSlice: (a: number, b: number) => writeTranscriptSlice(file, a, b) };
+    const seenByAgent = (prompt: string) => {
+      const slice = prompt.match(/File: (\S+)/)?.[1];
+      return prompt + (slice ? fs.readFileSync(slice, 'utf8') : '');
+    };
+    const current = mgr.get(chat.id)!;
+    const history = seenByAgent(buildChatPrompt(current, 'next', undefined, 40, opts));
+    const catchup = seenByAgent(buildChatCatchupPrompt(current, 'm2', 'next', undefined, opts));
+    for (const prompt of [history, catchup]) {
+      expect(prompt).toContain('body 12');
+      expect(prompt).not.toContain('SHOWN ERROR');
+    }
   });
 
   it('keeps line N aligned with messages[N-1] as the chat grows', () => {

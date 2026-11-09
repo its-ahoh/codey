@@ -734,7 +734,8 @@ export class Codey {
     const already = chat.compaction?.summarizedUpTo ?? 0;
     const cutoff = chat.messages.length - KEEP_TAIL;
     if (cutoff <= already) return null;
-    const toFold = chat.messages.slice(already, cutoff);
+    // A failed turn's error is for the user, not for the summary agents read.
+    const toFold = chat.messages.slice(already, cutoff).filter(m => !m.failed);
     if (toFold.length === 0) return null;
 
     const opts = this.getAideOptions();
