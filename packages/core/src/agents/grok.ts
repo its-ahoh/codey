@@ -5,7 +5,7 @@ import { AgentSpawnError } from '../errors';
 import { ObservedToolEvent, ToolCallCollector } from './tool-events';
 import { ChecklistTracker } from './checklist';
 import { AcpClient, AcpRequestError } from './acp-client';
-import { withCommonBinPaths } from './env';
+import { preferLocalBin, withCommonBinPaths } from './env';
 import { agentSpawnOptions, cleanupProcessTreeAfterClose, terminateProcessTree, withForegroundPolicy } from './process-tree';
 import { CODEY_VERSION } from '../version';
 
@@ -351,7 +351,7 @@ export class GrokAdapter extends BaseAgentAdapter {
 
     let child: ChildProcess;
     try {
-      child = spawn('grok', args, {
+      child = spawn(preferLocalBin('grok', env), args, {
         stdio: ['pipe', 'pipe', 'pipe'],
         cwd,
         env,

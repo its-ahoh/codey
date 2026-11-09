@@ -18,6 +18,38 @@ export function nvmBinDirs(homedir: string, versions: string[]): string[] {
   return parsed.map(v => `${homedir}/.nvm/versions/node/${v.name}/bin`);
 }
 
+function isExecutable(file: string): boolean {
+  try {
+    fs.accessSync(file, fs.constants.X_OK);
+    return fs.statSync(file).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The command to spawn for a CLI whose official installer puts it in
+ * ~/.local/bin (claude, cursor-agent, grok): the bare name, unless the PATH
+ * lookup would land on a copy under ~/.nvm and the official one exists — then
+ * the official one by full path.
+ *
+ * A Codey started from a terminal keeps that terminal's PATH, where an old npm
+ * copy under nvm can come first (Claude Code 1.0.x has no
+ * --include-partial-messages). Only that program is redirected, not the
+ * directory: ~/.local/bin can hold its own `node`, which must not outrank the
+ * user's, and any other PATH choice (a test's fake binary) is left alone.
+ */
+export function preferLocalBin(name: string, env: NodeJS.ProcessEnv = process.env): string {
+  const homedir = env.HOME || process.env.HOME || '';
+  if (!homedir) return name;
+  const local = `${homedir}/.local/bin/${name}`;
+  if (!isExecutable(local)) return name;
+  const first = (env.PATH || '').split(':').filter(Boolean)
+    .map(dir => `${dir}/${name}`)
+    .find(isExecutable);
+  return first && first.startsWith(`${homedir}/.nvm/`) ? local : name;
+}
+
 /**
  * Prepend the bin directories CLIs are usually installed into. A GUI-launched
  * Electron app inherits a minimal PATH (/usr/bin:/bin:/usr/sbin:/sbin), so a
