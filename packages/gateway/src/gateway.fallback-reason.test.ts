@@ -1,6 +1,27 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentResponse } from '@codey/core';
-import { summarizeFailure } from './gateway';
+import { failedTurnText, summarizeFailure } from './gateway';
+
+describe('failed chat turn text', () => {
+  it('shows the error when the agent failed before streaming anything', () => {
+    expect(failedTurnText({ success: false, output: '', error: 'Authentication required' }, ''))
+      .toBe('❌ Error: Authentication required');
+  });
+
+  it('does not repeat an "Error:" the agent already wrote', () => {
+    expect(failedTurnText({ success: false, output: '', error: 'Error: Authentication required' }, ''))
+      .toBe('❌ Error: Authentication required');
+  });
+
+  it('keeps what the agent already streamed', () => {
+    expect(failedTurnText({ success: false, output: '', error: 'timeout' }, 'partial answer')).toBe('partial answer');
+  });
+
+  it('stays empty with no response and no reason', () => {
+    expect(failedTurnText(undefined, '')).toBe('');
+    expect(failedTurnText({ success: false, output: '' }, '')).toBe('');
+  });
+});
 
 describe('fallback reason summary', () => {
   it('prefers the adapter error over the raw output', () => {

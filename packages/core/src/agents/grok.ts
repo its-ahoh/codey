@@ -314,7 +314,9 @@ export function grokErrorMessage(err: unknown): string {
 
 // ── Adapter ────────────────────────────────────────────────────────────
 
-const CLIENT_INFO = { name: 'codey', title: 'Codey' };
+// ACP requires `version` here; grok rejects initialize without it.
+const { version: CODEY_VERSION } = require('../../package.json') as { version: string };
+export const CLIENT_INFO = { name: 'codey', title: 'Codey', version: CODEY_VERSION };
 
 /** How long a finished turn waits for grok to exit on its own once its stdin
  *  is closed. Grok may still be writing the session to disk; killing it then

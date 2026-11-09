@@ -192,6 +192,16 @@ export function summarizeFailure(response: AgentResponse): string | undefined {
   return raw.length > FALLBACK_REASON_MAX ? `${raw.slice(0, FALLBACK_REASON_MAX).trimEnd()}…` : raw;
 }
 
+/** What a failed chat turn shows. Keeps whatever the agent already streamed;
+ *  with nothing streamed (an agent that failed before writing, e.g. not
+ *  signed in) it shows the error instead of an empty reply. */
+export function failedTurnText(response: AgentResponse | undefined, streamedText: string): string {
+  if (streamedText) return streamedText;
+  // CLIs often start their own message with "Error:"; don't say it twice.
+  const reason = response ? summarizeFailure(response)?.replace(/^error:\s*/i, '') : undefined;
+  return reason ? `❌ Error: ${reason}` : '';
+}
+
 /**
  * The log line for an 'all' model whose key covers only one protocol, or
  * undefined when there is nothing to say.
@@ -7082,7 +7092,7 @@ Example: /model gpt-4.1 write a Python script`;
           });
         }
         singleAgentResponse = response;
-        output = response?.success ? this.formatAgentResponse(response) : (streamedText || '');
+        output = response?.success ? this.formatAgentResponse(response) : failedTurnText(response, streamedText);
         if (chat.soloAdvisor) output = stripAskAdvisor(output);
         tokens = (response as any)?.tokens?.total;
         // The cursor is advanced after the assistant message is persisted.
