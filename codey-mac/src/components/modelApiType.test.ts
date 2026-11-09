@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { AGENT_API_TYPE, agentsPinnedTo, missingAllEndpoints, modelFitsAgent, modelFitsApiType } from './modelApiType'
+import { AGENT_API_TYPE, agentsPinnedTo, inheritedModelFor, missingAllEndpoints, modelFitsAgent, modelFitsApiType } from './modelApiType'
 
 describe('modelFitsApiType', () => {
   it('matches like-for-like protocols', () => {
@@ -105,5 +105,24 @@ describe('cursor models', () => {
     }
     // A picker with no agent chosen (e.g. Aide on its default) must not offer one.
     expect(modelFitsApiType('cursor', undefined)).toBe(false)
+  })
+})
+
+describe('inheritedModelFor', () => {
+  const models = [
+    { model: 'sonnet-x', apiType: 'anthropic' as const },
+    { model: 'gpt-x', apiType: 'openai' as const },
+  ]
+
+  it('prefers the model pinned in fallback.order', () => {
+    expect(inheritedModelFor('codex', 'pinned-x', models)).toBe('pinned-x')
+  })
+
+  it('otherwise takes the first model the agent can run', () => {
+    expect(inheritedModelFor('codex', undefined, models)).toBe('gpt-x')
+  })
+
+  it('is undefined when nothing fits, so the header says default', () => {
+    expect(inheritedModelFor('cursor', undefined, models)).toBeUndefined()
   })
 })

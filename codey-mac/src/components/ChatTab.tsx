@@ -44,7 +44,7 @@ import { statusLine } from './checklistView'
 import { composerPlaceholder } from './coreOfflineView'
 import { getDraft, setDraft, subscribeDrafts } from './chatDrafts'
 import { isBottomTerminalOpen, setBottomTerminalOpen as rememberBottomTerminalOpen } from './terminalVisibility'
-import { AGENT_API_TYPE, AGENT_NAMES, ApiType, modelFitsApiType } from './modelApiType'
+import { AGENT_API_TYPE, AGENT_NAMES, ApiType, inheritedModelFor, modelFitsApiType } from './modelApiType'
 import { useInstalledAgents } from './installedAgents'
 import {
   appendMentionContext, applyMention, filterEntries, findActiveMention, findResourceMentions,
@@ -1190,7 +1190,9 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
   // Resolve which agent/model are *actually* used for this chat.
   // Priority: per-chat override → gateway fallback default.
   const effectiveAgent: string = chat.agent ?? defaultAgent ?? 'claude-code'
-  const effectiveModel: string | undefined = chat.model ?? agentDefaultModels[effectiveAgent]
+  // Same rule as the gateway, so the header does not change name when the reply lands.
+  const inheritedModel: string | undefined = inheritedModelFor(effectiveAgent, agentDefaultModels[effectiveAgent], models)
+  const effectiveModel: string | undefined = chat.model ?? inheritedModel
   const effectiveEffort: string = chat.effort ?? agentDefaultEfforts[effectiveAgent] ?? 'medium'
   // What each run setting resolves to with no per-chat override — the value the
   // dropdown's first entry stands for, and the entry the list below it omits so
@@ -1199,7 +1201,6 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
   // for that first render instead of naming a fallback that may not be the
   // configured default.
   const inheritedAgent: string | undefined = defaultAgent ?? undefined
-  const inheritedModel: string | undefined = agentDefaultModels[effectiveAgent]
   const inheritedEffort: string = agentDefaultEfforts[effectiveAgent] ?? 'medium'
   const effectiveAdvisorAgent = advisorConfig.agent ?? defaultAgent ?? 'claude-code'
   const effectiveAdvisorModel = advisorConfig.model ?? agentDefaultModels[effectiveAdvisorAgent] ?? 'Default model'
@@ -1207,7 +1208,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
   // members each carry their own — so it opts out and waits for the real values.
   const turnIdentity = chat.selection.type === 'team'
     ? undefined
-    : { agent: effectiveAgent as ChatMessage['agent'], model: effectiveModel }
+    : { agent: effectiveAgent as ChatMessage['agent'], model: effectiveModel ?? 'default' }
   const apiTypeForAgent = AGENT_API_TYPE[effectiveAgent]
   const modelsForAgent = models.filter(m => modelFitsApiType(m.apiType, apiTypeForAgent))
 
