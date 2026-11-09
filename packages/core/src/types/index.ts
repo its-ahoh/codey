@@ -59,6 +59,17 @@ export type ApiType = 'anthropic' | 'openai' | 'all' | 'cursor' | 'grok';
 /** API types tied to exactly one agent of the same name. */
 export const DEDICATED_API_TYPES: ReadonlySet<ApiType> = new Set<ApiType>(['cursor', 'grok']);
 
+/** The protocol each agent's CLI authenticates against. Mirrored by
+ *  AGENT_API_TYPE in codey-mac's modelApiType.ts — change both. */
+export const AGENT_API_TYPE: Record<CodingAgent, ApiType> = {
+  'claude-code': 'anthropic',
+  'opencode': 'all',
+  'codex': 'openai',
+  'pi': 'all',
+  'cursor': 'cursor',
+  'grok': 'grok',
+};
+
 /** Runtime guard for values arriving from JSON config or IPC. */
 export function isApiType(v: unknown): v is ApiType {
   return v === 'anthropic' || v === 'openai' || v === 'all' || v === 'cursor' || v === 'grok';

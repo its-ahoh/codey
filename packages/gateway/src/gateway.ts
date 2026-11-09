@@ -11,7 +11,7 @@ import { publishTeamFinal, composeTeamFinal, planTeamFooter, isSoloRun, parseTea
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { writeTranscriptSlice, TranscriptSlice, AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, runAide, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, parseBotMentions, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, BlackboardSnapshot, BotAnchor, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, applySkill, playbookSkillName, playbookNameTaken, writePlaybookSkill, removePlaybookSkill, absorbPlaybookEdit, reconcilePlaybookSkills, playbookSkillsUsed, PlaybookHome, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, AutomationCheck, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, pickVoiceAck, needsDigest, buildSpeechDigestPrompt, stripForSpeech, needsPolish, buildVoicePolishPrompt, sanitizePolished, DEFAULT_POLISH_TIMEOUT_MS, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort, DEFAULT_THINKING_EFFORT, ApiType, DEDICATED_API_TYPES, unwiredAllProtocols } from '@codey/core';
+import { writeTranscriptSlice, TranscriptSlice, AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, runAide, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, parseBotMentions, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, BlackboardSnapshot, BotAnchor, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, applySkill, playbookSkillName, playbookNameTaken, writePlaybookSkill, removePlaybookSkill, absorbPlaybookEdit, reconcilePlaybookSkills, playbookSkillsUsed, PlaybookHome, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, AutomationCheck, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, pickVoiceAck, needsDigest, buildSpeechDigestPrompt, stripForSpeech, needsPolish, buildVoicePolishPrompt, sanitizePolished, DEFAULT_POLISH_TIMEOUT_MS, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort, DEFAULT_THINKING_EFFORT, ApiType, DEDICATED_API_TYPES, AGENT_API_TYPE, modelFitsApiType, unwiredAllProtocols } from '@codey/core';
 import { randomUUID, createHash } from 'crypto';
 import { AutomationStore } from './automations/store';
 import { AutomationEngine, TargetResult } from './automations/engine';
@@ -198,6 +198,23 @@ export function failedTurnReason(response: AgentResponse | undefined): string | 
   const raw = response?.error?.trim().replace(/^error:\s*/i, '');
   if (!raw) return undefined;
   return raw.length > FALLBACK_REASON_MAX ? `${raw.slice(0, FALLBACK_REASON_MAX).trimEnd()}…` : raw;
+}
+
+/** The first catalog model this agent can actually run, or undefined so the
+ *  agent's CLI uses its own default. Never a model it would silently ignore
+ *  (an Anthropic model for Cursor), which would then label the reply wrong. */
+export function firstFittingModel(agent: CodingAgent, catalog?: Array<{ model: string; apiType: ApiType }>): string | undefined {
+  return catalog?.find(m => modelFitsApiType(m.apiType, AGENT_API_TYPE[agent]))?.model;
+}
+
+/** The model name a reply is labelled with. "default" when the agent ran on
+ *  its CLI's own default: no model, or one a dedicated agent (Cursor, Grok)
+ *  does not take and so never passed on. */
+export function turnModelLabel(agent: CodingAgent, model?: Pick<ModelConfig, 'model' | 'apiType'>): string {
+  if (!model?.model) return 'default';
+  const want = AGENT_API_TYPE[agent];
+  if (DEDICATED_API_TYPES.has(want) && model.apiType && model.apiType !== want) return 'default';
+  return model.model;
 }
 
 /** What a failed chat turn shows: whatever the agent already wrote (streamed,
@@ -587,11 +604,10 @@ export class Codey {
     const pinned = fb?.order.find(e => e.agent === agent && !!e.model)?.model;
     if (pinned) return pinned;
     // No model pinned for this agent in the fallback order — pick the first
-    // catalog model as a last resort. (The adapter may later reject it if the
-    // apiType doesn't match, but that's still better than silently skipping
-    // the entire fallback entry.)
+    // catalog model it can run. None fits (Cursor with no Cursor model):
+    // undefined, so the CLI runs on its own default and the reply says so.
     const catalog = this.configManager?.listModels() ?? this.config.models;
-    return catalog?.[0]?.model;
+    return firstFittingModel(agent, catalog);
   }
 
   private getEffectiveModel(agent?: CodingAgent): string {
@@ -5872,25 +5888,27 @@ Example: /model gpt-4.1 write a Python script`;
         this.logger.warn(`Skipping fallback ${entry.agent}${entry.model ? `(${entry.model})` : ''}: ${(err as Error).message}`);
         continue;
       }
-      if (!resolvedModel) {
+      // A pinned model that does not resolve is broken; no pinned model and
+      // nothing fitting just means the agent's own default.
+      if (!resolvedModel && entry.model) {
         this.logger.warn(`Skipping fallback ${entry.agent}${entry.model ? `(${entry.model})` : ''}: no usable model config`);
         continue;
       }
-      const key = `${entry.agent}::${resolvedModel.model}`;
+      const key = `${entry.agent}::${resolvedModel?.model ?? ''}`;
       if (seen.has(key)) continue;
       seen.add(key);
 
       // Bail out mid-loop if the user aborted while a fallback was running.
       if (request.signal?.aborted) return response;
 
-      const label = `${entry.agent}(${resolvedModel.model})`;
+      const label = `${entry.agent}(${turnModelLabel(entry.agent, resolvedModel)})`;
       this.logger.warn(`Agent ${agent} failed, trying ${label}...`);
       const fallbackResponse = await this.runAgentWithNetworkRetry(entry.agent, {
         ...rebaseForFallbackAgent(request, agent, entry.agent, response),
         model: resolvedModel,
       });
       if (fallbackResponse.success || fallbackResponse.permissionDenials?.length || fallbackResponse.userQuestion) {
-        const fromLabel = originalModel ? `${agent}(${originalModel})` : agent;
+        const fromLabel = `${agent}(${turnModelLabel(agent, request.model)})`;
         // Carry the fallback as structured metadata rather than prepending a
         // banner to the output text. The Aide reuses this same fallback-routed
         // runner for housekeeping (title/summary/JSON), and a text banner would
@@ -7170,7 +7188,7 @@ Example: /model gpt-4.1 write a Python script`;
       // otherwise use the configured agent/model for this turn.
       const fallbackIdentity = singleAgentResponse?.fallback?.to.match(/^([^()]+)\((.+)\)$/);
       const responseAgent = (fallbackIdentity?.[1] ?? agent) as CodingAgent;
-      const responseModel = fallbackIdentity?.[2] ?? model?.model;
+      const responseModel = fallbackIdentity?.[2] ?? turnModelLabel(agent, model);
       const terminalTeamMessages = teamTurnId
         ? this.chatManager.get(chatId)?.messages.filter(message => message.teamTurnId === teamTurnId) ?? []
         : [];
