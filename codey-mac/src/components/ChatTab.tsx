@@ -44,7 +44,7 @@ import { statusLine } from './checklistView'
 import { composerPlaceholder } from './coreOfflineView'
 import { getDraft, setDraft, subscribeDrafts } from './chatDrafts'
 import { isBottomTerminalOpen, setBottomTerminalOpen as rememberBottomTerminalOpen } from './terminalVisibility'
-import { AGENT_API_TYPE, AGENT_NAMES, ApiType, inheritedModelFor, modelFitsApiType } from './modelApiType'
+import { AGENT_API_TYPE, AGENT_NAMES, ApiType, CLI_DEFAULT_MODEL, inheritedModelFor, modelFitsApiType } from './modelApiType'
 import { useInstalledAgents } from './installedAgents'
 import {
   appendMentionContext, applyMention, filterEntries, findActiveMention, findResourceMentions,
@@ -2724,9 +2724,10 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                         onChange={e => void onModelChange(e.target.value)}
                         style={styles.runSettingSelect}
                         title={`Model: ${effectiveModel ?? 'unset'}${chat.model ? ' (override)' : ' (default)'}`}
-                        disabled={modelsForAgent.length === 0}
                       >
-                        <option value="">{inheritedModel ? `${inheritedModel} (default)` : 'agent default'}</option>
+                        <option value="">{`${inheritedModel ?? CLI_DEFAULT_MODEL} (from Settings)`}</option>
+                        {/* Always offered: Codey passes no model and the agent's CLI picks its own. */}
+                        <option value={CLI_DEFAULT_MODEL}>{`${CLI_DEFAULT_MODEL} (agent's own model)`}</option>
                         {modelsForAgent.filter(m => m.model !== inheritedModel || m.model === chat.model).map(m => (
                           <option key={m.model} value={m.model}>{m.model}</option>
                         ))}

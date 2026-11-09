@@ -3,7 +3,7 @@ import { apiService } from '../services/api'
 import { C } from '../theme'
 import { fieldStyle, inputStyle, pageStyle, selectStyle, pillButton, Section, Toggle, unwrap } from './settingsAtoms'
 import { UIIcon } from './UIIcons'
-import { AGENT_API_TYPE, AGENT_NAMES, ApiType, agentsPinnedTo, missingAllEndpoints, modelFitsApiType } from './modelApiType'
+import { AGENT_API_TYPE, AGENT_NAMES, ApiType, CLI_DEFAULT_MODEL, agentsPinnedTo, missingAllEndpoints, modelFitsApiType } from './modelApiType'
 
 interface SettingsTabProps {
   isGatewayRunning: boolean
@@ -275,7 +275,8 @@ const FallbackList: React.FC<{
                 onChange={e => update(i, { model: e.target.value || undefined })}
                 style={{ ...selectStyle, flex: 1, minWidth: 0 }}
               >
-                <option value="">(default)</option>
+                <option value="">(first matching model)</option>
+                <option value={CLI_DEFAULT_MODEL}>{`${CLI_DEFAULT_MODEL} (agent's own model)`}</option>
                 {modelsForAgent(entry.agent).map(m => (
                   <option key={m.model} value={m.model}>{m.model} [{m.apiType}]</option>
                 ))}

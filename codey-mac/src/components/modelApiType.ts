@@ -24,6 +24,9 @@ export const AGENT_API_TYPE: Record<string, ApiType> = {
   'grok': 'grok',
 }
 
+/** Mirrors CLI_DEFAULT_MODEL in @codey/core: the "pass no model" choice. */
+export const CLI_DEFAULT_MODEL = 'default'
+
 /** Mirrors DEDICATED_API_TYPES in @codey/core: types tied to one agent. */
 const DEDICATED: ReadonlySet<ApiType> = new Set<ApiType>(['cursor', 'grok'])
 

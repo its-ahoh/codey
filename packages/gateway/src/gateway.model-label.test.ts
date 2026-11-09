@@ -55,3 +55,26 @@ describe('fallback entry with no model that fits', () => {
     expect(res.fallback).toMatchObject({ from: 'codex(gpt-x)', to: 'cursor(default)' });
   });
 });
+
+describe('"default" model choice', () => {
+  it('resolves to no model config, so no model is passed', () => {
+    const gateway = Object.create(Codey.prototype) as Codey;
+    expect(gateway.getModelConfig('cursor', 'default')).toBeUndefined();
+    expect(turnModelLabel('cursor', gateway.getModelConfig('cursor', 'default'))).toBe('default');
+  });
+
+  it('runs a fallback entry pinned to default instead of skipping it', async () => {
+    const run = vi.fn(async (_agent: string, _req: unknown) => ({ success: true, output: 'ok' }));
+    const gateway = Object.assign(Object.create(Codey.prototype), {
+      getDefaultEffort: () => undefined,
+      runAgentWithNetworkRetry: vi.fn(async (agent: string, req: any) => agent === 'codex'
+        ? { success: false, output: '', error: 'down' }
+        : run(agent, req)),
+      configManager: { getFallback: () => ({ enabled: true, order: [{ agent: 'grok', model: 'default' }] }), getModel: () => undefined },
+      logger: { error: () => {}, warn: () => {} },
+    }) as Codey;
+    const res = await (gateway as any).runWithFallback('codex', { prompt: 'hi', agent: 'codex', model: { model: 'gpt-x', apiType: 'openai' } });
+    expect(run).toHaveBeenCalledWith('grok', expect.objectContaining({ model: undefined }));
+    expect(res.fallback).toMatchObject({ to: 'grok(default)' });
+  });
+});

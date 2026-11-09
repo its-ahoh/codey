@@ -59,6 +59,11 @@ export type ApiType = 'anthropic' | 'openai' | 'all' | 'cursor' | 'grok';
 /** API types tied to exactly one agent of the same name. */
 export const DEDICATED_API_TYPES: ReadonlySet<ApiType> = new Set<ApiType>(['cursor', 'grok']);
 
+/** Model choice meaning "pass no model": the agent's CLI uses its own default
+ *  (Cursor's account default, Grok's grok-4.7, ...). Valid wherever a model
+ *  name is (chat override, fallback.order), never a catalog entry. */
+export const CLI_DEFAULT_MODEL = 'default';
+
 /** The protocol each agent's CLI authenticates against. Mirrored by
  *  AGENT_API_TYPE in codey-mac's modelApiType.ts — change both. */
 export const AGENT_API_TYPE: Record<CodingAgent, ApiType> = {
