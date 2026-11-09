@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { applyModelEnv, nvmBinDirs, unwiredAllProtocols, withCommonBinPaths } from './env';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { applyModelEnv, nvmBinDirs, preferLocalBin, unwiredAllProtocols, withCommonBinPaths } from './env';
 
 describe('nvmBinDirs', () => {
   it('orders installed versions newest-first', () => {
@@ -60,6 +63,37 @@ describe('withCommonBinPaths', () => {
     const env = { HOME: '/Users/tester', PATH: '/opt/homebrew/bin/inner:/usr/bin' };
     const segments = (withCommonBinPaths(env).PATH || '').split(':');
     expect(segments).toContain('/opt/homebrew/bin');
+  });
+});
+
+describe('preferLocalBin', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'codey-bin-'));
+  const local = path.join(home, '.local/bin');
+  const nvm = path.join(home, '.nvm/versions/node/v18.0.0/bin');
+  const other = path.join(home, 'fake-bin');
+  const tool = (dir: string, name: string) => {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, name), '#!/bin/sh\n', { mode: 0o755 });
+  };
+  tool(local, 'claude');
+  tool(nvm, 'claude');
+  tool(other, 'claude');
+  tool(nvm, 'grok');
+
+  it('skips an old nvm copy that comes first when the official one exists', () => {
+    expect(preferLocalBin('claude', { HOME: home, PATH: `${nvm}:${local}:/usr/bin` })).toBe(path.join(local, 'claude'));
+  });
+
+  it('keeps the bare name when the official one already comes first', () => {
+    expect(preferLocalBin('claude', { HOME: home, PATH: `${local}:${nvm}` })).toBe('claude');
+  });
+
+  it('leaves any other PATH choice alone, such as a fake binary in tests', () => {
+    expect(preferLocalBin('claude', { HOME: home, PATH: `${other}:${nvm}:${local}` })).toBe('claude');
+  });
+
+  it('keeps the nvm copy when there is no official one', () => {
+    expect(preferLocalBin('grok', { HOME: home, PATH: `${nvm}:/usr/bin` })).toBe('grok');
   });
 });
 

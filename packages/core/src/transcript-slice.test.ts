@@ -59,6 +59,22 @@ describe('writeTranscriptSlice', () => {
     expect(writeTranscriptSlice(path.join(dir, 'missing.jsonl'), 1, 5)).toBeUndefined();
   });
 
+  it('leaves failed turns out of the slice and keeps real line numbers in the digest', () => {
+    const rows = fs.readFileSync(source, 'utf-8').split('\n').filter(Boolean);
+    rows[11] = JSON.stringify({ id: 'm12', role: 'assistant', failed: true, text: 'SHOWN ERROR' });
+    fs.writeFileSync(source, rows.join('\n') + '\n');
+    const slice = writeTranscriptSlice(source, 10, 14)!;
+    expect(slice.lines).toBe(4);
+    expect(fs.readFileSync(slice.path, 'utf-8')).not.toContain('SHOWN ERROR');
+    expect(slice.digest).toContain('13 [');
+    expect(slice.digest).not.toContain('12 [');
+  });
+
+  it('returns undefined when every line in the range failed', () => {
+    fs.writeFileSync(source, JSON.stringify({ role: 'assistant', failed: true, text: 'x' }) + '\n');
+    expect(writeTranscriptSlice(source, 1, 1)).toBeUndefined();
+  });
+
   it('clamps a range that runs past the end of the source', () => {
     const slice = writeTranscriptSlice(source, 45, 200)!;
     expect(slice.lines).toBe(6);

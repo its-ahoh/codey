@@ -105,6 +105,8 @@ export class ChatManager {
       ...(message.agent ? { agent: message.agent } : {}),
       ...(message.model ? { model: message.model } : {}),
       ...(message.bot ? { bot: message.bot } : {}),
+      // Kept as a line so line N stays messages[N-1]; slices skip it.
+      ...(message.failed ? { failed: true } : {}),
       content: message.content,
     });
   }

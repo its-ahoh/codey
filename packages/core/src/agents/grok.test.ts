@@ -210,6 +210,8 @@ async function handle(m) {
   const p = m.params || {};
   switch (m.method) {
     case 'initialize':
+      // Real grok rejects an initialize whose clientInfo has no version.
+      if (!p.clientInfo || typeof p.clientInfo.version !== 'string') return send({ jsonrpc: '2.0', id: m.id, error: { code: -32602, message: 'Invalid params: missing field version' } });
       return send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: 1, agentCapabilities: { loadSession: true } } });
     case 'session/new':
       if (process.env.FAKE_GROK_NO_AUTH) return send({ jsonrpc: '2.0', id: m.id, error: { code: -32000, message: 'Authentication required', data: 'no auth method id provided' } });

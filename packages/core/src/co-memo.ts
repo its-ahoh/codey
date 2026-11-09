@@ -3,10 +3,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import * as path from 'node:path';
 import * as os from 'node:os';
-
-// Read at runtime rather than imported: `rootDir` is ./src, and ../package.json
-// resolves to this package from both src/ and dist/.
-const { version: CODEY_VERSION } = require('../package.json') as { version: string };
+import { CODEY_VERSION } from './version';
 
 export type CoMemoScope = 'user' | 'project';
 export interface CoMemoNote {

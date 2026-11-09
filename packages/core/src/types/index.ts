@@ -346,6 +346,11 @@ export interface AgentResponse {
      *  display; the full text stays in the gateway log. */
     reason?: string;
   };
+  /**
+   * Set when the primary and every fallback failed: why each fallback failed,
+   * so a failed turn can say which agent would need fixing.
+   */
+  fallbackFailures?: Array<{ agent: string; reason?: string }>;
   /** Structured question extracted from an AskUserQuestion tool call. */
   userQuestion?: {
     question: string;

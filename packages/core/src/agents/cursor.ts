@@ -4,7 +4,7 @@ import { BaseAgentAdapter } from './base';
 import { AgentSpawnError } from '../errors';
 import { ObservedToolEvent, ToolCallCollector } from './tool-events';
 import { ChecklistTracker } from './checklist';
-import { withCommonBinPaths } from './env';
+import { preferLocalBin, withCommonBinPaths } from './env';
 import { cursorToolPolicyArgs } from './tool-policy';
 import { agentSpawnOptions, cleanupProcessTreeAfterClose, terminateProcessTree, withForegroundPolicy } from './process-tree';
 
@@ -301,7 +301,7 @@ export class CursorAdapter extends BaseAgentAdapter {
       if (request.extraEnv) Object.assign(env, request.extraEnv);
       Object.assign(env, cursorModelEnv(request.model));
 
-      const childProcess: ChildProcess = spawn('cursor-agent', args, {
+      const childProcess: ChildProcess = spawn(preferLocalBin('cursor-agent', env), args, {
         stdio: ['ignore', 'pipe', 'pipe'],
         cwd: request.context?.workingDir || undefined,
         env,

@@ -49,6 +49,18 @@ interface TranscriptRow {
   content?: string;
   bot?: string;
   agent?: string;
+  /** A failed turn's visible error: shown to the user, never agent context. */
+  failed?: boolean;
+}
+
+/** A failed turn's line. Kept in the sidecar so line N stays message N, but
+ *  never handed to an agent. */
+function isFailedRow(line: string): boolean {
+  try {
+    return (JSON.parse(line) as TranscriptRow).failed === true;
+  } catch {
+    return false;
+  }
 }
 
 function sliceDir(source: string): string {
@@ -105,10 +117,10 @@ function digestEntry(line: string, lineNumber: number): string | undefined {
  * conversation was about, not enough to answer from. It exists so that an
  * agent which ignores the slice is merely under-informed rather than blind.
  */
-export function buildSliceDigest(lines: string[], firstLine: number): string {
+export function buildSliceDigest(lines: string[], firstLine: number, lineNumbers?: number[]): string {
   const entries: string[] = [];
   lines.forEach((line, index) => {
-    const entry = digestEntry(line, firstLine + index);
+    const entry = digestEntry(line, lineNumbers?.[index] ?? firstLine + index);
     if (entry) entries.push(entry);
   });
   if (entries.length === 0) return '';
@@ -144,7 +156,13 @@ export function writeTranscriptSlice(
     return undefined;
   }
 
-  const lines = all.slice(firstLine - 1, lastLine);
+  // Failed turns stay out; the digest keeps each line's real sidecar number.
+  const lineNumbers: number[] = [];
+  const lines = all.slice(firstLine - 1, lastLine).filter((line, index) => {
+    if (isFailedRow(line)) return false;
+    lineNumbers.push(firstLine + index);
+    return true;
+  });
   if (lines.length === 0) return undefined;
 
   const dir = sliceDir(source);
@@ -160,7 +178,7 @@ export function writeTranscriptSlice(
   return {
     path: path.resolve(target),
     lines: lines.length,
-    digest: buildSliceDigest(lines, firstLine),
+    digest: buildSliceDigest(lines, firstLine, lineNumbers),
   };
 }
 

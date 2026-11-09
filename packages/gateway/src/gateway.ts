@@ -192,6 +192,30 @@ export function summarizeFailure(response: AgentResponse): string | undefined {
   return raw.length > FALLBACK_REASON_MAX ? `${raw.slice(0, FALLBACK_REASON_MAX).trimEnd()}…` : raw;
 }
 
+/** The adapter's own error for a failed turn, without a leading "Error:"
+ *  (CLIs often write one) and truncated like a fallback reason. */
+export function failedTurnReason(response: AgentResponse | undefined): string | undefined {
+  const raw = response?.error?.trim().replace(/^error:\s*/i, '');
+  if (!raw) return undefined;
+  return raw.length > FALLBACK_REASON_MAX ? `${raw.slice(0, FALLBACK_REASON_MAX).trimEnd()}…` : raw;
+}
+
+/** What a failed chat turn shows: whatever the agent already wrote (streamed,
+ *  or returned as output with no error), then the failure, then why each
+ *  fallback failed. Never blank, and never mistakes a reply for the error. */
+export function failedTurnText(response: AgentResponse | undefined, streamedText: string): string {
+  // Adapters often copy the error into output too; that is not a reply.
+  const output = response?.output?.trim();
+  const written = (streamedText.trim() || (output && output !== response?.error?.trim() ? output : ''));
+  const reason = failedTurnReason(response);
+  const parts = [written, reason ? `❌ Error: ${reason}` : '❌ The agent stopped before finishing.'];
+  const fallbacks = response?.fallbackFailures;
+  if (fallbacks?.length) {
+    parts.push(['Fallbacks also failed:', ...fallbacks.map(f => f.reason ? `- ${f.agent}: ${f.reason}` : `- ${f.agent}`)].join('\n'));
+  }
+  return parts.filter(Boolean).join('\n\n');
+}
+
 /**
  * The log line for an 'all' model whose key covers only one protocol, or
  * undefined when there is nothing to say.
@@ -710,7 +734,8 @@ export class Codey {
     const already = chat.compaction?.summarizedUpTo ?? 0;
     const cutoff = chat.messages.length - KEEP_TAIL;
     if (cutoff <= already) return null;
-    const toFold = chat.messages.slice(already, cutoff);
+    // A failed turn's error is for the user, not for the summary agents read.
+    const toFold = chat.messages.slice(already, cutoff).filter(m => !m.failed);
     if (toFold.length === 0) return null;
 
     const opts = this.getAideOptions();
@@ -1909,7 +1934,8 @@ export class Codey {
       if (a.target.sandbox && !opts?.resume) {
         await openSandbox(this.automationSandboxOps(a, chatId, logSandbox), a.name, runId ?? randomUUID());
       }
-      const { response } = await this.sendToChat(chatId, text, sink);
+      const { response, error } = await this.sendToChat(chatId, text, sink);
+      if (error) return { output: response, error };
       parked = detectParked(this.chatManager.get(chatId), a.target, response);
       return parked ? { output: response, parked } : { output: response };
     } catch (err) {
@@ -5830,6 +5856,7 @@ Example: /model gpt-4.1 write a Python script`;
     // same combination. Same agent with a different model is allowed.
     const originalModel = request.model?.model;
     const seen = new Set<string>([`${agent}::${originalModel ?? ''}`]);
+    const fallbackFailures: NonNullable<AgentResponse['fallbackFailures']> = [];
 
     for (const entry of rawOrder) {
       // Agents are now considered "enabled" iff they appear in fallback.order,
@@ -5872,10 +5899,12 @@ Example: /model gpt-4.1 write a Python script`;
         return fallbackResponse;
       }
       this.logger.error(`Fallback ${label} also failed: ${fallbackResponse.error || fallbackResponse.output}`);
+      fallbackFailures.push({ agent: label, reason: summarizeFailure(fallbackResponse) });
     }
 
-    // All fallbacks failed, return original error
-    return response;
+    // All fallbacks failed: return the original error, plus why each fallback
+    // failed, so the chat can show which agent would need fixing.
+    return fallbackFailures.length ? { ...response, fallbackFailures } : response;
   }
 
   private resolveFallbackModel(entry: FallbackEntry): ModelConfig | undefined {
@@ -6282,7 +6311,7 @@ Example: /model gpt-4.1 write a Python script`;
     },
     taskRoute?: ChatTaskRoute,
     messageIds?: ChatTurnMessageIds,
-  ): Promise<{ response: string; chatId: string; tokens?: number; durationSec?: number }> {
+  ): Promise<{ response: string; chatId: string; tokens?: number; durationSec?: number; /** Set when the turn failed. */ error?: string }> {
     const liveParallel = this.activeParallelRuns?.get(chatId);
     if (!liveParallel) {
       // A process restart cannot restore in-memory agent waits. Preserve the
@@ -6331,7 +6360,7 @@ Example: /model gpt-4.1 write a Python script`;
     },
     taskRoute?: ChatTaskRoute,
     messageIds?: ChatTurnMessageIds,
-  ): Promise<{ response: string; chatId: string; tokens?: number; durationSec?: number }> {
+  ): Promise<{ response: string; chatId: string; tokens?: number; durationSec?: number; /** Set when the turn failed. */ error?: string }> {
     let chat = this.chatManager.get(chatId);
     if (!chat) throw new Error(`Chat not found: ${chatId}`);
     const answeringTeam = chat.pendingTeam && !/^\s*\//.test(userTextParam) && !origin?.skillInvoke;
@@ -7082,7 +7111,7 @@ Example: /model gpt-4.1 write a Python script`;
           });
         }
         singleAgentResponse = response;
-        output = response?.success ? this.formatAgentResponse(response) : (streamedText || '');
+        output = response?.success ? this.formatAgentResponse(response) : failedTurnText(response, streamedText);
         if (chat.soloAdvisor) output = stripAskAdvisor(output);
         tokens = (response as any)?.tokens?.total;
         // The cursor is advanced after the assistant message is persisted.
@@ -7154,6 +7183,11 @@ Example: /model gpt-4.1 write a Python script`;
         output = media.text;
         outputImages = media.images;
       }
+      // A failed solo turn still shows its partial reply and error, but is
+      // flagged so it never becomes agent context or a mirrored reply.
+      const turnError = !teamTurnId && singleAgentResponse && !singleAgentResponse.success
+        ? failedTurnReason(singleAgentResponse) ?? 'The agent stopped before finishing.'
+        : undefined;
       const assistantMessage: ChatMessage = {
         memoryUsed: [...(memoryUsageContext.getStore()?.values() ?? [])],
         id: messageIds?.assistantMessageId ?? randomUUID(),
@@ -7175,6 +7209,7 @@ Example: /model gpt-4.1 write a Python script`;
         ...(agentUserQuestion ? { userQuestion: agentUserQuestion } : {}),
         ...(singleAgentResponse?.fallback ? { fallback: singleAgentResponse.fallback } : {}),
         ...(terminalTeamSummary ? { teamSummary: terminalTeamSummary } : {}),
+        ...(turnError ? { failed: true } : {}),
       };
       // For per-bot team runs the transcript was already persisted as
       // individual bot messages by the BotMessageEmitter. Persist only a
@@ -7341,9 +7376,9 @@ Example: /model gpt-4.1 write a Python script`;
       if (origin) {
         await this.fanOutToOtherRoutes(chatId, originChannel, originUserId, `💬 ${userText}`);
       }
-      await this.fanOutToOtherRoutes(chatId, originChannel, originUserId, output, outputImages);
+      if (!turnError) await this.fanOutToOtherRoutes(chatId, originChannel, originUserId, output, outputImages);
 
-      return { response: output, chatId, tokens, durationSec };
+      return { response: output, chatId, tokens, durationSec, ...(turnError ? { error: turnError } : {}) };
     } catch (err) {
       if (abortController.signal.aborted) {
         await finishTeam('Stopped by user', true);
@@ -7369,6 +7404,7 @@ Example: /model gpt-4.1 write a Python script`;
         role: 'assistant',
         taskId,
         content: message,
+        failed: true,
         timestamp: Date.now(),
         toolCalls,
         isComplete: true,

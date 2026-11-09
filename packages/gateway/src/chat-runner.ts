@@ -105,6 +105,10 @@ function formatAttachmentList(attachments: FileAttachment[]): string {
  * windowed transcript). Shared by buildChatPrompt and buildQuickQuestionPrompt
  * so both window/compact identically.
  */
+// A failed turn's reply is its visible error (and maybe a partial answer).
+// It stays in the chat for the user but never becomes agent context.
+const isAgentContext = (message: ChatMessage): boolean => !message.failed;
+
 function renderChatContextSections(
   chat: Chat,
   windowSize: number,
@@ -144,6 +148,7 @@ function renderChatContextSections(
             `[Earlier conversation — ${pointerLast - pointerFirst + 1} messages, not inlined]`,
             `Transcript: ${opts.transcriptPath}`,
             'One JSON object per line, one line per message, oldest first.',
+            'Skip lines with "failed": true — they are errors shown to the user, not conversation.',
             `Lines ${pointerFirst}-${pointerLast} hold this history.`,
             `Read them before answering (e.g. \`sed -n '${pointerFirst},${pointerLast}p'\`) unless the new request below is fully self-contained.`,
             'Context only — do not repeat or fabricate turns.',
@@ -153,7 +158,7 @@ function renderChatContextSections(
     }
   }
 
-  const tail = chat.messages.slice(start);
+  const tail = chat.messages.slice(start).filter(isAgentContext);
   if (tail.length > 0) {
     const transcript = tail.map(m => {
       const tag = m.role === 'user' ? '[user]' : '[assistant]';
@@ -229,7 +234,7 @@ export function buildChatResumePrompt(
     parts.push(formatAttachmentList(attachments));
   }
   const latestAssistant = [...chat.messages].reverse()
-    .find(message => message.role === 'assistant' && message.content.trim());
+    .find(message => message.role === 'assistant' && isAgentContext(message) && message.content.trim());
   if (latestAssistant) {
     parts.push(
       '[Most recent persisted assistant message — conversation checkpoint. ' +
@@ -291,13 +296,14 @@ export function buildChatCatchupPrompt(
           `[Codey conversation updates since this agent was last active — ${missed.length} messages, not inlined]`,
           `Transcript: ${opts.transcriptPath}`,
           'One JSON object per line, one line per message, oldest first.',
+          'Skip lines with "failed": true — they are errors shown to the user, not conversation.',
           `You last saw line ${cursor + 1}. Lines ${firstUnseenLine}-${lastLine} are new.`,
           `Read them if you need the detail (e.g. \`sed -n '${firstUnseenLine},${lastLine}p'\`); skip it if the new request stands on its own.`,
           'Context only — do not repeat or fabricate turns.',
         ].join('\n'),
     );
   } else {
-    const updates = missed.map(message => {
+    const updates = missed.filter(isAgentContext).map(message => {
       if (message.role === 'user') return `[user]\n${message.content}`;
       const identity = [message.agent, message.model].filter(Boolean).join(' / ');
       return `[assistant${identity ? ` via ${identity}` : ''}]\n${message.content}`;
