@@ -1,17 +1,10 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { C } from '../theme'
 import {
-  inputStyle, pageStyle, pillButton, Section, unwrap,
+  pageStyle, pillButton, Section, unwrap,
 } from './settingsAtoms'
 import { UIIcon } from './UIIcons'
-
-interface ApiKeyEntry {
-  name: string
-  apiKey: string
-  anthropicBaseUrl?: string
-  openaiBaseUrl?: string
-  purpose?: 'general' | 'voice'
-}
+import { ApiKeyEditor, type ApiKeyEntry } from './ApiKeyEditor'
 
 interface Props {
   isGatewayRunning: boolean
@@ -27,29 +20,6 @@ const ApiRow: React.FC<{
   onCancel?: () => void
 }> = ({ entry, isNew, onSave, onDelete, onCancel }) => {
   const [editing, setEditing] = useState(!!isNew)
-  const [draft, setDraft] = useState<ApiKeyEntry>(entry)
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
-  // Which required fields the user left blank. Greying the Save button out
-  // hid *which* field was missing, so name them instead and mark them red.
-  const [missing, setMissing] = useState<{ name: boolean; apiKey: boolean }>({ name: false, apiKey: false })
-
-  useEffect(() => { if (!editing) setDraft(entry) }, [entry.name, editing])
-
-  const save = async () => {
-    const blank = { name: !draft.name.trim(), apiKey: !draft.apiKey.trim() }
-    if (blank.name || blank.apiKey) {
-      setMissing(blank)
-      const labels = [blank.name && 'Name', blank.apiKey && 'API Key'].filter(Boolean)
-      setErr(`${labels.join(' and ')} ${labels.length > 1 ? 'are' : 'is'} required.`)
-      return
-    }
-    setMissing({ name: false, apiKey: false })
-    setBusy(true); setErr(null)
-    try { await onSave(draft, entry.name); setEditing(false) }
-    catch (e: any) { setErr(e?.message ?? String(e)) }
-    finally { setBusy(false) }
-  }
 
   if (!editing) {
     const isVoice = entry.purpose === 'voice'
@@ -109,38 +79,11 @@ const ApiRow: React.FC<{
   }
 
   return (
-    <div style={{
-      padding: 12, borderRadius: 10, border: `1px solid ${C.border2}`,
-      background: C.surface2, marginBottom: 8,
-    }}>
-      <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', gap: 8, alignItems: 'center' }}>
-        <label style={{ color: C.fg3, fontSize: 12 }}>Name</label>
-        <input value={draft.name}
-          onChange={e => { setDraft({ ...draft, name: e.target.value }); if (missing.name) { setMissing(m => ({ ...m, name: false })); setErr(null) } }}
-          placeholder="e.g. my-proxy"
-          style={{ ...inputStyle, width: '100%', ...(missing.name ? { border: `1px solid ${C.red}` } : null) }} />
-        <label style={{ color: C.fg3, fontSize: 12 }}>API Key</label>
-        <input type="password" value={draft.apiKey}
-          onChange={e => { setDraft({ ...draft, apiKey: e.target.value }); if (missing.apiKey) { setMissing(m => ({ ...m, apiKey: false })); setErr(null) } }}
-          placeholder="API key"
-          style={{ ...inputStyle, width: '100%', ...(missing.apiKey ? { border: `1px solid ${C.red}` } : null) }} />
-        {draft.purpose !== 'voice' && <>
-          <label style={{ color: C.fg3, fontSize: 12 }}>Anthropic Base URL</label>
-          <input value={draft.anthropicBaseUrl ?? ''} onChange={e => setDraft({ ...draft, anthropicBaseUrl: e.target.value || undefined })}
-            placeholder="(optional) override anthropic endpoint" style={{ ...inputStyle, width: '100%' }} />
-        </>}
-        <label style={{ color: C.fg3, fontSize: 12 }}>{draft.purpose === 'voice' ? 'Voice API Base URL' : 'OpenAI Base URL'}</label>
-        <input value={draft.openaiBaseUrl ?? ''} onChange={e => setDraft({ ...draft, openaiBaseUrl: e.target.value || undefined })}
-          placeholder={draft.purpose === 'voice' ? 'https://api.openai.com/v1' : '(optional) override openai endpoint'} style={{ ...inputStyle, width: '100%' }} />
-      </div>
-      {err && <div style={{ color: C.red, fontSize: 12, marginTop: 8 }}>{err}</div>}
-      <div style={{ display: 'flex', gap: 6, marginTop: 10, justifyContent: 'flex-end' }}>
-        <button onClick={() => { setEditing(false); setDraft(entry); setErr(null); setMissing({ name: false, apiKey: false }); onCancel?.() }} style={pillButton('ghost')} disabled={busy}>Cancel</button>
-        <button onClick={save} style={pillButton('primary')} disabled={busy}>
-          {busy ? 'Saving…' : 'Save'}
-        </button>
-      </div>
-    </div>
+    <ApiKeyEditor
+      entry={entry}
+      onSave={async draft => { await onSave(draft, entry.name); setEditing(false) }}
+      onCancel={() => { setEditing(false); onCancel?.() }}
+    />
   )
 }
 

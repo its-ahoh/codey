@@ -3,13 +3,13 @@ import { apiService } from '../services/api'
 import { C } from '../theme'
 import { fieldStyle, inputStyle, pageStyle, selectStyle, pillButton, Section, Toggle, unwrap } from './settingsAtoms'
 import { UIIcon } from './UIIcons'
+import { ApiKeyEditor, type ApiKeyEntry } from './ApiKeyEditor'
 import { AGENT_API_TYPE, AGENT_NAMES, ApiType, agentsPinnedTo, missingAllEndpoints, modelFitsApiType } from './modelApiType'
 
 interface SettingsTabProps {
   isGatewayRunning: boolean
 }
 
-interface ApiKeyEntry { name: string; apiKey: string; anthropicBaseUrl?: string; openaiBaseUrl?: string; purpose?: 'general' | 'voice' }
 interface ModelEntry {
   apiType: ApiType
   model: string
@@ -72,11 +72,26 @@ const ModelRow: React.FC<{
   onSave: (draft: ModelEntry, previousId: string) => Promise<void>
   onDelete?: (modelId: string) => Promise<void>
   onCancel?: () => void
-}> = ({ entry, apis, isNew, onSave, onDelete, onCancel }) => {
+  onCreateKey: (key: ApiKeyEntry) => Promise<void>
+}> = ({ entry, apis, isNew, onSave, onDelete, onCancel, onCreateKey }) => {
   const [editing, setEditing] = useState(!!isNew)
   const [draft, setDraft] = useState<ModelEntry>(entry)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  // Inline "+ Add key": lets the user create the key this model needs without
+  // switching to the API keys page, which would unmount this form and lose
+  // the draft.
+  const [addingKey, setAddingKey] = useState(false)
+
+  const createKey = async (key: ApiKeyEntry) => {
+    const name = key.name.trim()
+    // apiKeys.save upserts, so an existing name would silently replace that key.
+    if (apis.some(a => a.name === name)) throw new Error(`A key named "${name}" already exists.`)
+    await onCreateKey({ ...key, name })
+    // Functional update: the draft may have changed while the save was in flight.
+    setDraft(d => ({ ...d, apiKeyRef: name }))
+    setAddingKey(false)
+  }
 
   // Only sync from props when we're not actively editing — otherwise a parent
   // re-render (e.g. status poll) that re-creates the `entry` object literal
@@ -128,10 +143,10 @@ const ModelRow: React.FC<{
     }}>
       <div style={{ display: 'grid', gridTemplateColumns: '100px 1fr', gap: 8, alignItems: 'center' }}>
         <label style={{ color: C.fg3, fontSize: 12 }}>Model ID</label>
-        <input value={draft.model} onChange={e => setDraft({ ...draft, model: e.target.value })}
+        <input aria-label="Model ID" value={draft.model} onChange={e => setDraft({ ...draft, model: e.target.value })}
           placeholder="e.g. claude-sonnet-4-5" style={{ ...inputStyle, width: '100%' }}/>
         <label style={{ color: C.fg3, fontSize: 12 }}>API Type</label>
-        <select value={draft.apiType} onChange={e => {
+        <select aria-label="Model API type" value={draft.apiType} onChange={e => {
           setDraft({ ...draft, apiType: e.target.value as ApiType })
         }}
           style={{ ...selectStyle, width: '100%' }}>
@@ -142,16 +157,30 @@ const ModelRow: React.FC<{
           <option value="grok">grok (Grok Build only, XAI_API_KEY)</option>
         </select>
         <label style={{ color: C.fg3, fontSize: 12 }}>API Key</label>
-        <select
-          value={draft.apiKeyRef ?? ''}
-          onChange={e => setDraft({ ...draft, apiKeyRef: e.target.value || undefined })}
-          style={{ ...selectStyle, width: '100%' }}
-        >
-          <option value="">(use default — env vars)</option>
-          {[...apis].filter(a => a.purpose !== 'voice').sort((a, b) => a.name.localeCompare(b.name)).map(a => (
-            <option key={a.name} value={a.name}>{a.name}</option>
-          ))}
-        </select>
+        <div style={{ display: 'flex', gap: 6, minWidth: 0 }}>
+          <select
+            aria-label="Model API key"
+            value={draft.apiKeyRef ?? ''}
+            onChange={e => setDraft({ ...draft, apiKeyRef: e.target.value || undefined })}
+            style={{ ...selectStyle, flex: 1, minWidth: 0 }}
+          >
+            <option value="">(use default — env vars)</option>
+            {[...apis].filter(a => a.purpose !== 'voice').sort((a, b) => a.name.localeCompare(b.name)).map(a => (
+              <option key={a.name} value={a.name}>{a.name}</option>
+            ))}
+          </select>
+          <button onClick={() => setAddingKey(true)} style={{ ...pillButton('ghost'), flexShrink: 0 }} disabled={addingKey || busy}>+ Add key</button>
+        </div>
+        {addingKey && <>
+          <span />
+          <ApiKeyEditor
+            entry={{ name: '', apiKey: '', purpose: 'general' }}
+            onSave={createKey}
+            onCancel={() => setAddingKey(false)}
+            saveLabel="Save key"
+            cancelAriaLabel="Cancel new key"
+          />
+        </>}
         {draft.apiType === 'all' && <>
           <span />
           <AllEndpointsHint keyEntry={apis.find(a => a.name === draft.apiKeyRef)} />
@@ -159,8 +188,8 @@ const ModelRow: React.FC<{
       </div>
       {err && <div style={{ color: C.red, fontSize: 12, marginTop: 8 }}>{err}</div>}
       <div style={{ display: 'flex', gap: 6, marginTop: 10, justifyContent: 'flex-end' }}>
-        <button onClick={() => { setEditing(false); setDraft(entry); setErr(null); onCancel?.() }} style={pillButton('ghost')} disabled={busy}>Cancel</button>
-        <button onClick={save} style={pillButton('primary')} disabled={busy || !draft.model.trim()}>
+        <button onClick={() => { setEditing(false); setDraft(entry); setErr(null); setAddingKey(false); onCancel?.() }} style={pillButton('ghost')} disabled={busy}>Cancel</button>
+        <button onClick={save} style={pillButton('primary')} disabled={busy || addingKey || !draft.model.trim()}>
           {busy ? 'Saving…' : 'Save'}
         </button>
       </div>
@@ -359,6 +388,12 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
     await reload()
     setCreating(false)
   }
+  // Keys only — the model draft stays in its card and is saved separately.
+  // Reload so the new key shows up in every model's key list.
+  const createKey = async (key: ApiKeyEntry) => {
+    await unwrap(await window.codey.apiKeys.save(key))
+    await reload()
+  }
   const deleteModel = async (modelId: string) => {
     if (!confirm(`Delete model "${modelId}"?`)) return
     await unwrap(await window.codey.models.delete(modelId))
@@ -495,6 +530,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
           isNew
           onSave={saveModel}
           onCancel={() => setCreating(false)}
+          onCreateKey={createKey}
         />
       )}
       {models.length === 0 && !creating && (
@@ -502,7 +538,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
       )}
       {[...models]
         .sort((a, b) => a.apiType.localeCompare(b.apiType) || a.model.localeCompare(b.model))
-        .map(m => <ModelRow key={m.model} entry={m} apis={apis} onSave={saveModel} onDelete={deleteModel}/>)}
+        .map(m => <ModelRow key={m.model} entry={m} apis={apis} onSave={saveModel} onDelete={deleteModel} onCreateKey={createKey}/>)}
 
       <Section title="Agent fallback" right={
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
