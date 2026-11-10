@@ -52,6 +52,8 @@ protocol.registerSchemesAsPrivileged([
 import { browserSkillStatus, checkBrowserSkillUpdate, checkSkillPackUpdate, chromeCompanionSkillStatus, checkChromeCompanionSkillUpdate, terminalSkillStatus, checkTerminalSkillUpdate, installTerminalSkill, uninstallTerminalSkill, setTerminalSkillEnabled, installSkillPack, listSkillPacks, migrateLegacyPstack, setSkillPackEnabled, uninstallSkillPack, CODEY_GLOBAL_SKILLS_SUBDIR, CODEY_SKILL_DISCOVERY_SUBDIRS, CODEY_SKILLS_SUBDIR, installBrowserSkill, installChromeCompanionSkill, setChromeCompanionSkillEnabled, syncCodeyGlobalSkills, syncCodeyProjectSkills, uninstallBrowserSkill, absorbPlaybookEdit, reconcilePlaybookSkills, removePlaybookSkill, writePlaybookSkill, uninstallChromeCompanionSkill, renameBotInTeams, BotManager, WorkspaceManager } from '@codey/core'
 import { listPlaybooks, playbookDetail, playbookHistory, archivePlaybook, deletePlaybook, restorePlaybook, rollbackPlaybook } from './playbooks'
 import type { PlaybookHome } from '@codey/core'
+import { balanceKindFor, catalogModels, listCatalogProviders, fetchProviderBalance, fetchProviderModels, loadModelsDevCatalog, readUsage, summarizeUsage } from '@codey/core'
+import type { FetchLike } from '@codey/core'
 import { Codey } from '@codey/gateway/dist/gateway'
 import { ConfigManager } from '@codey/gateway/dist/config'
 import { ApiServer } from '@codey/gateway/dist/health'
@@ -4639,6 +4641,46 @@ app.whenReady().then(async () => {
     wrap(async () => {
       if (!coreConfigManager) throw new Error('Config manager not initialized')
       coreConfigManager.renameApiKey(oldName, newName)
+    })
+  )
+
+  // ── Provider presets, model lists, balances, usage ────────────────
+  // Requests run here in the main process (no CORS, the key never reaches
+  // the renderer) and read the key by name from the hydrated config.
+  const savedKey = (name: string) => {
+    const entry = coreConfigManager?.getApiKey(String(name))
+    if (!entry) throw new Error(`Unknown API key: ${name}`)
+    return entry
+  }
+  const modelsDev = () => loadModelsDevCatalog(fetch as unknown as FetchLike)
+
+  // Curated presets plus every models.dev provider; curated only when offline.
+  ipcMain.handle('providers:list', async () => wrap(async () => listCatalogProviders(await modelsDev())))
+
+  // A provider's models from models.dev — no key needed.
+  ipcMain.handle('providers:catalogModels', async (_e, provider: string) =>
+    wrap(async () => catalogModels(await modelsDev(), String(provider)))
+  )
+
+  ipcMain.handle('providers:models', async (_e, keyName: string) =>
+    wrap(async () => fetchProviderModels(savedKey(keyName), fetch as unknown as FetchLike, modelsDev))
+  )
+
+  ipcMain.handle('providers:balance', async (_e, keyName: string) =>
+    wrap(async () => fetchProviderBalance(savedKey(keyName), fetch as unknown as FetchLike))
+  )
+
+  ipcMain.handle('usage:summary', async (_e, days: number) =>
+    wrap(async () => {
+      const span = Number.isFinite(days) && days > 0 ? Math.min(days, 90) : 7
+      const since = Date.now() - span * 24 * 60 * 60 * 1000
+      const records = readUsage(since)
+      const catalog = records.length ? await modelsDev() : undefined
+      const summary = summarizeUsage(records, since, catalog)
+      const balanceKeys = (coreConfigManager?.listApiKeys() ?? [])
+        .filter(k => k.purpose !== 'voice' && balanceKindFor(k))
+        .map(k => k.name)
+      return { ...summary, balanceKeys }
     })
   )
 

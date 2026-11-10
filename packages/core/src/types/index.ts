@@ -131,6 +131,8 @@ export interface ApiKeyEntry {
   openaiBaseUrl?: string;        // optional override for openai-typed models
   /** Voice entries are shown in the dedicated Voice keys section. */
   purpose?: 'general' | 'voice';
+  /** Provider preset id (see providers.ts) the entry was created from, if any. */
+  provider?: string;
 }
 
 /**
