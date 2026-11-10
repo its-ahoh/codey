@@ -1,4 +1,4 @@
-import { CodingAgent, AgentRequest, AgentResponse, McpServerSpec } from '../types';
+import { CodingAgent, AgentRequest, AgentResponse, McpServerSpec, isCliDefaultModelConfig } from '../types';
 import { CodingAgentAdapter } from './base';
 import { ClaudeCodeAdapter } from './claude-code';
 import { OpenCodeAdapter } from './opencode';
@@ -154,6 +154,11 @@ export class AgentFactory {
         output: '',
         error: `Unknown agent: ${agent}`,
       };
+    }
+
+    // The "default" choice: pass no model, so the CLI uses its own.
+    if (isCliDefaultModelConfig(request.model)) {
+      request = { ...request, model: undefined };
     }
 
     // Only auto-populate when the caller hasn't already provided extraEnv

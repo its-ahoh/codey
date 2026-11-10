@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { AGENT_API_TYPE, CODING_AGENTS } from '@codey/core';
+import { AGENT_API_TYPE, CODING_AGENTS, isCliDefaultModelConfig } from '@codey/core';
 import { Codey, turnModelLabel } from './gateway';
 
 const catalog = [
@@ -50,7 +50,7 @@ describe('turnModelLabel', () => {
 
 describe('fallback entry with no model that fits', () => {
   it('runs the agent on its own default instead of skipping it', async () => {
-    const run = vi.fn(async (_agent: string, _req: unknown) => ({ success: true, output: 'ok' }));
+    const run = vi.fn(async (_agent: string, _req: any) => ({ success: true, output: 'ok' }));
     const gateway = Object.assign(Object.create(Codey.prototype), {
       getDefaultEffort: () => undefined,
       runAgentWithNetworkRetry: vi.fn(async (agent: string, req: any) => agent === 'codex'
@@ -67,14 +67,41 @@ describe('fallback entry with no model that fits', () => {
 });
 
 describe('"default" model choice', () => {
-  it('resolves to no model config, so no model is passed', () => {
+  it('resolves to a marker config, not undefined, so it is never read as "nothing chosen"', () => {
     const gateway = Object.create(Codey.prototype) as Codey;
-    expect(gateway.getModelConfig('cursor', 'default')).toBeUndefined();
-    expect(turnModelLabel('cursor', gateway.getModelConfig('cursor', 'default'))).toBe('default');
+    const model = gateway.getModelConfig('cursor', 'default');
+    expect(isCliDefaultModelConfig(model)).toBe(true);
+    expect(turnModelLabel('cursor', model)).toBe('default');
+  });
+
+  it('survives the `chosen ?? pinned` fallback team and voice code uses', () => {
+    const gateway = Object.assign(Object.create(Codey.prototype), {
+      configManager: {
+        getFallback: () => ({ enabled: true, order: [{ agent: 'codex', model: 'gpt-x' }] }),
+        getModel: (name: string) => catalog.find(m => m.model === name),
+        getApiKey: () => undefined,
+      },
+      warnUnwiredAllModel: () => {},
+    }) as Codey;
+    const chosen = gateway.getModelConfig('codex', 'default');
+    expect((chosen ?? gateway.getDefaultModelConfig('codex'))?.model).toBe('default');
+  });
+
+  it('still uses a catalog model that is actually named "default"', () => {
+    const gateway = Object.assign(Object.create(Codey.prototype), {
+      configManager: {
+        getModel: (name: string) => name === 'default' ? { model: 'default', apiType: 'openai' as const } : undefined,
+        getApiKey: () => undefined,
+      },
+      warnUnwiredAllModel: () => {},
+    }) as Codey;
+    const model = gateway.getModelConfig('codex', 'default');
+    expect(isCliDefaultModelConfig(model)).toBe(false);
+    expect(model).toMatchObject({ model: 'default', apiType: 'openai' });
   });
 
   it('runs a fallback entry pinned to default instead of skipping it', async () => {
-    const run = vi.fn(async (_agent: string, _req: unknown) => ({ success: true, output: 'ok' }));
+    const run = vi.fn(async (_agent: string, _req: any) => ({ success: true, output: 'ok' }));
     const gateway = Object.assign(Object.create(Codey.prototype), {
       getDefaultEffort: () => undefined,
       runAgentWithNetworkRetry: vi.fn(async (agent: string, req: any) => agent === 'codex'
@@ -84,7 +111,7 @@ describe('"default" model choice', () => {
       logger: { error: () => {}, warn: () => {} },
     }) as Codey;
     const res = await (gateway as any).runWithFallback('codex', { prompt: 'hi', agent: 'codex', model: { model: 'gpt-x', apiType: 'openai' } });
-    expect(run).toHaveBeenCalledWith('grok', expect.objectContaining({ model: undefined }));
+    expect(isCliDefaultModelConfig(run.mock.calls[0][1].model)).toBe(true);
     expect(res.fallback).toMatchObject({ to: 'grok(default)' });
   });
 });

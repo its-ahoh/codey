@@ -2729,7 +2729,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                         <option value="">{`${inheritedModel ?? CLI_DEFAULT_MODEL} (from Settings)`}</option>
                         {/* Overrides a model pinned in Settings; with none pinned, the
                             empty choice already means the same thing. */}
-                        {(inheritedModel || chat.model === CLI_DEFAULT_MODEL) && (
+                        {((inheritedModel && inheritedModel !== CLI_DEFAULT_MODEL) || chat.model === CLI_DEFAULT_MODEL) && (
                           <option value={CLI_DEFAULT_MODEL}>{`${CLI_DEFAULT_MODEL} (agent's own model)`}</option>
                         )}
                         {modelsForAgent.filter(m => m.model !== inheritedModel || m.model === chat.model).map(m => (
