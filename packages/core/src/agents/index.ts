@@ -9,6 +9,7 @@ import { GrokAdapter } from './grok';
 import { syncCodeyGlobalSkills, syncCodeyProjectSkills } from './codey-skills';
 import { isBrowserSkillActive } from './browser-skill';
 import { isChromeCompanionSkillActive } from './chrome-companion-skill';
+import { isTerminalSkillActive } from './terminal-skill';
 
 export type { CodingAgentAdapter } from './base';
 export { ClaudeCodeAdapter } from './claude-code';
@@ -21,6 +22,8 @@ export { applyModelEnv, unwiredAllProtocols } from './env';
 export * from './codey-skills';
 export * from './browser-skill';
 export * from './chrome-companion-skill';
+export * from './bundled-skill';
+export * from './terminal-skill';
 export * from './skill-pack';
 export * from './tool-policy';
 
@@ -69,6 +72,41 @@ export function addCodeyBrowserTools(
       ...(browserReady ? { CODEY_BROWSER_PLUGIN_ENABLED: '1' } : {}),
       ...(chromeReady ? { CODEY_CHROME_COMPANION_PLUGIN_ENABLED: '1' } : {}),
       ...(request.browserChatId ? { CODEY_BROWSER_CHAT_ID: request.browserChatId } : {}),
+    },
+  };
+}
+
+/**
+ * Hand the Terminal bridge credentials to a task-performing turn of a Codey
+ * desktop chat. The Terminal panel belongs to a chat, so a turn with no chat
+ * (a channel message, an automation) gets nothing. Same turn gate as the
+ * browser: advisor, housekeeping and tool-restricted turns are excluded.
+ */
+export function addCodeyTerminalTools(
+  request: AgentRequest,
+  terminalSkillActive: boolean,
+  env: NodeJS.ProcessEnv = process.env,
+): AgentRequest {
+  const socket = env.CODEY_TERMINAL_SOCKET;
+  const token = env.CODEY_TERMINAL_TOKEN;
+  const runtime = env.CODEY_TERMINAL_RUNTIME;
+  const cli = env.CODEY_TERMINAL_CLI;
+  if (!terminalSkillActive || !socket || !token || !runtime || !cli) return request;
+  if (request.browserTools !== true || request.allowedTools) return request;
+  const workingDir = request.context?.workingDir;
+  const chatId = request.browserChatId;
+  if (!workingDir || !chatId) return request;
+
+  return {
+    ...request,
+    extraEnv: {
+      ...(request.extraEnv ?? {}),
+      CODEY_TERMINAL_SOCKET: socket,
+      CODEY_TERMINAL_TOKEN: token,
+      CODEY_TERMINAL_CLI: cli,
+      CODEY_TERMINAL_RUNTIME: runtime,
+      CODEY_TERMINAL_CHAT_ID: chatId,
+      CODEY_TERMINAL_CWD: workingDir,
     },
   };
 }
@@ -176,13 +214,16 @@ export class AgentFactory {
     // last without a restart.
     let browserSkillActive = false;
     let chromeSkillActive = false;
+    let terminalSkillActive = false;
     try {
       browserSkillActive = isBrowserSkillActive();
       chromeSkillActive = isChromeCompanionSkillActive();
+      terminalSkillActive = isTerminalSkillActive();
     } catch {
       // Unreadable home: no skill, so no capability.
     }
     request = addCodeyBrowserTools(request, browserSkillActive, process.env, chromeSkillActive);
+    request = addCodeyTerminalTools(request, terminalSkillActive, process.env);
     request = addExternalMcpServers(request, this.externalMcpProvider?.());
 
     // `~/.codey/skills` and `<project>/.codey/skills` are Codey's global and

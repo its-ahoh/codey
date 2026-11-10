@@ -1143,6 +1143,14 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
   const resolvedRightPanelMode: WorkspaceDockTool | null = rightPanelMode
     ?? (chat?.contextPanelOpen ? 'overview' : null)
   const panelOpen = resolvedRightPanelMode !== null
+  // An agent working in this chat's Terminal (the Terminal plugin): make sure
+  // the user can see it. A Terminal already docked on the right stays there.
+  const terminalDockedRight = resolvedRightPanelMode === 'terminal'
+  useEffect(() => window.codey.terminal.onAgentOpen(event => {
+    if (event.chatId !== chatId || !workingDir || terminalDockedRight) return
+    if (event.cwd && event.cwd !== workingDir) return
+    setBottomTerminalOpen(true)
+  }), [chatId, workingDir, terminalDockedRight])
   const overviewOpen = resolvedRightPanelMode === 'overview'
 
   // The Status sidecar floats over the chat's top-right when the panel is

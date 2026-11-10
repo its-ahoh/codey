@@ -5,6 +5,8 @@ import '@xterm/xterm/css/xterm.css'
 import { C } from '../theme'
 import { UIIcon } from './UIIcons'
 import { pollWhileVisible } from '../hooks/pollWhileVisible'
+import type { TerminalControlPermissionState } from '../codey-api'
+import { addMissingAgentSessions, adoptTerminalSession, type TerminalLayout } from './terminalAgentLayout'
 
 interface Props {
   chatId: string
@@ -17,8 +19,9 @@ interface Props {
 type SplitDirection = 'row' | 'column'
 type DropZone = 'top' | 'bottom' | 'left' | 'right'
 type DragSource = { kind: 'tab' | 'session'; id: string }
-type TerminalTab = { id: string; sessions: string[]; activeSessionId: string; splitDirection?: SplitDirection }
-type TerminalLayout = { tabs: TerminalTab[]; activeTabId: string }
+// Sessions an agent opened through the Terminal plugin, so their tabs can
+// say so. Filled from `terminal:list` and agent-open events.
+const agentSessions = new Set<string>()
 
 const layoutCache = new Map<string, TerminalLayout>()
 const layoutLoads = new Map<string, Promise<TerminalLayout>>()
@@ -62,6 +65,7 @@ const loadLayout = (chatId: string, cwd: string): Promise<TerminalLayout> => {
     const listed = await window.codey.terminal.list(chatId)
     // Preserve sessions belonging to previous worktrees, but never surface
     // them in this layout. Switching back can recover them by the same key.
+    if (listed.ok) for (const item of listed.data) if (item.agent) agentSessions.add(item.sessionId)
     let sessions = listed.ok ? listed.data.filter(item => item.cwd === cwd).map(item => item.sessionId) : []
     if (sessions.length === 0) sessions = [await createSession(chatId, cwd)]
     const tabs = sessions.map(sessionId => ({ id: newTabId(), sessions: [sessionId], activeSessionId: sessionId }))
@@ -100,6 +104,46 @@ export const TerminalPanel: React.FC<Props> = ({ chatId, workingDir, placement, 
       .catch(reason => { if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason)) })
     return () => { cancelled = true }
   }, [chatId, workingDir, key])
+
+  // Tabs an agent opened while this panel was not on screen.
+  React.useEffect(() => {
+    let cancelled = false
+    void Promise.all([loadLayout(chatId, workingDir), window.codey.terminal.list(chatId)]).then(([loaded, listed]) => {
+      if (cancelled || !listed.ok) return
+      const mine = listed.data.filter(item => item.cwd === workingDir)
+      for (const item of mine) if (item.agent) agentSessions.add(item.sessionId)
+      const current = layoutCache.get(key) ?? loaded
+      const next = addMissingAgentSessions(current, mine, newTabId)
+      if (next !== current) commit(next)
+    }).catch(() => { /* the first effect reports load errors */ })
+    return () => { cancelled = true }
+  }, [chatId, workingDir, key, commit])
+
+  // An agent opened or typed into a terminal of this chat: show that tab.
+  React.useEffect(() => window.codey.terminal.onAgentOpen(event => {
+    if (event.chatId !== chatId || !event.sessionId || (event.cwd && event.cwd !== workingDir)) return
+    agentSessions.add(event.sessionId)
+    const current = layoutCache.get(key)
+    if (!current) return
+    const next = adoptTerminalSession(current, event.sessionId, newTabId)
+    if (next !== current) commit(next)
+  }), [chatId, workingDir, key, commit])
+
+  const [control, setControl] = React.useState<TerminalControlPermissionState>({ always: false, pending: null })
+  React.useEffect(() => {
+    let cancelled = false
+    const off = window.codey.terminal.onControlPermission(next => { if (!cancelled) setControl(next) })
+    void window.codey.terminal.controlPermission.get().then(result => {
+      if (!cancelled && result.ok) setControl(result.data)
+    })
+    return () => { cancelled = true; off() }
+  }, [])
+  const answerControl = async (operation: () => Promise<{ ok: true; data: TerminalControlPermissionState } | { ok: false; error: string }>) => {
+    const result = await operation()
+    if (result.ok) setControl(result.data)
+    else setError(result.error)
+  }
+  const pending = control.pending?.chatId === chatId ? control.pending : null
 
   const activeTab = layout?.tabs.find(tab => tab.id === layout.activeTabId) ?? layout?.tabs[0]
 
@@ -340,7 +384,7 @@ export const TerminalPanel: React.FC<Props> = ({ chatId, workingDir, placement, 
               }}
               title={`${sessionTitles[tab.activeSessionId] || `Terminal ${index + 1}`} · drag to reorder`}
             >
-              <UIIcon name="terminal" size={13} />
+              <UIIcon name={tab.sessions.some(id => agentSessions.has(id)) ? 'bot' : 'terminal'} size={13} />
               <span style={styles.tabTitle}>{sessionTitles[tab.activeSessionId] || `Shell ${index + 1}`}</span>
               {layout.tabs.length > 1 && (
                 <span
@@ -354,6 +398,16 @@ export const TerminalPanel: React.FC<Props> = ({ chatId, workingDir, placement, 
           ))}
         </div>
         <div style={styles.actions}>
+          {control.always && (
+            <button
+              style={{ ...styles.iconButton, color: C.accent }}
+              onClick={() => void answerControl(window.codey.terminal.controlPermission.revoke)}
+              title="Agents may type in terminals without asking. Click to ask every time again."
+              aria-label="Ask before agents type in terminals"
+            >
+              <UIIcon name="bot" size={14} />
+            </button>
+          )}
           <button style={styles.iconButton} disabled={busy || !layout} onClick={() => void addTab()} title="New terminal tab" aria-label="New terminal tab">
             <UIIcon name="plus" size={14} />
           </button>
@@ -376,6 +430,22 @@ export const TerminalPanel: React.FC<Props> = ({ chatId, workingDir, placement, 
         </div>
       </div>
       {error && <div style={styles.error}>{error}</div>}
+      {pending && (
+        <div style={styles.permissionPrompt} role="alertdialog" aria-label="Agent terminal permission">
+          <div style={styles.permissionIcon}><UIIcon name="bot" size={16} /></div>
+          <div style={styles.permissionText}>
+            <div style={styles.permissionTitle}>
+              {pending.command === 'run' ? 'Let the agent run this command?'
+                : pending.command === 'close' ? 'Let the agent close this terminal?'
+                : 'Let the agent type into this terminal?'}
+            </div>
+            <code style={styles.permissionPreview}>{pending.preview}</code>
+          </div>
+          <button type="button" style={styles.denyButton} onClick={() => void answerControl(window.codey.terminal.controlPermission.deny)}>Not now</button>
+          <button type="button" style={styles.approveButton} onClick={() => void answerControl(() => window.codey.terminal.controlPermission.approve('once'))}>Allow once</button>
+          <button type="button" style={styles.approveButton} onClick={() => void answerControl(() => window.codey.terminal.controlPermission.approve('always'))}>Always allow</button>
+        </div>
+      )}
       <div style={{ ...styles.panes, flexDirection: activeTab?.splitDirection ?? 'row' }}>
         {activeTab?.sessions.map((sessionId, index) => (
           <div
@@ -553,6 +623,28 @@ const styles: Record<string, React.CSSProperties> = {
     color: C.fg2, background: 'transparent', border: 'none', borderRadius: 6, cursor: 'pointer',
   },
   error: { flexShrink: 0, padding: '6px 10px', color: C.dangerFg, background: C.dangerBg, fontSize: 12 },
+  permissionPrompt: {
+    flexShrink: 0, display: 'flex', alignItems: 'center', gap: 9, padding: '8px 10px',
+    background: C.surface2, borderBottom: `1px solid ${C.accent}66`,
+  },
+  permissionIcon: {
+    width: 28, height: 28, flexShrink: 0, borderRadius: 8, display: 'grid', placeItems: 'center',
+    color: C.accent, background: C.accentDim, border: `1px solid ${C.accent}55`,
+  },
+  permissionText: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 },
+  permissionTitle: { color: C.fg, fontSize: 12, fontWeight: 600 },
+  permissionPreview: {
+    color: C.fg2, fontSize: 11.5, fontFamily: '"SF Mono", Menlo, monospace',
+    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+  },
+  denyButton: {
+    height: 28, padding: '0 10px', flexShrink: 0, borderRadius: 7, border: `1px solid ${C.border2}`,
+    background: 'transparent', color: C.fg2, cursor: 'pointer', fontSize: 12, fontWeight: 600,
+  },
+  approveButton: {
+    height: 28, padding: '0 10px', flexShrink: 0, borderRadius: 7, border: `1px solid ${C.accent}`,
+    background: C.accent, color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+  },
   panes: { flex: 1, minHeight: 0, position: 'relative', display: 'flex', background: C.codeBg },
   pane: { flex: 1, minWidth: 0, minHeight: 0, position: 'relative', overflow: 'hidden', display: 'flex', flexDirection: 'column' },
   paneSplitLeft: { borderLeft: `1px solid ${C.border2}` },
