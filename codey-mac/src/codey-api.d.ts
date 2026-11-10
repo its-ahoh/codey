@@ -183,6 +183,26 @@ export interface BrowserPageContext {
 }
 
 export type BrowserControlSurface = 'browser' | 'chrome'
+
+/** An agent opened or typed into a terminal; the chat's panel should show it.
+ *  `sessionId` is absent while a first command awaits approval. */
+export interface TerminalAgentOpenEvent {
+  chatId: string
+  sessionId?: string
+  cwd?: string
+}
+
+export interface TerminalControlRequest {
+  chatId: string
+  sessionId?: string
+  command: string
+  preview: string
+}
+
+export interface TerminalControlPermissionState {
+  always: boolean
+  pending: TerminalControlRequest | null
+}
 export type BrowserControlLevel = 'write' | 'full'
 export type BrowserControlGrant = 'none' | BrowserControlLevel
 
@@ -699,7 +719,7 @@ declare global {
         onZoom: (handler: (factor: number) => void) => () => void
       }
       terminal: {
-        list: (chatId: string) => Promise<IpcResult<Array<{ sessionId: string; chatId: string; cwd: string; pid: number; alive: boolean }>>>
+        list: (chatId: string) => Promise<IpcResult<Array<{ sessionId: string; chatId: string; cwd: string; pid: number; alive: boolean; agent: boolean }>>>
         open: (input: { sessionId?: string; chatId: string; cwd: string; cols: number; rows: number }) => Promise<IpcResult<{ sessionId: string; chatId: string; cwd: string; pid: number; output: string; alive: boolean }>>
         write: (sessionId: string, data: string) => Promise<IpcResult<void>>
         resize: (sessionId: string, cols: number, rows: number) => Promise<IpcResult<void>>
@@ -708,6 +728,14 @@ declare global {
         close: (sessionId: string) => Promise<IpcResult<void>>
         onData: (handler: (event: { sessionId: string; chatId: string; data: string }) => void) => () => void
         onExit: (handler: (event: { sessionId: string; chatId: string; exitCode: number; signal?: number }) => void) => () => void
+        onAgentOpen: (handler: (event: TerminalAgentOpenEvent) => void) => () => void
+        controlPermission: {
+          get: () => Promise<IpcResult<TerminalControlPermissionState>>
+          approve: (scope: 'once' | 'always') => Promise<IpcResult<TerminalControlPermissionState>>
+          deny: () => Promise<IpcResult<TerminalControlPermissionState>>
+          revoke: () => Promise<IpcResult<TerminalControlPermissionState>>
+        }
+        onControlPermission: (handler: (state: TerminalControlPermissionState) => void) => () => void
       }
       chromeCompanion: {
         status: () => Promise<IpcResult<ChromeCompanionStatus>>

@@ -3,12 +3,12 @@ import type { BrowserSkillStatus } from '@codey/core'
 /**
  * A plugin is an agent capability represented by ordinary skills. Browser is
  * pulled from the published skills repository; Chrome Companion ships with the
- * app and uses a reversible enable switch. State is read from the skill file on
+ * app and uses a reversible enable switch, as does Terminal. State is read from the skill file on
  * disk rather than duplicated in config, so Plugins, Skills and agent execution
  * always agree.
  */
 export interface PluginInfo extends BrowserSkillStatus {
-  id: 'browser' | 'chrome-companion'
+  id: 'browser' | 'chrome-companion' | 'terminal'
   name: string
   /** One line that says which browser this is. The two plugins are easy to
    *  confuse, so the card leads with this rather than the full description. */
@@ -34,6 +34,15 @@ export const PLUGINS: Array<Pick<PluginInfo, 'id' | 'name' | 'tagline' | 'descri
     description:
       'Let agents work through your real Google Chrome tabs and existing signed-in session. '
       + 'The companion extension connects locally and is independent from the in-app Browser plugin.',
+  },
+  {
+    id: 'terminal',
+    name: 'Terminal',
+    tagline: 'The Terminal panel next to your chat — you watch every command.',
+    description:
+      'Let agents run commands in the chat\u2019s Terminal panel: start dev servers, watch logs, '
+      + 'answer prompts. You see everything they type and can take over at any time. Typing into a '
+      + 'terminal asks for your approval first unless you choose Always allow.',
   },
 ]
 

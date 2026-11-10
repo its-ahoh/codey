@@ -496,6 +496,23 @@ contextBridge.exposeInMainWorld('codey', {
       ipcRenderer.on('terminal:exit', listener)
       return () => ipcRenderer.removeListener('terminal:exit', listener)
     },
+    // An agent opened or typed into a terminal through the Terminal plugin.
+    onAgentOpen: (handler: (event: { chatId: string; sessionId?: string; cwd?: string }) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, event: { chatId: string; sessionId?: string; cwd?: string }) => handler(event)
+      ipcRenderer.on('terminal:agentOpen', listener)
+      return () => ipcRenderer.removeListener('terminal:agentOpen', listener)
+    },
+    controlPermission: {
+      get: () => ipcRenderer.invoke('terminal:controlPermission:get'),
+      approve: (scope: 'once' | 'always') => ipcRenderer.invoke('terminal:controlPermission:approve', scope),
+      deny: () => ipcRenderer.invoke('terminal:controlPermission:deny'),
+      revoke: () => ipcRenderer.invoke('terminal:controlPermission:revoke'),
+    },
+    onControlPermission: (handler: (state: unknown) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, state: unknown) => handler(state)
+      ipcRenderer.on('terminal:controlPermission', listener)
+      return () => ipcRenderer.removeListener('terminal:controlPermission', listener)
+    },
   },
   chromeCompanion: {
     status: () => ipcRenderer.invoke('chromeCompanion:status'),

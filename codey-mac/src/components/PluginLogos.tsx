@@ -10,8 +10,25 @@ type PluginLogoProps = {
 export const PluginLogo: React.FC<PluginLogoProps> = ({ id, size = 32 }) => {
   if (id === 'chrome-companion') return <ChromeCompanionLogo size={size} />
   if (id === 'browser') return <BrowserLogo size={size} />
+  if (id === 'terminal') return <TerminalLogo size={size} />
   return <FallbackLogo size={size} />
 }
+
+const TerminalLogo: React.FC<{ size: number }> = ({ size }) => (
+  <svg
+    aria-hidden="true"
+    width={size}
+    height={size}
+    viewBox="0 0 32 32"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    <rect x="1" y="2" width="30" height="28" rx="8" fill="#1F2430" />
+    <rect x="1.5" y="2.5" width="29" height="27" rx="7.5" stroke="#3A4152" />
+    <path d="m8 12 5 4-5 4" stroke="#5EE071" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M16 21h8" stroke="#E6E6E6" strokeWidth="2.2" strokeLinecap="round" />
+  </svg>
+)
 
 const BrowserLogo: React.FC<{ size: number }> = ({ size }) => (
   <svg

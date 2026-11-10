@@ -6,7 +6,7 @@ import { UIIcon } from './UIIcons'
 import { ProviderButton, ProviderLogo, ProviderPickerModal } from './ProviderPicker'
 import type { CatalogModel, CatalogProvider } from '../codey-api'
 import { ApiKeyEditor, type ApiKeyEntry } from './ApiKeyEditor'
-import { AGENT_API_TYPE, AGENT_NAMES, ApiType, agentsPinnedTo, missingAllEndpoints, modelFitsApiType } from './modelApiType'
+import { AGENT_API_TYPE, AGENT_NAMES, ApiType, CLI_DEFAULT_MODEL, agentsPinnedTo, missingAllEndpoints, modelFitsApiType } from './modelApiType'
 
 interface SettingsTabProps {
   isGatewayRunning: boolean
@@ -400,16 +400,29 @@ const FallbackList: React.FC<{
                   <option key={a} value={a}>{a}</option>
                 ))}
               </select>
+              {(() => {
+                // An empty row runs the model the first row for the same agent
+                // pins, so only label it plain "default" when there is none.
+                const first = order.find(o => o.agent === entry.agent && !!o.model)?.model
+                const pinned = first === CLI_DEFAULT_MODEL ? undefined : first
+                return (
               <select
-                value={entry.model ?? ''}
+                value={!pinned && entry.model === CLI_DEFAULT_MODEL ? '' : entry.model ?? ''}
                 onChange={e => update(i, { model: e.target.value || undefined })}
                 style={{ ...selectStyle, flex: 1, minWidth: 0 }}
               >
-                <option value="">(default)</option>
+                {pinned
+                  ? <>
+                      <option value="">{`(same as ${pinned})`}</option>
+                      <option value={CLI_DEFAULT_MODEL}>{CLI_DEFAULT_MODEL}</option>
+                    </>
+                  : <option value="">{CLI_DEFAULT_MODEL}</option>}
                 {modelsForAgent(entry.agent).map(m => (
                   <option key={m.model} value={m.model}>{m.model} [{m.apiType}]</option>
                 ))}
               </select>
+                )
+              })()}
               {i === 0 ? (
                 <span style={{
                   width: 28, height: 28, flexShrink: 0,
