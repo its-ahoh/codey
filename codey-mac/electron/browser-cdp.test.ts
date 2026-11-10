@@ -131,7 +131,7 @@ describe('BrowserController accessibility snapshot', () => {
       isDestroyed: vi.fn(() => false),
       getURL: vi.fn(() => 'https://example.com/pay'),
       getTitle: vi.fn(() => 'Checkout'),
-      executeJavaScript: vi.fn(async () => ({ width: 800, height: 600, deviceScaleFactor: 2 })),
+      executeJavaScript: vi.fn(async (_script: string): Promise<unknown> => ({ width: 800, height: 600, deviceScaleFactor: 2 })),
       sendInputEvent: vi.fn(),
       debugger: {
         isAttached: vi.fn(() => attached),
