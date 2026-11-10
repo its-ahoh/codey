@@ -24,6 +24,9 @@ export const AGENT_API_TYPE: Record<string, ApiType> = {
   'grok': 'grok',
 }
 
+/** Mirrors CLI_DEFAULT_MODEL in @codey/core: the "pass no model" choice. */
+export const CLI_DEFAULT_MODEL = 'default'
+
 /** Mirrors DEDICATED_API_TYPES in @codey/core: types tied to one agent. */
 const DEDICATED: ReadonlySet<ApiType> = new Set<ApiType>(['cursor', 'grok'])
 
@@ -46,19 +49,6 @@ export function modelFitsApiType(modelApiType: ApiType, want?: ApiType): boolean
 /** Convenience wrapper keyed by agent name. */
 export function modelFitsAgent(modelApiType: ApiType, agent?: string): boolean {
   return modelFitsApiType(modelApiType, agent ? AGENT_API_TYPE[agent] : undefined)
-}
-
-/**
- * The model an agent runs when the chat picks none. Mirrors the gateway: the
- * model pinned for it in fallback.order, else the first catalog model it can
- * run, else undefined — the CLI's own default, shown as "default".
- */
-export function inheritedModelFor(
-  agent: string,
-  pinned: string | undefined,
-  models: Array<{ model: string; apiType: ApiType }>,
-): string | undefined {
-  return pinned ?? models.find(m => modelFitsAgent(m.apiType, agent))?.model
 }
 
 /** The base URLs an API key entry defines, as far as this check cares. */
