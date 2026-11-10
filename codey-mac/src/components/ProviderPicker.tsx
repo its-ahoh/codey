@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { C } from '../theme'
 import { inputStyle, pillButton } from './settingsAtoms'
 import type { CatalogModel, CatalogProvider } from '../codey-api'
@@ -105,6 +106,7 @@ export const ProviderPickerModal: React.FC<{
   onClose: () => void
 }> = ({ providers, mode, initialProvider, onPickProvider, onPickModel, onClose }) => {
   const [step, setStep] = useState<string | null>(mode === 'model' && initialProvider ? initialProvider : null)
+  const back = () => { setStep(null); setQuery('') }
   const [query, setQuery] = useState('')
   const [models, setModels] = useState<{ busy: boolean; list: CatalogModel[] }>({ busy: false, list: [] })
   const searchRef = useRef<HTMLInputElement>(null)
@@ -113,11 +115,11 @@ export const ProviderPickerModal: React.FC<{
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       e.stopPropagation()
-      if (step && !initialProvider) { setStep(null); setQuery('') } else onClose()
+      if (step) back(); else onClose()
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [step, initialProvider, onClose])
+  }, [step, onClose])
 
   useEffect(() => { searchRef.current?.focus() }, [step])
 
@@ -149,12 +151,12 @@ export const ProviderPickerModal: React.FC<{
     </button>
   )
 
-  return (
+  return createPortal(
     <div style={styles.backdrop} onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}>
       <div role="dialog" aria-label={step ? 'Choose a model' : 'Choose a provider'} style={styles.modal}>
         <div style={styles.header}>
-          {step && !initialProvider && (
-            <button type="button" onClick={() => { setStep(null); setQuery('') }} style={{ ...pillButton('ghost'), padding: '5px 9px' }} aria-label="Back to providers">‹</button>
+          {step && (
+            <button type="button" onClick={back} style={{ ...pillButton('ghost'), padding: '5px 9px' }} aria-label="Back to providers">‹</button>
           )}
           {step && <ProviderLogo provider={company} label={step} size={26} />}
           <div style={{ fontWeight: 600, fontSize: 15, flex: 1 }}>
@@ -186,8 +188,12 @@ export const ProviderPickerModal: React.FC<{
 
           {step && <>
             {models.busy && <div style={styles.empty}>Loading models…</div>}
-            {!models.busy && models.list.length === 0 && (
-              <div style={styles.empty}>models.dev has no model list for this provider. Close this and type the model id.</div>
+            {!models.busy && (
+              <button type="button" onClick={() => { onPickProvider?.(step); onClose() }} style={styles.useCompany}>
+                {models.list.length === 0
+                  ? `No public model list for ${company?.label ?? step}. Use it and type the model id yourself`
+                  : `Not listed? Use ${company?.label ?? step} and type the model id yourself`}
+              </button>
             )}
             {shownModels.map(m => (
               <button key={m.id} type="button" onClick={() => { onPickModel?.(step, m.id); onClose() }} style={styles.modelRow}>
@@ -207,7 +213,8 @@ export const ProviderPickerModal: React.FC<{
           </>}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -237,4 +244,9 @@ const styles: Record<string, React.CSSProperties> = {
     background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, cursor: 'pointer', textAlign: 'left',
   },
   empty: { color: C.fg3, fontSize: 12.5, padding: '18px 4px' },
+  useCompany: {
+    display: 'block', width: '100%', padding: '9px 12px', marginBottom: 10, textAlign: 'left',
+    background: 'transparent', border: `1px dashed ${C.border2}`, borderRadius: 10,
+    color: C.fg2, fontSize: 12.5, cursor: 'pointer',
+  },
 }

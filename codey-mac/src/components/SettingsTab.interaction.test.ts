@@ -163,3 +163,40 @@ describe('SettingsTab provider picker + inline key', () => {
     expect($<HTMLInputElement>('input[aria-label="OpenAI base URL"]')!.value).toBe('https://api.sample.test/v1')
   })
 })
+
+describe('SettingsTab provider picker without a listed model', () => {
+  it('keeps a company that has no public model list and lets the id be typed', async () => {
+    ;(window as any).codey.providers = {
+      list: async () => ok([{ id: 'local-gw', label: 'Local GW', openaiBaseUrl: 'http://127.0.0.1:9/v1', anthropicBaseUrl: 'http://127.0.0.1:9', modelCount: 0, curated: true }]),
+      catalogModels: async () => ok([]),
+    }
+    await act(async () => root.render(React.createElement(SettingsTab, { isGatewayRunning: true })))
+    await click(button('+ Add'))
+    await click($('button[aria-label="Model provider"]'))
+    const byText = (t: string) => [...document.querySelectorAll('button')].find(b => b.textContent?.includes(t))
+    await click(byText('Local GW'))
+    await click(byText('Use it and type the model id yourself'))
+
+    expect($('button[aria-label="Model provider"]')!.textContent).toContain('Local GW')
+    expect($<HTMLSelectElement>('select[aria-label="Model API type"]')!.value).toBe('all')
+    expect($<HTMLInputElement>('input[aria-label="Model ID"]')!.value).toBe('')
+  })
+
+  it('reopens on the chosen company\'s models, with a way back to all companies', async () => {
+    ;(window as any).codey.providers = {
+      list: async () => ok([{ id: 'sample-co', label: 'Sample Co', openaiBaseUrl: 'https://api.sample.test/v1', modelCount: 1, curated: true }]),
+      catalogModels: async () => ok([{ id: 'sample-model-9', name: 'Sample Model 9' }]),
+    }
+    await act(async () => root.render(React.createElement(SettingsTab, { isGatewayRunning: true })))
+    await click(button('+ Add'))
+    await click($('button[aria-label="Model provider"]'))
+    const byText = (t: string) => [...document.querySelectorAll('button')].find(b => b.textContent?.includes(t))
+    await click(byText('Sample Co'))
+    await click(byText('Sample Model 9'))
+
+    await click($('button[aria-label="Model provider"]'))
+    expect(byText('Sample Model 9')).toBeTruthy()
+    await click(document.querySelector('button[aria-label="Back to providers"]'))
+    expect(document.querySelector('[role="dialog"][aria-label="Choose a provider"]')).toBeTruthy()
+  })
+})

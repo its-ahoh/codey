@@ -92,7 +92,13 @@ const ModelRow: React.FC<{
     if (apis.some(a => a.name === name)) throw new Error(`A key named "${name}" already exists.`)
     await onCreateKey({ ...key, name })
     // Functional update: the draft may have changed while the save was in flight.
-    setDraft(d => ({ ...d, apiKeyRef: name, provider: d.provider ?? key.provider }))
+    // A new model takes the protocol the new key serves, as picking it would.
+    const a = !!key.anthropicBaseUrl, o = !!key.openaiBaseUrl
+    setDraft(d => ({
+      ...d, apiKeyRef: name, provider: d.provider ?? key.provider,
+      ...(isNew && (a || o) && d.apiType !== 'cursor' && d.apiType !== 'grok'
+        ? { apiType: (a && o ? 'all' : a ? 'anthropic' : 'openai') as ApiType } : {}),
+    }))
     setAddingKey(false)
   }
 
@@ -276,7 +282,9 @@ const ModelRow: React.FC<{
         </>}
       </div>
       {picking && (
-        <ProviderPickerModal providers={providers} mode="model" onClose={() => setPicking(false)}
+        <ProviderPickerModal providers={providers} mode="model" initialProvider={draft.provider}
+          onClose={() => setPicking(false)}
+          onPickProvider={id => pickProvider(id)}
           onPickModel={(providerId, modelId) => pickProvider(providerId, modelId)} />
       )}
       {err && <div style={{ color: C.red, fontSize: 12, marginTop: 8 }}>{err}</div>}

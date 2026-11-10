@@ -6,7 +6,7 @@ import { formatMoney } from './ApiKeysTab'
 
 type Summary = UsageSummary & { balanceKeys: string[] }
 
-const SPANS = [{ days: 1, label: 'Today' }, { days: 7, label: '7 days' }, { days: 30, label: '30 days' }]
+const SPANS = [{ days: 1, label: '24 hours' }, { days: 7, label: '7 days' }, { days: 30, label: '30 days' }]
 
 export function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`
@@ -90,11 +90,12 @@ export const UsageTab: React.FC<{ isGatewayRunning: boolean }> = ({ isGatewayRun
       } />
 
       {t && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 14 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8, marginBottom: 14 }}>
           {[
             { label: 'Est. cost', value: formatUsd(t.costUsd) },
             { label: 'Runs', value: String(t.runs) },
-            { label: 'Input', value: formatTokens(t.input + t.cacheRead + t.cacheWrite) },
+            { label: 'Input', value: formatTokens(t.input) },
+            { label: 'Cache', value: formatTokens(t.cacheRead + t.cacheWrite) },
             { label: 'Output', value: formatTokens(t.output) },
           ].map(k => (
             <div key={k.label} style={{ padding: '10px 12px', borderRadius: 10, border: `1px solid ${C.border}`, background: C.surface2 }}>
