@@ -13,6 +13,7 @@ import { C } from '../theme'
 import { AppearanceTab } from './AppearanceTab'
 import { WhisperTab } from './WhisperTab'
 import { ApiKeysTab } from './ApiKeysTab'
+import { UsageTab } from './UsageTab'
 type Tab = 'general' | 'voice' | 'models' | 'agents' | 'memory' | 'workspaces' | 'botsTeams' | 'status'
 const GROUPS: { name: string; tabs: { key: Tab; label: string }[] }[] = [
   { name: 'App', tabs: [{ key: 'general', label: 'General' }, { key: 'voice', label: 'Voice' }] },
@@ -41,7 +42,7 @@ export const SettingsOverlay: React.FC<Props> = ({ onClose, initialTab }) => {
   const [tab, setTab] = useState<Tab>(
     initialTab?.startsWith('bot:') ? 'botsTeams' : (initialTab && TABS.some(t => t.key === initialTab)) ? (initialTab as Tab) : 'general'
   )
-  const [modelsView, setModelsView] = useState<'models' | 'keys'>('models')
+  const [modelsView, setModelsView] = useState<'models' | 'keys' | 'usage'>('models')
   const [teamView, setTeamView] = useState<'bots' | 'teams'>('bots')
   const [apiKeyCreateIntent, setApiKeyCreateIntent] = useState<'voice' | undefined>()
   const { isRunning, status, logs } = useGateway()
@@ -87,7 +88,7 @@ export const SettingsOverlay: React.FC<Props> = ({ onClose, initialTab }) => {
           <main style={styles.main}>
             <div style={styles.mainHeader}>
               <div>{activeTab.label}</div>
-              {tab === 'models' && <SubTabs value={modelsView} onChange={setModelsView} options={[{ key: 'models', label: 'Models' }, { key: 'keys', label: 'API keys' }]} />}
+              {tab === 'models' && <SubTabs value={modelsView} onChange={setModelsView} options={[{ key: 'models', label: 'Models' }, { key: 'keys', label: 'API keys' }, { key: 'usage', label: 'Usage' }]} />}
               {tab === 'botsTeams' && <SubTabs value={teamView} onChange={setTeamView} options={[{ key: 'bots', label: 'Bots' }, { key: 'teams', label: 'Teams' }]} />}
             </div>
             <div style={styles.mainContent}>
@@ -100,6 +101,7 @@ export const SettingsOverlay: React.FC<Props> = ({ onClose, initialTab }) => {
                 />
               )}
               {tab === 'models' && modelsView === 'models' && <SettingsTab isGatewayRunning={isRunning} />}
+              {tab === 'models' && modelsView === 'usage' && <UsageTab isGatewayRunning={isRunning} />}
               {tab === 'status'     && <StatusTab status={status} logs={logs} isRunning={isRunning} />}
               {tab === 'workspaces' && <WorkspacesTab isGatewayRunning={isRunning} />}
               {tab === 'botsTeams' && teamView === 'bots' && <BotsTab initialName={initialTab?.startsWith('bot:') ? initialTab.slice(4) : undefined} />}

@@ -1,22 +1,29 @@
-import { CodingAgent, AgentRequest, AgentResponse, McpServerSpec } from '../types';
+import { CodingAgent, AgentRequest, AgentResponse, McpServerSpec, isCliDefaultModelConfig } from '../types';
 import { CodingAgentAdapter } from './base';
 import { ClaudeCodeAdapter } from './claude-code';
 import { OpenCodeAdapter } from './opencode';
 import { CodexAdapter } from './codex';
 import { PiAdapter } from './pi';
+import { CursorAdapter } from './cursor';
+import { GrokAdapter } from './grok';
 import { syncCodeyGlobalSkills, syncCodeyProjectSkills } from './codey-skills';
 import { isBrowserSkillActive } from './browser-skill';
 import { isChromeCompanionSkillActive } from './chrome-companion-skill';
+import { isTerminalSkillActive } from './terminal-skill';
 
 export type { CodingAgentAdapter } from './base';
 export { ClaudeCodeAdapter } from './claude-code';
 export { OpenCodeAdapter } from './opencode';
 export { CodexAdapter } from './codex';
 export { PiAdapter } from './pi';
+export { CursorAdapter } from './cursor';
+export { GrokAdapter } from './grok';
 export { applyModelEnv, unwiredAllProtocols } from './env';
 export * from './codey-skills';
 export * from './browser-skill';
 export * from './chrome-companion-skill';
+export * from './bundled-skill';
+export * from './terminal-skill';
 export * from './skill-pack';
 export * from './tool-policy';
 
@@ -70,6 +77,41 @@ export function addCodeyBrowserTools(
 }
 
 /**
+ * Hand the Terminal bridge credentials to a task-performing turn of a Codey
+ * desktop chat. The Terminal panel belongs to a chat, so a turn with no chat
+ * (a channel message, an automation) gets nothing. Same turn gate as the
+ * browser: advisor, housekeeping and tool-restricted turns are excluded.
+ */
+export function addCodeyTerminalTools(
+  request: AgentRequest,
+  terminalSkillActive: boolean,
+  env: NodeJS.ProcessEnv = process.env,
+): AgentRequest {
+  const socket = env.CODEY_TERMINAL_SOCKET;
+  const token = env.CODEY_TERMINAL_TOKEN;
+  const runtime = env.CODEY_TERMINAL_RUNTIME;
+  const cli = env.CODEY_TERMINAL_CLI;
+  if (!terminalSkillActive || !socket || !token || !runtime || !cli) return request;
+  if (request.browserTools !== true || request.allowedTools) return request;
+  const workingDir = request.context?.workingDir;
+  const chatId = request.browserChatId;
+  if (!workingDir || !chatId) return request;
+
+  return {
+    ...request,
+    extraEnv: {
+      ...(request.extraEnv ?? {}),
+      CODEY_TERMINAL_SOCKET: socket,
+      CODEY_TERMINAL_TOKEN: token,
+      CODEY_TERMINAL_CLI: cli,
+      CODEY_TERMINAL_RUNTIME: runtime,
+      CODEY_TERMINAL_CHAT_ID: chatId,
+      CODEY_TERMINAL_CWD: workingDir,
+    },
+  };
+}
+
+/**
  * Merge user-configured external MCP servers into a task-performing agent
  * turn. Uses the same turn gate as the browser plugin — `browserTools` doubles
  * as the "tools-capable turn" marker, so advisor/housekeeping/tool-restricted
@@ -95,12 +137,15 @@ export class AgentFactory {
   private agents: Map<CodingAgent, CodingAgentAdapter> = new Map();
   private envProvider?: (agent: CodingAgent) => Record<string, string> | undefined;
   private externalMcpProvider?: () => Record<string, McpServerSpec> | undefined;
+  private runObserver?: (agent: CodingAgent, request: AgentRequest, response: AgentResponse) => void;
 
   constructor() {
     this.register('claude-code', new ClaudeCodeAdapter());
     this.register('opencode', new OpenCodeAdapter());
     this.register('codex', new CodexAdapter());
     this.register('pi', new PiAdapter());
+    this.register('cursor', new CursorAdapter());
+    this.register('grok', new GrokAdapter());
   }
 
   register(agent: CodingAgent, adapter: CodingAgentAdapter): void {
@@ -128,6 +173,15 @@ export class AgentFactory {
     this.externalMcpProvider = provider;
   }
 
+  /**
+   * Called after every adapter run with the request and its response — the
+   * one place every agent turn passes through, so usage accounting sees
+   * Advisor, Aide and bot turns alike. Observer errors are swallowed.
+   */
+  setRunObserver(observer: (agent: CodingAgent, request: AgentRequest, response: AgentResponse) => void): void {
+    this.runObserver = observer;
+  }
+
   resetSessions(): void {
     for (const adapter of this.agents.values()) {
       adapter.resetSession?.();
@@ -150,6 +204,11 @@ export class AgentFactory {
       };
     }
 
+    // The "default" choice: pass no model, so the CLI uses its own.
+    if (isCliDefaultModelConfig(request.model)) {
+      request = { ...request, model: undefined };
+    }
+
     // Only auto-populate when the caller hasn't already provided extraEnv
     // (e.g. tests can stub it). Merge so the caller's keys win over config.
     if (this.envProvider && !request.extraEnv) {
@@ -165,13 +224,16 @@ export class AgentFactory {
     // last without a restart.
     let browserSkillActive = false;
     let chromeSkillActive = false;
+    let terminalSkillActive = false;
     try {
       browserSkillActive = isBrowserSkillActive();
       chromeSkillActive = isChromeCompanionSkillActive();
+      terminalSkillActive = isTerminalSkillActive();
     } catch {
       // Unreadable home: no skill, so no capability.
     }
     request = addCodeyBrowserTools(request, browserSkillActive, process.env, chromeSkillActive);
+    request = addCodeyTerminalTools(request, terminalSkillActive, process.env);
     request = addExternalMcpServers(request, this.externalMcpProvider?.());
 
     // `~/.codey/skills` and `<project>/.codey/skills` are Codey's global and
@@ -192,6 +254,8 @@ export class AgentFactory {
       }
     }
 
-    return adapter.run(request);
+    const response = await adapter.run(request);
+    try { this.runObserver?.(agent, request, response); } catch { /* accounting must not fail the run */ }
+    return response;
   }
 }

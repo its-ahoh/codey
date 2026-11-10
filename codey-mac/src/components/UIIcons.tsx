@@ -2,7 +2,7 @@ import React from 'react'
 
 export type IconName =
   | 'phone' | 'activity' | 'add' | 'alert' | 'archive' | 'bell' | 'book' | 'bot' | 'chat' | 'check' | 'chevron' | 'close' | 'disclosure'
-  | 'clock' | 'code' | 'copy' | 'edit' | 'file' | 'folder' | 'folder-open' | 'key' | 'link' | 'mic' | 'more' | 'panel' | 'panel-bottom' | 'panel-right' | 'play' | 'plus'
+  | 'clock' | 'code' | 'copy' | 'edit' | 'file' | 'folder' | 'folder-open' | 'key' | 'link' | 'mic' | 'more' | 'panel' | 'panel-left' | 'panel-bottom' | 'panel-right' | 'play' | 'plus'
   | 'waveform' | 'git-branch' | 'git-merge' | 'pull-request' | 'globe' | 'match-case' | 'overview' | 'refresh' | 'search' | 'server' | 'settings' | 'sparkle' | 'split' | 'star' | 'terminal' | 'tools' | 'trash' | 'users' | 'workspace'
   | 'telegram' | 'discord' | 'imessage' | 'undo' | 'download' | 'download-all'
 
@@ -65,6 +65,9 @@ export const UIIcon: React.FC<Props> = ({ name, size = 16, strokeWidth = 1.8, fi
     more: <><circle fill="currentColor" cx="5" cy="12" r="1.5" /><circle fill="currentColor" cx="12" cy="12" r="1.5" /><circle fill="currentColor" cx="19" cy="12" r="1.5" /></>,
     overview: <><rect {...common} x="3" y="4" width="18" height="16" rx="2" /><path {...common} d="M3 10h18M10 10v10" /><path {...common} d="M7 7h.01M13 14h5M13 17h3" /></>,
     panel: <><rect {...common} x="3" y="3" width="18" height="18" rx="2" /><path {...common} d="M15 3v18" />{filled && <path fill="currentColor" stroke="none" d="M15 3h6v18h-6z" />}</>,
+    // Mirror of `panel`: the divider and the open-state fill sit on the left,
+    // so the left sidebar toggle points at its own side.
+    'panel-left': <><rect {...common} x="3" y="3" width="18" height="18" rx="2" /><path {...common} d="M9 3v18" />{filled && <path fill="currentColor" stroke="none" d="M3 3h6v18H3z" />}</>,
     'panel-bottom': <><rect {...common} x="3" y="3" width="18" height="18" rx="2" /><path {...common} d="M3 15h18" /><path {...common} d="M9 9l3 3 3-3" /></>,
     'panel-right': <><rect {...common} x="3" y="3" width="18" height="18" rx="2" /><path {...common} d="M15 3v18" /><path {...common} d="M9 8l3 4-3 4" /></>,
     play: <path {...common} d="M8 5l11 7-11 7z" />,

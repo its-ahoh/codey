@@ -218,7 +218,7 @@ const PluginDetails: React.FC<DetailProps> = ({
 }) => {
   const installed = plugin.state !== 'absent'
   const enabled = plugin.state === 'installed'
-  const bundled = plugin.id === 'chrome-companion'
+  const bundled = plugin.id === 'chrome-companion' || plugin.id === 'terminal'
   const hasSettings = SETTINGS_PLUGINS.has(plugin.id) && (bundled || installed)
 
   return (

@@ -262,10 +262,10 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       }
 
       // Ensure common bin paths are available (Electron apps may have minimal PATH)
-      const { withCommonBinPaths } = require('./env') as typeof import('./env');
+      const { withCommonBinPaths, preferLocalBin } = require('./env') as typeof import('./env');
       withCommonBinPaths(env);
 
-      const claudeBin = process.env.CLAUDE_BIN || 'claude';
+      const claudeBin = process.env.CLAUDE_BIN || preferLocalBin('claude', env);
       this.debug(`[claude-code] Spawning: ${claudeBin} ${args.slice(0, -1).join(' ')} "<prompt>"`);
       const childProcess: ChildProcess = spawn(claudeBin, args, {
         stdio: [request.interactive ? 'inherit' : 'pipe', 'pipe', request.interactive ? 'inherit' : 'pipe'],

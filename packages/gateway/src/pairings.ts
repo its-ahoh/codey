@@ -4,7 +4,7 @@ import { ChannelKind } from '@codey/core';
 
 export interface PairingPrefs {
   workspace?: string;
-  agent?: 'claude-code' | 'opencode' | 'codex' | 'pi';
+  agent?: 'claude-code' | 'opencode' | 'codex' | 'pi' | 'cursor' | 'grok';
   model?: string;
 }
 

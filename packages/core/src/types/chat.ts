@@ -144,6 +144,11 @@ export interface ChatMessage {
    * primary's failure text, shown on demand.
    */
   fallback?: { from: string; to: string; reason?: string };
+  /**
+   * The turn failed; `content` is what the user sees (partial reply and/or the
+   * error). Kept out of agent context: resume checkpoint, history, catch-up.
+   */
+  failed?: boolean;
   /** Extended-thinking for a single-agent assistant message (collapsed in UI). */
   thinking?: string;
   /** Per-team-step extended-thinking, keyed by step number. */

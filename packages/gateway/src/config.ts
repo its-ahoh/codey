@@ -39,6 +39,8 @@ export interface GatewayConfigJson {
     'opencode'?: AgentSlot;
     'codex'?: AgentSlot;
     'pi'?: AgentSlot;
+    'cursor'?: AgentSlot;
+    'grok'?: AgentSlot;
   };
   /** Global, reusable model catalog. Each agent references an entry by name. */
   models: ModelEntry[];
@@ -841,7 +843,7 @@ export class ConfigManager extends EventEmitter {
     }
     console.log(`\nAgents:`);
     const inOrder = new Set(this.config.fallback.order.map(e => e.agent));
-    for (const a of ['claude-code', 'opencode', 'codex', 'pi'] as const) {
+    for (const a of ['claude-code', 'opencode', 'codex', 'pi', 'cursor', 'grok'] as const) {
       console.log(`  ${inOrder.has(a) ? '✅' : '❌'} ${a}`);
     }
     console.log(`\nPriority: ${this.config.fallback.enabled ? '✅' : '❌'} order=${formatFallbackOrder(this.config.fallback.order)}`);
@@ -852,7 +854,7 @@ export class ConfigManager extends EventEmitter {
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
-const KNOWN_AGENTS: ReadonlySet<CodingAgent> = new Set(['claude-code', 'opencode', 'codex', 'pi']);
+const KNOWN_AGENTS: ReadonlySet<CodingAgent> = new Set(['claude-code', 'opencode', 'codex', 'pi', 'cursor', 'grok']);
 
 /**
  * Coerce a raw fallback blob (legacy `string[]` order or new `FallbackEntry[]`)
@@ -899,6 +901,8 @@ function getDefaultConfig(): GatewayConfigJson {
       'opencode':    {},
       'codex':       {},
       'pi':          {},
+      'cursor':      {},
+      'grok':        {},
     },
     models: [
       { apiType: 'anthropic', model: 'claude-sonnet-4-5', provider: 'anthropic' },

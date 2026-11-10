@@ -8,6 +8,8 @@ import { useChats } from '../hooks/useChats'
 import { C } from '../theme'
 import { BotAvatar } from './BotAvatar'
 import { UIIcon } from './UIIcons'
+import { InlineRenameTitle } from './InlineRenameTitle'
+import { renameBotChat } from './renameBotChat'
 
 interface Props extends SidebarCommonProps {
   newBotRequested: boolean
@@ -16,7 +18,7 @@ interface Props extends SidebarCommonProps {
 
 export function BotListPanel(props: Props) {
   const { newBotRequested, onNewBotHandled } = props
-  const { state, openBot, selectChat } = useChats()
+  const { state, openBot, selectChat, renameChat } = useChats()
   const mounted = useRef(true)
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
   const [bots, setBots] = useState<BotDto[]>([])
@@ -116,9 +118,19 @@ export function BotListPanel(props: Props) {
         const unreadCount = chat && unread ? unreadReplyCount(chat) : 0
         const unreadLabel = `${unreadCount} unread ${unreadCount === 1 ? 'message' : 'messages'}`
         const pinned = pins.includes(key)
+        const rowDisabled = !chat && opening !== null
+        const activate = () => { if (rowDisabled) return; if (chat) selectChat(chat.id); else if (bot) void open(bot.name) }
         const status = messageMatch?.snippet ?? (opening === bot?.name ? 'Opening…' : queued ? 'Queued' : running ? 'Working' : awaiting ? 'Waiting for you' : null)
         return <div key={key} className="sidebar-row bot-row" data-active={active || undefined} style={{ display: 'flex', alignItems: 'center', gap: 2, background: active ? C.surface3 : 'transparent', borderRadius: 8, marginBottom: 1 }}>
-          <button onClick={() => chat ? selectChat(chat.id) : bot && void open(bot.name)} disabled={!chat && opening !== null} aria-pressed={active} style={{ ...textButton, flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', textAlign: 'left', gap: 9, padding: '6px 8px', fontSize: 13 }}>
+          {/* A div, not a button, so the rename input can live inside the row. */}
+          <div role="button" tabIndex={0} aria-pressed={active} aria-disabled={rowDisabled || undefined}
+            onClick={activate}
+            onKeyDown={event => {
+              if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return
+              event.preventDefault()
+              activate()
+            }}
+            style={{ ...textButton, flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', textAlign: 'left', gap: 9, padding: '6px 8px', fontSize: 13 }}>
             <span style={{ position: 'relative', display: 'inline-flex', flexShrink: 0 }}>
               {chat?.botChat?.kind === 'group' ? <TeamAvatar name={title} members={chat.botChat.members} bots={bots} size={26} state={avatarState} /> : <BotAvatar name={title} config={bot?.config.avatar} size={26} state={avatarState} />}
               {unreadCount > 0 && <span title={unreadLabel} aria-label={unreadLabel} style={{
@@ -128,11 +140,13 @@ export function BotListPanel(props: Props) {
               }}>{unreadCount > 99 ? '99+' : unreadCount}</span>}
             </span>
             <span style={{ minWidth: 0, flex: 1 }}>
-              <span style={{ display: 'block', color: active || unread ? C.fg : C.fg2, fontWeight: unread ? 600 : undefined, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</span>
+              {chat
+                ? <InlineRenameTitle title={title} onRename={next => renameBotChat(chat, bot, next, renameChat)} style={{ display: 'block', color: active || unread ? C.fg : C.fg2, fontWeight: unread ? 600 : undefined, cursor: 'pointer' }} />
+                : <span style={{ display: 'block', color: active || unread ? C.fg : C.fg2, fontWeight: unread ? 600 : undefined, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</span>}
               {status && <span title={messageMatch?.snippet} style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, color: C.fg3, marginTop: 1 }}>{status}</span>}
               {messageMatch && <span style={{ display: 'block', fontSize: 11, color: C.accent, marginTop: 3 }}>{messageMatch.count} matching {messageMatch.count === 1 ? 'message' : 'messages'}</span>}
             </span>
-          </button>
+          </div>
           <button className="bot-row-action" style={{ ...textButton, color: pinned ? C.fg2 : C.fg3 }} aria-label={`${pinned ? 'Unpin' : 'Pin'} ${title}`} title={pinned ? 'Unpin chat' : 'Pin chat'} aria-pressed={pinned} onClick={() => void togglePin(key, chat ? undefined : bot?.name)}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill={pinned ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.7"><path d="M8 3h8l-1 7 4 4v2H5v-2l4-4z" /><path d="M12 16v6" /></svg>
           </button>

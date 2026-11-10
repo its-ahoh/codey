@@ -44,8 +44,9 @@ describe('modelFitsAgent', () => {
     }
   })
 
-  it('makes an "all" model available to every known agent', () => {
-    for (const agent of Object.keys(AGENT_API_TYPE)) {
+  it('makes an "all" model available to every protocol-based agent', () => {
+    // Cursor and Grok are the exceptions: each only takes its own vendor-key models.
+    for (const agent of Object.keys(AGENT_API_TYPE).filter(a => a !== 'cursor' && a !== 'grok')) {
       expect(modelFitsAgent('all', agent)).toBe(true)
     }
   })
@@ -93,3 +94,17 @@ describe('agentsPinnedTo', () => {
     expect(agentsPinnedTo('openai')).not.toContain('opencode')
   })
 })
+
+describe('cursor models', () => {
+  it('only fit the cursor agent, and the cursor agent only takes them', () => {
+    expect(modelFitsAgent('cursor', 'cursor')).toBe(true)
+    expect(modelFitsAgent('all', 'cursor')).toBe(false)
+    expect(modelFitsAgent('anthropic', 'cursor')).toBe(false)
+    for (const agent of ['claude-code', 'codex', 'opencode', 'pi']) {
+      expect(modelFitsAgent('cursor', agent)).toBe(false)
+    }
+    // A picker with no agent chosen (e.g. Aide on its default) must not offer one.
+    expect(modelFitsApiType('cursor', undefined)).toBe(false)
+  })
+})
+

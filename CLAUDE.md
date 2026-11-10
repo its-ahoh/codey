@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Codey — a TypeScript gateway that routes prompts from chat platforms (Telegram, Discord, iMessage) to coding agents (Claude Code, OpenCode, Codex, pi). Supports multi-workspace bot teams, conversation context, and parallel agent execution.
+Codey — a TypeScript gateway that routes prompts from chat platforms (Telegram, Discord, iMessage) to coding agents (Claude Code, OpenCode, Codex, pi, Cursor, Grok Build). Supports multi-workspace bot teams, conversation context, and parallel agent execution.
 
 ## Commands
 
@@ -35,7 +35,7 @@ own Codey without sharing its data; see `codey-mac/e2e/README.md`.
 
 - **Gateway** (`src/gateway.ts`) — Central orchestrator. Handles message routing, command parsing, rate limiting (10s cooldown), response chunking (2000 char max), workspace switching, and bot/team execution.
 - **Channel handlers** (`src/channels/`) — Abstract base + platform implementations (Telegram, Discord, iMessage). Each emits UserMessage to gateway via callback.
-- **Agent adapters** (`src/agents/`) — Abstract base + implementations for claude-code, opencode, codex, pi. Each spawns a CLI process with 5-minute timeout. AgentFactory creates instances.
+- **Agent adapters** (`src/agents/`) — Abstract base + implementations for claude-code, opencode, codex, pi, cursor, grok (grok is driven over ACP, `grok agent stdio`, via `agents/acp-client.ts`). Each spawns a CLI process with 5-minute timeout. AgentFactory creates instances.
 - **Workspace manager** (`src/workspace.ts`) — Manages workspace lifecycle. Each workspace has a `workspace.json` (workingDir + bot configs) and `bots/` directory. Switching workspaces sets the agent's working directory. User and project memories are stored exclusively in Co-memo; project memory is scoped by directory path.
 - **Bot system** (`src/bots.ts`) — Bots have personality defined in markdown files and execution config in `workspace.json`. Bots run individually (`/bot <name> <task>`) or as teams (`/team <task>`). Teams dispatch in one of three modes: `sequential` (every member runs in order, carrying output forward), `auto` (the Advisor picks the relevant subset), or `roundtable` (all members run concurrently in an Advisor-moderated discussion).
 - **Flow graphs (Sequential)** (`src/team-graph.ts`, `src/judge.ts`) — A `sequential` team may optionally define a `graph` (`{ entry, maxHops, nodes, edges }`) in its config. Nodes are bots (plus `start`/`end`); edges carry natural-language conditions. After each bot runs, a judge LLM (reuses the Advisor's `gateway.json` `advisor.{agent, model}`) picks the next edge by its condition, so flows can branch and loop back to an earlier bot for revision. Reaching an `end` node or the `maxHops` cap stops the run; `validateGraph` drops an invalid graph back to plain linear Sequential. Bots can pause mid-flow with `[ASK_USER]`; pause state is persisted and resumed on both the channel (`handleMessage`) and chat/Mac (`sendToChat`) surfaces via the shared `TeamEmitter` continuation path (`src/team-emitter.ts`) — the same path also powers `sequential` and `auto` resume on chat. Authored on a drag-and-drop canvas in the Mac app (`codey-mac` `FlowEditor.tsx`). `auto` and `roundtable` are unaffected.

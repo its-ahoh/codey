@@ -8,6 +8,16 @@ const key = {
 };
 
 describe('bindModelToApiKey', () => {
+  it('binds a cursor model to its key with no endpoint at all', () => {
+    const cfg = bindModelToApiKey({ model: 'gpt-5', apiType: 'cursor' }, key);
+    expect(cfg.apiKey).toBe('sk-shared');
+    expect(cfg.apiType).toBe('cursor');
+    expect(cfg.provider).toBe('cursor');
+    expect(cfg.baseUrl).toBeUndefined();
+    expect(cfg.anthropicBaseUrl).toBeUndefined();
+    expect(cfg.openaiBaseUrl).toBeUndefined();
+  });
+
   it('gives an "all" model both endpoints so either protocol can be wired up', () => {
     const cfg = bindModelToApiKey({ model: 'acme-max', apiType: 'all' }, key);
     expect(cfg.anthropicBaseUrl).toBe('https://proxy.test/anthropic');

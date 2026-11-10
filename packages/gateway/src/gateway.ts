@@ -11,7 +11,7 @@ import { publishTeamFinal, composeTeamFinal, planTeamFooter, isSoloRun, parseTea
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { writeTranscriptSlice, TranscriptSlice, AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, runAide, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, parseBotMentions, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, BlackboardSnapshot, BotAnchor, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, applySkill, playbookSkillName, playbookNameTaken, writePlaybookSkill, removePlaybookSkill, absorbPlaybookEdit, reconcilePlaybookSkills, playbookSkillsUsed, PlaybookHome, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, AutomationCheck, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, pickVoiceAck, needsDigest, buildSpeechDigestPrompt, stripForSpeech, needsPolish, buildVoicePolishPrompt, sanitizePolished, DEFAULT_POLISH_TIMEOUT_MS, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort, DEFAULT_THINKING_EFFORT, ApiType, unwiredAllProtocols } from '@codey/core';
+import { writeTranscriptSlice, TranscriptSlice, AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, runAide, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, parseBotMentions, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, BlackboardSnapshot, BotAnchor, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, applySkill, playbookSkillName, playbookNameTaken, writePlaybookSkill, removePlaybookSkill, absorbPlaybookEdit, reconcilePlaybookSkills, playbookSkillsUsed, PlaybookHome, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, AutomationCheck, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, pickVoiceAck, needsDigest, buildSpeechDigestPrompt, stripForSpeech, needsPolish, buildVoicePolishPrompt, sanitizePolished, DEFAULT_POLISH_TIMEOUT_MS, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort, DEFAULT_THINKING_EFFORT, ApiType, DEDICATED_API_TYPES, AGENT_API_TYPE, CLI_DEFAULT_MODEL, cliDefaultModelConfig, isCliDefaultModelConfig, unwiredAllProtocols } from '@codey/core';
 import { randomUUID, createHash } from 'crypto';
 import { AutomationStore } from './automations/store';
 import { AutomationEngine, TargetResult } from './automations/engine';
@@ -28,7 +28,7 @@ import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, VoiceChan
 import { synthesizeSpeech } from './voice-tts';
 import { runTextCompletion, streamTextCompletion, canRunDirectly } from './text-completion';
 import { AgentFactory, isThinkingEffort } from '@codey/core';
-import { pruneCodeyTmp } from '@codey/core';
+import { pruneCodeyTmp, appendUsage, pruneUsage, usageRecordFrom } from '@codey/core';
 import { Logger } from './logger';
 import { ContextManager, ContextWindow } from '@codey/core';
 import { WorkspaceManager, TeamConfigRaw, TeamConfig, DEFAULT_ROUNDTABLE_SETTINGS, normalizeDispatchMode } from '@codey/core';
@@ -192,6 +192,40 @@ export function summarizeFailure(response: AgentResponse): string | undefined {
   return raw.length > FALLBACK_REASON_MAX ? `${raw.slice(0, FALLBACK_REASON_MAX).trimEnd()}…` : raw;
 }
 
+/** The adapter's own error for a failed turn, without a leading "Error:"
+ *  (CLIs often write one) and truncated like a fallback reason. */
+export function failedTurnReason(response: AgentResponse | undefined): string | undefined {
+  const raw = response?.error?.trim().replace(/^error:\s*/i, '');
+  if (!raw) return undefined;
+  return raw.length > FALLBACK_REASON_MAX ? `${raw.slice(0, FALLBACK_REASON_MAX).trimEnd()}…` : raw;
+}
+
+/** The model name a reply is labelled with. "default" when the agent ran on
+ *  its CLI's own default: no model, or one a dedicated agent (Cursor, Grok)
+ *  does not take and so never passed on. */
+export function turnModelLabel(agent: CodingAgent, model?: Pick<ModelConfig, 'model' | 'apiType'>): string {
+  if (!model?.model) return 'default';
+  const want = AGENT_API_TYPE[agent];
+  if (DEDICATED_API_TYPES.has(want) && model.apiType && model.apiType !== want) return 'default';
+  return model.model;
+}
+
+/** What a failed chat turn shows: whatever the agent already wrote (streamed,
+ *  or returned as output with no error), then the failure, then why each
+ *  fallback failed. Never blank, and never mistakes a reply for the error. */
+export function failedTurnText(response: AgentResponse | undefined, streamedText: string): string {
+  // Adapters often copy the error into output too; that is not a reply.
+  const output = response?.output?.trim();
+  const written = (streamedText.trim() || (output && output !== response?.error?.trim() ? output : ''));
+  const reason = failedTurnReason(response);
+  const parts = [written, reason ? `❌ Error: ${reason}` : '❌ The agent stopped before finishing.'];
+  const fallbacks = response?.fallbackFailures;
+  if (fallbacks?.length) {
+    parts.push(['Fallbacks also failed:', ...fallbacks.map(f => f.reason ? `- ${f.agent}: ${f.reason}` : `- ${f.agent}`)].join('\n'));
+  }
+  return parts.filter(Boolean).join('\n\n');
+}
+
 /**
  * The log line for an 'all' model whose key covers only one protocol, or
  * undefined when there is nothing to say.
@@ -235,13 +269,16 @@ export function bindModelToApiKey(
   apiKey?: { apiKey: string; anthropicBaseUrl?: string; openaiBaseUrl?: string },
 ): ModelConfig {
   const isAll = entry.apiType === 'all';
-  const baseUrl = apiKey
+  // A dedicated key (Cursor, xAI) has no endpoint to point at: those CLIs
+  // always talk to their own vendor, so any base URL on the key is ignored.
+  const baseUrl = apiKey && !DEDICATED_API_TYPES.has(entry.apiType)
     ? (entry.apiType === 'anthropic' ? apiKey.anthropicBaseUrl
       : entry.apiType === 'openai' ? apiKey.openaiBaseUrl
       : apiKey.anthropicBaseUrl ?? apiKey.openaiBaseUrl)
     : undefined;
   return {
-    provider: entry.provider ?? (entry.apiType === 'openai' ? 'openai' : 'anthropic'),
+    provider: entry.provider
+      ?? (entry.apiType === 'openai' ? 'openai' : DEDICATED_API_TYPES.has(entry.apiType) ? entry.apiType : 'anthropic'),
     model: entry.model,
     apiKey: apiKey?.apiKey,
     baseUrl,
@@ -550,27 +587,21 @@ export class Codey {
   }
 
   /**
-   * Per-agent default model name. Looks up the first fallback entry for the
-   * agent that pins a model. When no entry pins a model for this agent, falls
-   * back to the first model in the global catalog so fallback entries without
-   * a pinned model don't get silently skipped.
+   * Per-agent default model name: the first fallback entry for the agent that
+   * pins a model. Nothing pinned means undefined — Codey passes no model and
+   * the agent's CLI uses its own default. Codey never guesses one from the
+   * catalog: a guessed model may not be the one the user wants, or one the
+   * agent can run at all.
    */
   private getDefaultModelName(agent: CodingAgent): string | undefined {
     const fb = this.configManager?.getFallback() ?? this.config.fallback;
-    const pinned = fb?.order.find(e => e.agent === agent && !!e.model)?.model;
-    if (pinned) return pinned;
-    // No model pinned for this agent in the fallback order — pick the first
-    // catalog model as a last resort. (The adapter may later reject it if the
-    // apiType doesn't match, but that's still better than silently skipping
-    // the entire fallback entry.)
-    const catalog = this.configManager?.listModels() ?? this.config.models;
-    return catalog?.[0]?.model;
+    return fb?.order.find(e => e.agent === agent && !!e.model)?.model;
   }
 
   private getEffectiveModel(agent?: CodingAgent): string {
     const effectiveAgent = agent || this.getDefaultAgent();
     const modelName = this.getDefaultModelName(effectiveAgent);
-    if (!modelName) return 'unknown';
+    if (!modelName) return CLI_DEFAULT_MODEL;
     const entry = this.configManager?.getModel(modelName);
     return entry?.model || modelName;
   }
@@ -707,7 +738,8 @@ export class Codey {
     const already = chat.compaction?.summarizedUpTo ?? 0;
     const cutoff = chat.messages.length - KEEP_TAIL;
     if (cutoff <= already) return null;
-    const toFold = chat.messages.slice(already, cutoff);
+    // A failed turn's error is for the user, not for the summary agents read.
+    const toFold = chat.messages.slice(already, cutoff).filter(m => !m.failed);
     if (toFold.length === 0) return null;
 
     const opts = this.getAideOptions();
@@ -781,6 +813,21 @@ export class Codey {
     this.agentFactory.setExternalMcpProvider(() =>
       this.configManager?.getEnabledExternalMcpServers()
     );
+    // Usage accounting for Settings ▸ Models & keys ▸ Usage. The key binding
+    // is read from the live catalogue at record time, so a renamed model or
+    // key still lands under the name the user sees now.
+    this.agentFactory.setRunObserver((agent, request, response) => {
+      // The "default" choice passes no model to the CLI; log it as such, not
+      // as a model literally named "default".
+      const model = isCliDefaultModelConfig(request.model) ? undefined : request.model?.model;
+      const entry = model ? this.configManager?.getModel(model) : undefined;
+      const apiKey = entry?.apiKeyRef;
+      // The key's provider says who bills it; a keyless model falls back to
+      // the provider picked on the model itself.
+      const provider = (apiKey ? this.configManager?.getApiKey(apiKey)?.provider : undefined) ?? entry?.provider;
+      const record = usageRecordFrom(agent, response, { model, apiKey, provider });
+      if (record) appendUsage(record);
+    });
     this.logger = logger || Logger.getInstance();
     this.contextManager = new ContextManager({
       ttlMs: (config.context?.ttlMinutes ?? 60) * 60 * 1000,
@@ -1757,6 +1804,8 @@ export class Codey {
     // actively writing — a leftover from a crashed run would otherwise sit
     // there until the next one.
     pruneCodeyTmp();
+    // Keep 90 days of usage so the log can't grow without bound.
+    pruneUsage(90 * 24 * 60 * 60 * 1000);
 
     // Load workspace and bots
     await this.workspaceManager.load();
@@ -1828,7 +1877,7 @@ export class Codey {
       context: () => ({
         workspaces: this.getWorkspaceList(),
         teams: Object.keys(this.configManager?.getTeams() ?? {}),
-        agents: ['claude-code', 'opencode', 'codex', 'pi'] as CodingAgent[],
+        agents: ['claude-code', 'opencode', 'codex', 'pi', 'cursor', 'grok'] as CodingAgent[],
         models: (this.configManager?.listModels() ?? this.config.models ?? []).map(m => m.model),
         tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
         nowIso: new Date().toString(),
@@ -1906,7 +1955,8 @@ export class Codey {
       if (a.target.sandbox && !opts?.resume) {
         await openSandbox(this.automationSandboxOps(a, chatId, logSandbox), a.name, runId ?? randomUUID());
       }
-      const { response } = await this.sendToChat(chatId, text, sink);
+      const { response, error } = await this.sendToChat(chatId, text, sink);
+      if (error) return { output: response, error };
       parked = detectParked(this.chatManager.get(chatId), a.target, response);
       return parked ? { output: response, parked } : { output: response };
     } catch (err) {
@@ -2894,8 +2944,8 @@ export class Codey {
         await this.cmdAgent(args, chatId, channel);
         if (this.isPairableChannel(channel) && args.length > 0) {
           const a = args[0].toLowerCase();
-          if (['claude-code', 'opencode', 'codex', 'pi'].includes(a)) {
-            this.pairingStore.updatePrefs(channel, message.userId, { agent: a as 'claude-code' | 'opencode' | 'codex' | 'pi' });
+          if (['claude-code', 'opencode', 'codex', 'pi', 'cursor', 'grok'].includes(a)) {
+            this.pairingStore.updatePrefs(channel, message.userId, { agent: a as 'claude-code' | 'opencode' | 'codex' | 'pi' | 'cursor' | 'grok' });
           }
         }
         break;
@@ -3148,7 +3198,7 @@ export class Codey {
   private async cmdAgent(args: string[], chatId: string, channel: ChannelType): Promise<void> {
     if (args.length > 0) {
       const agentName = args[0].toLowerCase();
-      const validAgents: CodingAgent[] = ['claude-code', 'opencode', 'codex', 'pi'];
+      const validAgents: CodingAgent[] = ['claude-code', 'opencode', 'codex', 'pi', 'cursor', 'grok'];
       if (validAgents.includes(agentName as CodingAgent)) {
         // Persist via the canonical setter so fallback.order[0] stays in sync;
         // the runtime config gets refreshed on the next applyConfig() event.
@@ -3164,7 +3214,7 @@ export class Codey {
         await this.sendResponse({
           chatId,
           channel,
-          text: `Unknown agent: ${agentName}\n\nAvailable: claude-code, opencode, codex, pi`,
+          text: `Unknown agent: ${agentName}\n\nAvailable: claude-code, opencode, codex, pi, cursor, grok`,
         });
       }
     } else {
@@ -3893,7 +3943,7 @@ Example: /model gpt-4.1 write a Python script`;
     });
 
     // Get enabled agents
-    const enabledAgents: CodingAgent[] = ['claude-code', 'opencode', 'codex', 'pi'];
+    const enabledAgents: CodingAgent[] = ['claude-code', 'opencode', 'codex', 'pi', 'cursor', 'grok'];
 
     // Run all agents in parallel (with per-agent fallback)
     const results = await Promise.allSettled(
@@ -5690,7 +5740,7 @@ Example: /model gpt-4.1 write a Python script`;
       let prompt = '';
 
       // Check if combined with prompt
-      const promptMatch = text.match(/\/agent\s+(claude-code|opencode|codex|pi)\s+(.+)/i);
+      const promptMatch = text.match(/\/agent\s+(claude-code|opencode|codex|pi|cursor|grok)\s+(.+)/i);
       if (promptMatch) {
         agent = promptMatch[1] as CodingAgent;
         prompt = promptMatch[2];
@@ -5708,7 +5758,7 @@ Example: /model gpt-4.1 write a Python script`;
     }
 
     // Not a command - parse agent/model from anywhere in text
-    const agentMatch = text.match(/\/agent\s+(claude-code|opencode|codex|pi)/i);
+    const agentMatch = text.match(/\/agent\s+(claude-code|opencode|codex|pi|cursor|grok)/i);
     const agent = (agentMatch ? agentMatch[1] : this.getDefaultAgent()) as CodingAgent;
 
     const modelMatch = text.match(/\/model\s+(\S+)/i);
@@ -5719,7 +5769,7 @@ Example: /model gpt-4.1 write a Python script`;
 
     // Remove inline commands from prompt, but preserve the rest
     const prompt = text
-      .replace(/\/agent\s+(claude-code|opencode|codex|pi)\s*/i, '')
+      .replace(/\/agent\s+(claude-code|opencode|codex|pi|cursor|grok)\s*/i, '')
       .replace(/\/model\s+\S+\s*/i, '')
       .replace(/^\/(help|status|clear|reset|model|agents|config)\s*/i, '')
       .trim();
@@ -5727,7 +5777,7 @@ Example: /model gpt-4.1 write a Python script`;
     return { command: '', args: [], agent, model, prompt };
   }
 
-  private static readonly ALL_AGENTS: CodingAgent[] = ['claude-code', 'opencode', 'codex', 'pi'];
+  private static readonly ALL_AGENTS: CodingAgent[] = ['claude-code', 'opencode', 'codex', 'pi', 'cursor', 'grok'];
 
   private getEnabledAgents(): CodingAgent[] {
     // Enablement is membership in fallback.order. Order matters: the priority
@@ -5827,6 +5877,7 @@ Example: /model gpt-4.1 write a Python script`;
     // same combination. Same agent with a different model is allowed.
     const originalModel = request.model?.model;
     const seen = new Set<string>([`${agent}::${originalModel ?? ''}`]);
+    const fallbackFailures: NonNullable<AgentResponse['fallbackFailures']> = [];
 
     for (const entry of rawOrder) {
       // Agents are now considered "enabled" iff they appear in fallback.order,
@@ -5842,25 +5893,27 @@ Example: /model gpt-4.1 write a Python script`;
         this.logger.warn(`Skipping fallback ${entry.agent}${entry.model ? `(${entry.model})` : ''}: ${(err as Error).message}`);
         continue;
       }
-      if (!resolvedModel) {
+      // A pinned model that does not resolve is broken; no pinned model and
+      // nothing fitting just means the agent's own default.
+      if (!resolvedModel && entry.model) {
         this.logger.warn(`Skipping fallback ${entry.agent}${entry.model ? `(${entry.model})` : ''}: no usable model config`);
         continue;
       }
-      const key = `${entry.agent}::${resolvedModel.model}`;
+      const key = `${entry.agent}::${resolvedModel?.model ?? ''}`;
       if (seen.has(key)) continue;
       seen.add(key);
 
       // Bail out mid-loop if the user aborted while a fallback was running.
       if (request.signal?.aborted) return response;
 
-      const label = `${entry.agent}(${resolvedModel.model})`;
+      const label = `${entry.agent}(${turnModelLabel(entry.agent, resolvedModel)})`;
       this.logger.warn(`Agent ${agent} failed, trying ${label}...`);
       const fallbackResponse = await this.runAgentWithNetworkRetry(entry.agent, {
         ...rebaseForFallbackAgent(request, agent, entry.agent, response),
         model: resolvedModel,
       });
       if (fallbackResponse.success || fallbackResponse.permissionDenials?.length || fallbackResponse.userQuestion) {
-        const fromLabel = originalModel ? `${agent}(${originalModel})` : agent;
+        const fromLabel = `${agent}(${turnModelLabel(agent, request.model)})`;
         // Carry the fallback as structured metadata rather than prepending a
         // banner to the output text. The Aide reuses this same fallback-routed
         // runner for housekeeping (title/summary/JSON), and a text banner would
@@ -5869,10 +5922,12 @@ Example: /model gpt-4.1 write a Python script`;
         return fallbackResponse;
       }
       this.logger.error(`Fallback ${label} also failed: ${fallbackResponse.error || fallbackResponse.output}`);
+      fallbackFailures.push({ agent: label, reason: summarizeFailure(fallbackResponse) });
     }
 
-    // All fallbacks failed, return original error
-    return response;
+    // All fallbacks failed: return the original error, plus why each fallback
+    // failed, so the chat can show which agent would need fixing.
+    return fallbackFailures.length ? { ...response, fallbackFailures } : response;
   }
 
   private resolveFallbackModel(entry: FallbackEntry): ModelConfig | undefined {
@@ -5919,6 +5974,11 @@ Example: /model gpt-4.1 write a Python script`;
       this.warnUnwiredAllModel(bound, catalogEntry.apiKeyRef);
       return bound;
     }
+
+    // "default" (when no catalog model has that name) is a choice, not a
+    // model: a marker config that keeps the choice through every
+    // `chosen ?? pinned` fallback and is turned into "no model" at launch.
+    if (modelName === CLI_DEFAULT_MODEL) return cliDefaultModelConfig();
 
     // 2. Check if model is in the agent's model list
     const agentConfig = this.config.agents?.[agent];
@@ -6279,7 +6339,7 @@ Example: /model gpt-4.1 write a Python script`;
     },
     taskRoute?: ChatTaskRoute,
     messageIds?: ChatTurnMessageIds,
-  ): Promise<{ response: string; chatId: string; tokens?: number; durationSec?: number }> {
+  ): Promise<{ response: string; chatId: string; tokens?: number; durationSec?: number; /** Set when the turn failed. */ error?: string }> {
     const liveParallel = this.activeParallelRuns?.get(chatId);
     if (!liveParallel) {
       // A process restart cannot restore in-memory agent waits. Preserve the
@@ -6328,7 +6388,7 @@ Example: /model gpt-4.1 write a Python script`;
     },
     taskRoute?: ChatTaskRoute,
     messageIds?: ChatTurnMessageIds,
-  ): Promise<{ response: string; chatId: string; tokens?: number; durationSec?: number }> {
+  ): Promise<{ response: string; chatId: string; tokens?: number; durationSec?: number; /** Set when the turn failed. */ error?: string }> {
     let chat = this.chatManager.get(chatId);
     if (!chat) throw new Error(`Chat not found: ${chatId}`);
     const answeringTeam = chat.pendingTeam && !/^\s*\//.test(userTextParam) && !origin?.skillInvoke;
@@ -7079,7 +7139,7 @@ Example: /model gpt-4.1 write a Python script`;
           });
         }
         singleAgentResponse = response;
-        output = response?.success ? this.formatAgentResponse(response) : (streamedText || '');
+        output = response?.success ? this.formatAgentResponse(response) : failedTurnText(response, streamedText);
         if (chat.soloAdvisor) output = stripAskAdvisor(output);
         tokens = (response as any)?.tokens?.total;
         // The cursor is advanced after the assistant message is persisted.
@@ -7138,7 +7198,7 @@ Example: /model gpt-4.1 write a Python script`;
       // otherwise use the configured agent/model for this turn.
       const fallbackIdentity = singleAgentResponse?.fallback?.to.match(/^([^()]+)\((.+)\)$/);
       const responseAgent = (fallbackIdentity?.[1] ?? agent) as CodingAgent;
-      const responseModel = fallbackIdentity?.[2] ?? model?.model;
+      const responseModel = fallbackIdentity?.[2] ?? turnModelLabel(agent, model);
       const terminalTeamMessages = teamTurnId
         ? this.chatManager.get(chatId)?.messages.filter(message => message.teamTurnId === teamTurnId) ?? []
         : [];
@@ -7151,6 +7211,11 @@ Example: /model gpt-4.1 write a Python script`;
         output = media.text;
         outputImages = media.images;
       }
+      // A failed solo turn still shows its partial reply and error, but is
+      // flagged so it never becomes agent context or a mirrored reply.
+      const turnError = !teamTurnId && singleAgentResponse && !singleAgentResponse.success
+        ? failedTurnReason(singleAgentResponse) ?? 'The agent stopped before finishing.'
+        : undefined;
       const assistantMessage: ChatMessage = {
         memoryUsed: [...(memoryUsageContext.getStore()?.values() ?? [])],
         id: messageIds?.assistantMessageId ?? randomUUID(),
@@ -7172,6 +7237,7 @@ Example: /model gpt-4.1 write a Python script`;
         ...(agentUserQuestion ? { userQuestion: agentUserQuestion } : {}),
         ...(singleAgentResponse?.fallback ? { fallback: singleAgentResponse.fallback } : {}),
         ...(terminalTeamSummary ? { teamSummary: terminalTeamSummary } : {}),
+        ...(turnError ? { failed: true } : {}),
       };
       // For per-bot team runs the transcript was already persisted as
       // individual bot messages by the BotMessageEmitter. Persist only a
@@ -7338,9 +7404,9 @@ Example: /model gpt-4.1 write a Python script`;
       if (origin) {
         await this.fanOutToOtherRoutes(chatId, originChannel, originUserId, `💬 ${userText}`);
       }
-      await this.fanOutToOtherRoutes(chatId, originChannel, originUserId, output, outputImages);
+      if (!turnError) await this.fanOutToOtherRoutes(chatId, originChannel, originUserId, output, outputImages);
 
-      return { response: output, chatId, tokens, durationSec };
+      return { response: output, chatId, tokens, durationSec, ...(turnError ? { error: turnError } : {}) };
     } catch (err) {
       if (abortController.signal.aborted) {
         await finishTeam('Stopped by user', true);
@@ -7366,6 +7432,7 @@ Example: /model gpt-4.1 write a Python script`;
         role: 'assistant',
         taskId,
         content: message,
+        failed: true,
         timestamp: Date.now(),
         toolCalls,
         isComplete: true,

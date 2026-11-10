@@ -34,7 +34,7 @@ export interface GatewayResponse {
 }
 
 // Coding agent types
-export const CODING_AGENTS = ['claude-code', 'opencode', 'codex', 'pi'] as const;
+export const CODING_AGENTS = ['claude-code', 'opencode', 'codex', 'pi', 'cursor', 'grok'] as const;
 export type CodingAgent = typeof CODING_AGENTS[number];
 
 /** Runtime guard for agent ids arriving from JSON config or chat commands. */
@@ -49,11 +49,49 @@ export function isCodingAgent(v: unknown): v is CodingAgent {
 // third-party providers and proxies that expose both protocol variants behind
 // one token — such a model is usable by every agent, so it doesn't have to be
 // duplicated once per protocol.
-export type ApiType = 'anthropic' | 'openai' | 'all';
+//
+// 'cursor' and 'grok' are the exceptions to "protocol, not vendor": those CLIs
+// sign in with their own vendor key (CURSOR_API_KEY / XAI_API_KEY) and only
+// know their own model names, so such a model and its agent belong only to
+// each other. See DEDICATED_API_TYPES.
+export type ApiType = 'anthropic' | 'openai' | 'all' | 'cursor' | 'grok';
+
+/** API types tied to exactly one agent of the same name. */
+export const DEDICATED_API_TYPES: ReadonlySet<ApiType> = new Set<ApiType>(['cursor', 'grok']);
+
+/** Model choice meaning "pass no model": the agent's CLI uses its own default
+ *  (Cursor's account default, Grok's grok-4.7, ...). Valid wherever a model
+ *  name is (chat override, fallback.order), never a catalog entry. */
+export const CLI_DEFAULT_MODEL = 'default';
+
+/** Provider tag on the ModelConfig that stands for the "default" choice. A
+ *  real config, not undefined, so code that reads undefined as "nothing
+ *  chosen, inherit the pinned model" keeps the choice. AgentFactory.run
+ *  strips it to undefined right before the CLI starts. */
+export const CLI_DEFAULT_PROVIDER = 'cli-default';
+
+export function cliDefaultModelConfig(): ModelConfig {
+  return { provider: CLI_DEFAULT_PROVIDER, model: CLI_DEFAULT_MODEL };
+}
+
+export function isCliDefaultModelConfig(model?: Pick<ModelConfig, 'provider'>): boolean {
+  return model?.provider === CLI_DEFAULT_PROVIDER;
+}
+
+/** The protocol each agent's CLI authenticates against. Mirrored by
+ *  AGENT_API_TYPE in codey-mac's modelApiType.ts — change both. */
+export const AGENT_API_TYPE: Record<CodingAgent, ApiType> = {
+  'claude-code': 'anthropic',
+  'opencode': 'all',
+  'codex': 'openai',
+  'pi': 'all',
+  'cursor': 'cursor',
+  'grok': 'grok',
+};
 
 /** Runtime guard for values arriving from JSON config or IPC. */
 export function isApiType(v: unknown): v is ApiType {
-  return v === 'anthropic' || v === 'openai' || v === 'all';
+  return v === 'anthropic' || v === 'openai' || v === 'all' || v === 'cursor' || v === 'grok';
 }
 
 /**
@@ -61,8 +99,16 @@ export function isApiType(v: unknown): v is ApiType {
  * `agentApiType`. 'all' fits everything on either side — an 'all' model
  * serves any agent, and an 'all' agent (provider-agnostic CLI) accepts any
  * model; an undefined want (agent with no declared protocol) accepts anything.
+ *
+ * Dedicated types ('cursor', 'grok') sit outside all of that: such a model
+ * fits only its own agent, and that agent takes only its own models. That
+ * holds even against 'all' and an undefined want, because neither side can
+ * use the other.
  */
 export function modelFitsApiType(modelApiType: ApiType, agentApiType?: ApiType): boolean {
+  if (DEDICATED_API_TYPES.has(modelApiType) || (agentApiType && DEDICATED_API_TYPES.has(agentApiType))) {
+    return modelApiType === agentApiType;
+  }
   if (!agentApiType || agentApiType === 'all') return true;
   return modelApiType === 'all' || modelApiType === agentApiType;
 }
@@ -85,6 +131,8 @@ export interface ApiKeyEntry {
   openaiBaseUrl?: string;        // optional override for openai-typed models
   /** Voice entries are shown in the dedicated Voice keys section. */
   purpose?: 'general' | 'voice';
+  /** Provider preset id (see providers.ts) the entry was created from, if any. */
+  provider?: string;
 }
 
 /**
@@ -133,6 +181,8 @@ export interface ModelConfig {
    * anthropic → ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN
    * openai   → OPENAI_BASE_URL   + OPENAI_API_KEY
    * all      → both pairs, each with its own base URL
+   * cursor   → CURSOR_API_KEY, no base URL (cursor agent only)
+   * grok     → XAI_API_KEY, no base URL (grok agent only)
    * Inferred from the referenced ModelEntry in gateway.json.
    */
   apiType?: ApiType;
@@ -301,7 +351,7 @@ export interface AgentResponse {
   states?: AgentStateEntry[];
   /**
    * Session id captured from the CLI on this run when the CLI generates
-   * its own id (codex `thread_id`, opencode `sessionID`, pi `session.id`).
+   * its own id (codex `thread_id`, opencode `sessionID`, pi `session.id`, cursor `session_id`).
    * Adapters that
    * accept a pre-allocated `newSessionId` (claude-code) leave this unset —
    * the gateway already knows the id it sent.
@@ -328,6 +378,11 @@ export interface AgentResponse {
      *  display; the full text stays in the gateway log. */
     reason?: string;
   };
+  /**
+   * Set when the primary and every fallback failed: why each fallback failed,
+   * so a failed turn can say which agent would need fixing.
+   */
+  fallbackFailures?: Array<{ agent: string; reason?: string }>;
   /** Structured question extracted from an AskUserQuestion tool call. */
   userQuestion?: {
     question: string;
@@ -409,6 +464,8 @@ export interface GatewayConfig {
     'opencode'?: AgentModelConfig;
     'codex'?: AgentModelConfig;
     'pi'?: AgentModelConfig;
+    'cursor'?: AgentModelConfig;
+    'grok'?: AgentModelConfig;
   };
   /** Global model catalog — mirrors GatewayConfigJson.models. */
   models?: ModelEntry[];

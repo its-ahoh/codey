@@ -110,6 +110,15 @@ contextBridge.exposeInMainWorld('codey', {
     delete: (name: string) => ipcRenderer.invoke('apiKeys:delete', name),
     rename: (oldName: string, newName: string) => ipcRenderer.invoke('apiKeys:rename', oldName, newName),
   },
+  providers: {
+    list: () => ipcRenderer.invoke('providers:list'),
+    catalogModels: (provider: string) => ipcRenderer.invoke('providers:catalogModels', provider),
+    models: (keyName: string) => ipcRenderer.invoke('providers:models', keyName),
+    balance: (keyName: string) => ipcRenderer.invoke('providers:balance', keyName),
+  },
+  usage: {
+    summary: (days: number) => ipcRenderer.invoke('usage:summary', days),
+  },
   fallback: {
     get: () => ipcRenderer.invoke('fallback:get'),
     set: (fb: any) => ipcRenderer.invoke('fallback:set', fb),
@@ -486,6 +495,23 @@ contextBridge.exposeInMainWorld('codey', {
       const listener = (_e: Electron.IpcRendererEvent, event: { sessionId: string; chatId: string; exitCode: number; signal?: number }) => handler(event)
       ipcRenderer.on('terminal:exit', listener)
       return () => ipcRenderer.removeListener('terminal:exit', listener)
+    },
+    // An agent opened or typed into a terminal through the Terminal plugin.
+    onAgentOpen: (handler: (event: { chatId: string; sessionId?: string; cwd?: string }) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, event: { chatId: string; sessionId?: string; cwd?: string }) => handler(event)
+      ipcRenderer.on('terminal:agentOpen', listener)
+      return () => ipcRenderer.removeListener('terminal:agentOpen', listener)
+    },
+    controlPermission: {
+      get: () => ipcRenderer.invoke('terminal:controlPermission:get'),
+      approve: (scope: 'once' | 'always') => ipcRenderer.invoke('terminal:controlPermission:approve', scope),
+      deny: () => ipcRenderer.invoke('terminal:controlPermission:deny'),
+      revoke: () => ipcRenderer.invoke('terminal:controlPermission:revoke'),
+    },
+    onControlPermission: (handler: (state: unknown) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, state: unknown) => handler(state)
+      ipcRenderer.on('terminal:controlPermission', listener)
+      return () => ipcRenderer.removeListener('terminal:controlPermission', listener)
     },
   },
   chromeCompanion: {

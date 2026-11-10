@@ -80,6 +80,25 @@ describe('task execution integration', () => {
     expect(chat.messages[1].content).toContain('Agent disconnected');
   });
 
+  it('marks a failed turn, returns its error, and does not mirror it to other routes', async () => {
+    const { gateway, chat, run, a } = setup();
+    run.mockResolvedValueOnce({ success: false, output: '', error: 'Authentication required' } as any);
+    const fanOut = vi.fn(async () => {});
+    Object.assign(gateway, { fanOutToOtherRoutes: fanOut });
+    const result = await gateway.sendToChat(chat.id, 'Continue', () => {}, undefined, undefined, { taskId: a });
+    expect(result.error).toBe('Authentication required');
+    const reply = chat.messages.at(-1)!;
+    expect(reply).toMatchObject({ role: 'assistant', failed: true, content: '❌ Error: Authentication required' });
+    expect(fanOut).not.toHaveBeenCalled();
+  });
+
+  it('marks the reply failed when the agent throws', async () => {
+    const { gateway, chat, run, a } = setup();
+    run.mockRejectedValueOnce(new Error('Agent disconnected'));
+    await expect(gateway.sendToChat(chat.id, 'Continue', () => {}, undefined, undefined, { taskId: a })).rejects.toThrow();
+    expect(chat.messages.at(-1)).toMatchObject({ role: 'assistant', failed: true });
+  });
+
   it('runs A, then B, then resumes A without replaying B', async () => {
     const { send, calls, chat, a, b } = setup();
     await send('WEBSITE PRIVATE', a);

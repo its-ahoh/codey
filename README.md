@@ -43,7 +43,7 @@ Release builds are signed and notarized, and they update themselves.
 ## Features
 
 **Agent management**
-- **Multiple coding agents**: Claude Code, OpenCode, Codex, [pi](https://pi.dev) (with session resume)
+- **Multiple coding agents**: Claude Code, OpenCode, Codex, [pi](https://pi.dev), [Cursor CLI](https://cursor.com/cli), [Grok Build](https://x.ai/cli) (with session resume)
 - **Parallel execution**: Run multiple agents on the same prompt simultaneously to compare
 - **Per-chat settings**: Each chat picks its own agent, model, and effort
 - **Thinking effort**: One low → max control that maps onto each CLI's own reasoning knob

@@ -35,6 +35,9 @@ import { BROWSER_PARTITION, BrowserController, type BrowserBounds } from './brow
 import { BrowserAgentBridge, type BrowserLoginWaitEvent } from './browser-agent-bridge'
 import { assertProfileName, availableProfileName, deriveProfileNameFromFile, siteCoversHost } from './browser-profiles'
 import { BrowserControlPermissionGate } from './browser-control-permission'
+import { TerminalSessionManager, type TerminalSession } from './terminal-sessions'
+import { TerminalAgentBridge } from './terminal-agent-bridge'
+import { TerminalControlPermissionGate } from './terminal-control-permission'
 import { BrowserSitePermissionManager } from './browser-site-permissions'
 import { canConfigureBrowserWebAuthn, configureBrowserWebAuthn, passkeyAccountLabel, type BrowserPasskeyPickerRequest } from './browser-webauthn'
 import { BrowserExtensionManager } from './browser-extensions'
@@ -47,9 +50,11 @@ import * as pty from 'node-pty'
 protocol.registerSchemesAsPrivileged([
   { scheme: 'codey-asset', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
 ])
-import { browserSkillStatus, checkBrowserSkillUpdate, checkSkillPackUpdate, chromeCompanionSkillStatus, checkChromeCompanionSkillUpdate, installSkillPack, listSkillPacks, migrateLegacyPstack, setSkillPackEnabled, uninstallSkillPack, CODEY_GLOBAL_SKILLS_SUBDIR, CODEY_SKILL_DISCOVERY_SUBDIRS, CODEY_SKILLS_SUBDIR, installBrowserSkill, installChromeCompanionSkill, setChromeCompanionSkillEnabled, syncCodeyGlobalSkills, syncCodeyProjectSkills, uninstallBrowserSkill, absorbPlaybookEdit, reconcilePlaybookSkills, removePlaybookSkill, writePlaybookSkill, uninstallChromeCompanionSkill, renameBotInTeams, BotManager, WorkspaceManager } from '@codey/core'
+import { browserSkillStatus, checkBrowserSkillUpdate, checkSkillPackUpdate, chromeCompanionSkillStatus, checkChromeCompanionSkillUpdate, terminalSkillStatus, checkTerminalSkillUpdate, installTerminalSkill, uninstallTerminalSkill, setTerminalSkillEnabled, installSkillPack, listSkillPacks, migrateLegacyPstack, setSkillPackEnabled, uninstallSkillPack, CODEY_GLOBAL_SKILLS_SUBDIR, CODEY_SKILL_DISCOVERY_SUBDIRS, CODEY_SKILLS_SUBDIR, installBrowserSkill, installChromeCompanionSkill, setChromeCompanionSkillEnabled, syncCodeyGlobalSkills, syncCodeyProjectSkills, uninstallBrowserSkill, absorbPlaybookEdit, reconcilePlaybookSkills, removePlaybookSkill, writePlaybookSkill, uninstallChromeCompanionSkill, renameBotInTeams, BotManager, WorkspaceManager } from '@codey/core'
 import { listPlaybooks, playbookDetail, playbookHistory, archivePlaybook, deletePlaybook, restorePlaybook, rollbackPlaybook } from './playbooks'
 import type { PlaybookHome } from '@codey/core'
+import { balanceKindFor, catalogModels, listCatalogProviders, fetchProviderBalance, fetchProviderModels, loadModelsDevCatalog, readUsage, summarizeUsage } from '@codey/core'
+import type { FetchLike } from '@codey/core'
 import { Codey } from '@codey/gateway/dist/gateway'
 import { ConfigManager } from '@codey/gateway/dist/config'
 import { ApiServer } from '@codey/gateway/dist/health'
@@ -120,25 +125,18 @@ let browserSitePermissions: BrowserSitePermissionManager | null = null
 let browserExtensionManager: BrowserExtensionManager | null = null
 let chromeCompanion: ChromeCompanionBridge | null = null
 
-type TerminalSession = {
-  id: string
-  chatId: string
-  cwd: string
-  process: pty.IPty
-  output: string
-  alive: boolean
-}
-
-const terminalSessions = new Map<string, TerminalSession>()
-const TERMINAL_REPLAY_LIMIT = 200_000
-
-function disposeTerminalSession(sessionId: string): void {
-  const session = terminalSessions.get(sessionId)
-  if (!session) return
-  terminalSessions.delete(sessionId)
-  session.alive = false
-  try { session.process.kill() } catch { /* already exited */ }
-}
+// Every Terminal panel shell lives here. The panel (IPC below) and agents (the
+// Terminal plugin's bridge) drive the same sessions, so the user sees exactly
+// what an agent types.
+const terminalSessions = new TerminalSessionManager(
+  (shell, args, options) => pty.spawn(shell, args, options),
+  {
+    data: event => sendToRenderer('terminal:data', event),
+    exit: event => sendToRenderer('terminal:exit', event),
+  },
+)
+let terminalAgentBridge: TerminalAgentBridge | null = null
+let terminalControlPermission: TerminalControlPermissionGate | null = null
 
 function runPs(args: string[]): Promise<string> {
   return new Promise(resolve => {
@@ -162,63 +160,14 @@ async function terminalSessionTitle(session: TerminalSession): Promise<string> {
   return leaf || (process.env.SHELL?.split('/').pop() ?? 'Shell')
 }
 
-async function openTerminalSession(chatId: string, cwd: string, cols: number, rows: number, requestedId?: string): Promise<{
-  sessionId: string
-  chatId: string
-  cwd: string
-  pid: number
-  output: string
-  alive: boolean
-}> {
-  if (!chatId || typeof chatId !== 'string') throw new Error('A chat is required to open a terminal')
-  if (!cwd || typeof cwd !== 'string') throw new Error('A workspace directory is required to open a terminal')
-
-  const fsMod = await import('fs')
-  const stat = await fsMod.promises.stat(cwd)
-  if (!stat.isDirectory()) throw new Error('Terminal working directory is not a directory')
-
-  const sessionId = requestedId || randomUUID()
-  const existing = terminalSessions.get(sessionId)
-  if (existing?.alive && existing.chatId === chatId && existing.cwd === cwd) {
-    try { existing.process.resize(Math.max(2, cols), Math.max(1, rows)) } catch { /* resize is best effort */ }
-    return {
-      sessionId,
-      chatId,
-      cwd: existing.cwd,
-      pid: existing.process.pid,
-      output: existing.output,
-      alive: true,
-    }
-  }
-  if (existing) disposeTerminalSession(sessionId)
-
-  const shellPath = process.env.SHELL || '/bin/zsh'
-  const env = Object.fromEntries(
-    Object.entries({ ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' })
-      .filter((entry): entry is [string, string] => typeof entry[1] === 'string')
-  )
-  const terminalProcess = pty.spawn(shellPath, ['-l'], {
-    name: 'xterm-256color',
-    cols: Math.max(2, cols),
-    rows: Math.max(1, rows),
-    cwd,
-    env,
-  })
-  const session: TerminalSession = { id: sessionId, chatId, cwd, process: terminalProcess, output: '', alive: true }
-  terminalSessions.set(sessionId, session)
-
-  terminalProcess.onData(data => {
-    if (terminalSessions.get(sessionId) !== session) return
-    session.output = (session.output + data).slice(-TERMINAL_REPLAY_LIMIT)
-    sendToRenderer('terminal:data', { sessionId, chatId, data })
-  })
-  terminalProcess.onExit(({ exitCode, signal }) => {
-    if (terminalSessions.get(sessionId) !== session) return
-    session.alive = false
-    sendToRenderer('terminal:exit', { sessionId, chatId, exitCode, signal })
-  })
-
-  return { sessionId, chatId, cwd, pid: terminalProcess.pid, output: '', alive: true }
+/** True when the shell owns the terminal's foreground process group - the
+ *  user would see a prompt - false while a program runs, null if unknown. */
+async function terminalAtPrompt(session: TerminalSession): Promise<boolean | null> {
+  if (!session.alive) return true
+  if (process.platform === 'win32') return null
+  const group = Number.parseInt(await runPs(['-o', 'tpgid=', '-p', String(session.process.pid)]), 10)
+  if (!Number.isInteger(group) || group <= 0) return null
+  return group === session.process.pid
 }
 
 function handleBrowserLoginWait(event: BrowserLoginWaitEvent): void {
@@ -248,6 +197,12 @@ function browserAgentCliPath(): string {
   return app.isPackaged
     ? join(process.resourcesPath, 'browser-agent-cli.cjs')
     : join(app.getAppPath(), 'electron', 'browser-agent-cli.cjs')
+}
+
+function terminalAgentCliPath(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'terminal-agent-cli.cjs')
+    : join(app.getAppPath(), 'electron', 'terminal-agent-cli.cjs')
 }
 
 function chromeCompanionExtensionPath(): string {
@@ -2188,7 +2143,7 @@ app.whenReady().then(async () => {
     return chat
   }
   const validateChromeAgentModel = (agent: string | null, model: string | null) => {
-    const agents = ['claude-code', 'opencode', 'codex', 'pi']
+    const agents = ['claude-code', 'opencode', 'codex', 'pi', 'cursor', 'grok']
     if (agent && !agents.includes(agent)) throw new Error(`Unknown agent: ${agent}`)
     if (model && !coreConfigManager?.listModels().some(entry => entry.model === model)) throw new Error(`Unknown model: ${model}`)
   }
@@ -2283,7 +2238,7 @@ app.whenReady().then(async () => {
         const installed = await getInstalledAgents(false)
         const chat = chatId ? await chromeChat(chatId) : null
         return {
-          agents: ['claude-code', 'opencode', 'codex', 'pi'].map(id => ({
+          agents: ['claude-code', 'opencode', 'codex', 'pi', 'cursor', 'grok'].map(id => ({
             id,
             installed: installed.status[id]?.installed === true,
           })),
@@ -2295,7 +2250,7 @@ app.whenReady().then(async () => {
           defaultAgent: fallback.order[0]?.agent ?? null,
           defaultModel: fallback.order[0]?.model ?? null,
           defaultModels: Object.fromEntries(
-            ['claude-code', 'opencode', 'codex', 'pi']
+            ['claude-code', 'opencode', 'codex', 'pi', 'cursor', 'grok']
               .map(id => [id, coreConfigManager!.getAgentModel(id)?.model])
               .filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
           ),
@@ -2481,24 +2436,14 @@ app.whenReady().then(async () => {
       return await fn()
     })
   ipcMain.handle('terminal:list', (event, chatId: string) =>
-    terminalCall(event, () => [...terminalSessions.values()]
-      .filter(session => session.chatId === chatId)
-      .map(session => ({ sessionId: session.id, chatId, cwd: session.cwd, pid: session.process.pid, alive: session.alive }))))
+    terminalCall(event, () => terminalSessions.list(chatId)
+      .map(session => ({ sessionId: session.id, chatId, cwd: session.cwd, pid: session.process.pid, alive: session.alive, agent: session.agent }))))
   ipcMain.handle('terminal:open', (event, input: { sessionId?: string; chatId: string; cwd: string; cols: number; rows: number }) =>
-    terminalCall(event, () => openTerminalSession(input.chatId, input.cwd, input.cols, input.rows, input.sessionId)))
+    terminalCall(event, () => terminalSessions.open(input.chatId, input.cwd, input.cols, input.rows, input.sessionId)))
   ipcMain.handle('terminal:write', (event, sessionId: string, data: string) =>
-    terminalCall(event, () => {
-      const terminal = terminalSessions.get(sessionId)
-      if (!terminal?.alive) throw new Error('Terminal session is not running')
-      if (typeof data !== 'string' || data.length > 65_536) throw new Error('Invalid terminal input')
-      terminal.process.write(data)
-    }))
+    terminalCall(event, () => terminalSessions.write(sessionId, data)))
   ipcMain.handle('terminal:resize', (event, sessionId: string, cols: number, rows: number) =>
-    terminalCall(event, () => {
-      const terminal = terminalSessions.get(sessionId)
-      if (!terminal?.alive) return
-      terminal.process.resize(Math.max(2, Math.min(500, cols)), Math.max(1, Math.min(300, rows)))
-    }))
+    terminalCall(event, () => terminalSessions.resize(sessionId, cols, rows)))
   ipcMain.handle('terminal:status', (event, sessionId: string) =>
     terminalCall(event, async () => {
       const terminal = terminalSessions.get(sessionId)
@@ -2507,11 +2452,26 @@ app.whenReady().then(async () => {
     }))
   ipcMain.handle('terminal:restart', (event, input: { sessionId: string; chatId: string; cwd: string; cols: number; rows: number }) =>
     terminalCall(event, async () => {
-      disposeTerminalSession(input.sessionId)
-      return openTerminalSession(input.chatId, input.cwd, input.cols, input.rows, input.sessionId)
+      const agent = terminalSessions.get(input.sessionId)?.agent ?? false
+      terminalSessions.close(input.sessionId)
+      return terminalSessions.open(input.chatId, input.cwd, input.cols, input.rows, input.sessionId, { agent })
     }))
   ipcMain.handle('terminal:close', (event, sessionId: string) =>
-    terminalCall(event, () => disposeTerminalSession(sessionId)))
+    terminalCall(event, () => terminalSessions.close(sessionId)))
+  ipcMain.handle('terminal:controlPermission:get', event => terminalCall(event, () =>
+    terminalControlPermission?.getState() ?? { always: false, pending: null }))
+  ipcMain.handle('terminal:controlPermission:approve', (event, scope: 'once' | 'always') => terminalCall(event, () => {
+    if (!terminalControlPermission) throw new Error('Terminal control permission is unavailable')
+    return terminalControlPermission.approve(scope === 'always' ? 'always' : 'once')
+  }))
+  ipcMain.handle('terminal:controlPermission:deny', event => terminalCall(event, () => {
+    if (!terminalControlPermission) throw new Error('Terminal control permission is unavailable')
+    return terminalControlPermission.deny()
+  }))
+  ipcMain.handle('terminal:controlPermission:revoke', event => terminalCall(event, () => {
+    if (!terminalControlPermission) throw new Error('Terminal control permission is unavailable')
+    return terminalControlPermission.revoke()
+  }))
   ipcMain.handle('browser:getState', event => browserCall(event, () => browserController.getState()))
   ipcMain.handle('browser:show', (event, bounds: BrowserBounds) => browserCall(event, () => browserController.show(bounds)))
   ipcMain.handle('browser:hide', event => browserCall(event, () => browserController.hide()))
@@ -3014,6 +2974,40 @@ app.whenReady().then(async () => {
   } catch (error: any) {
     sendToRenderer('gateway-log', `[browser] agent bridge failed to start: ${error?.message ?? error}`)
     browserAgentBridge = null
+  }
+  // The Terminal plugin's bridge: agents type into the same Terminal panel
+  // sessions the user sees. Every typing command waits for the user's approval
+  // in that panel unless they chose "Always allow".
+  terminalControlPermission = new TerminalControlPermissionGate(
+    join(app.getPath('userData'), 'terminal-control-permission.json'),
+    state => {
+      sendToRenderer('terminal:controlPermission', state)
+      if (state.pending) {
+        mainWindow?.show()
+        const session = state.pending.sessionId ? terminalSessions.get(state.pending.sessionId) : undefined
+        sendToRenderer('terminal:agentOpen', {
+          chatId: state.pending.chatId,
+          sessionId: state.pending.sessionId,
+          cwd: session?.cwd,
+        })
+      }
+    },
+  )
+  terminalAgentBridge = new TerminalAgentBridge(terminalSessions, {
+    atPrompt: terminalAtPrompt,
+    title: terminalSessionTitle,
+    reveal: event => sendToRenderer('terminal:agentOpen', event),
+    requestControl: request => terminalControlPermission!.request(request),
+  })
+  try {
+    const bridge = await terminalAgentBridge.start()
+    process.env.CODEY_TERMINAL_SOCKET = bridge.socketPath
+    process.env.CODEY_TERMINAL_TOKEN = bridge.token
+    process.env.CODEY_TERMINAL_CLI = terminalAgentCliPath()
+    process.env.CODEY_TERMINAL_RUNTIME = process.execPath
+  } catch (error: any) {
+    sendToRenderer('gateway-log', `[terminal] agent bridge failed to start: ${error?.message ?? error}`)
+    terminalAgentBridge = null
   }
   // Chrome keeps loading an unpacked extension from the path it was given, so
   // a copy the user installed themselves has to be refreshed here or it stays
@@ -4481,7 +4475,9 @@ app.whenReady().then(async () => {
 
   // ── Plugins IPC ───────────────────────────────────────────────────
   const pluginStatus = (id: string) =>
-    id === 'browser' ? browserSkillStatus() : chromeCompanionSkillStatus()
+    id === 'browser' ? browserSkillStatus()
+      : id === 'terminal' ? terminalSkillStatus()
+      : chromeCompanionSkillStatus()
 
   ipcMain.handle('plugins:list', async () =>
     wrap(async () => listPlugins(pluginStatus))
@@ -4499,7 +4495,9 @@ app.whenReady().then(async () => {
       if (!isKnownPlugin(id)) throw new Error(`Unknown plugin: ${id}`)
       const result = id === 'browser'
         ? await installBrowserSkill(undefined, { force: force === true })
-        : await installChromeCompanionSkill(undefined, { force: force === true })
+        : id === 'terminal'
+          ? await installTerminalSkill(undefined, { force: force === true })
+          : await installChromeCompanionSkill(undefined, { force: force === true })
       if (result.installed) await syncCodeyGlobalSkills()
       return result
     })
@@ -4510,7 +4508,9 @@ app.whenReady().then(async () => {
       if (!isKnownPlugin(id)) throw new Error(`Unknown plugin: ${id}`)
       const result = id === 'browser'
         ? await uninstallBrowserSkill(undefined, { force: force === true })
-        : await uninstallChromeCompanionSkill(undefined, { force: force === true })
+        : id === 'terminal'
+          ? await uninstallTerminalSkill(undefined, { force: force === true })
+          : await uninstallChromeCompanionSkill(undefined, { force: force === true })
       if (result.removed) await syncCodeyGlobalSkills()
       return result
     })
@@ -4526,6 +4526,8 @@ app.whenReady().then(async () => {
       if (typeof enabled !== 'boolean') throw new Error('Invalid enabled flag')
       if (id === 'chrome-companion') {
         await setChromeCompanionSkillEnabled(enabled)
+      } else if (id === 'terminal') {
+        await setTerminalSkillEnabled(enabled)
       } else {
         const plugin = browserSkillStatus()
         if (plugin.state === 'absent') throw new Error(`Plugin ${id} is not installed`)
@@ -4547,7 +4549,9 @@ app.whenReady().then(async () => {
       try {
         return id === 'browser'
           ? await checkBrowserSkillUpdate()
-          : await checkChromeCompanionSkillUpdate()
+          : id === 'terminal'
+            ? await checkTerminalSkillUpdate()
+            : await checkChromeCompanionSkillUpdate()
       } catch {
         return { needsUpdate: null }
       }
@@ -4622,8 +4626,8 @@ app.whenReady().then(async () => {
     wrap(async () => {
       if (!coreConfigManager) throw new Error('Config manager not initialized')
       if (!entry?.model) throw new Error('Model id is required')
-      if (entry.apiType !== 'anthropic' && entry.apiType !== 'openai' && entry.apiType !== 'all') {
-        throw new Error('Model apiType must be "anthropic", "openai", or "all"')
+      if (!['anthropic', 'openai', 'all', 'cursor', 'grok'].includes(entry.apiType)) {
+        throw new Error('Model apiType must be "anthropic", "openai", "all", "cursor", or "grok"')
       }
       coreConfigManager.saveModel(entry)
     })
@@ -4668,6 +4672,46 @@ app.whenReady().then(async () => {
     wrap(async () => {
       if (!coreConfigManager) throw new Error('Config manager not initialized')
       coreConfigManager.renameApiKey(oldName, newName)
+    })
+  )
+
+  // ── Provider presets, model lists, balances, usage ────────────────
+  // Requests run here in the main process (no CORS, the key never reaches
+  // the renderer) and read the key by name from the hydrated config.
+  const savedKey = (name: string) => {
+    const entry = coreConfigManager?.getApiKey(String(name))
+    if (!entry) throw new Error(`Unknown API key: ${name}`)
+    return entry
+  }
+  const modelsDev = () => loadModelsDevCatalog(fetch as unknown as FetchLike)
+
+  // Curated presets plus every models.dev provider; curated only when offline.
+  ipcMain.handle('providers:list', async () => wrap(async () => listCatalogProviders(await modelsDev())))
+
+  // A provider's models from models.dev — no key needed.
+  ipcMain.handle('providers:catalogModels', async (_e, provider: string) =>
+    wrap(async () => catalogModels(await modelsDev(), String(provider)))
+  )
+
+  ipcMain.handle('providers:models', async (_e, keyName: string) =>
+    wrap(async () => fetchProviderModels(savedKey(keyName), fetch as unknown as FetchLike, modelsDev))
+  )
+
+  ipcMain.handle('providers:balance', async (_e, keyName: string) =>
+    wrap(async () => fetchProviderBalance(savedKey(keyName), fetch as unknown as FetchLike))
+  )
+
+  ipcMain.handle('usage:summary', async (_e, days: number) =>
+    wrap(async () => {
+      const span = Number.isFinite(days) && days > 0 ? Math.min(days, 90) : 7
+      const since = Date.now() - span * 24 * 60 * 60 * 1000
+      const records = readUsage(since)
+      const catalog = records.length ? await modelsDev() : undefined
+      const summary = summarizeUsage(records, since, catalog)
+      const balanceKeys = (coreConfigManager?.listApiKeys() ?? [])
+        .filter(k => k.purpose !== 'voice' && balanceKindFor(k))
+        .map(k => k.name)
+      return { ...summary, balanceKeys }
     })
   )
 
@@ -4779,6 +4823,10 @@ app.whenReady().then(async () => {
     'codex':       { userDirs: ['.codex/skills', '.agents/skills'], projectSubdirs: [CODEY_SKILLS_SUBDIR, '.codex/skills', '.agents/skills'] },
     'opencode':    { userDirs: ['.config/opencode/skills', '.opencode/skills', '.agents/skills'], projectSubdirs: [CODEY_SKILLS_SUBDIR, '.opencode/skills', '.agents/skills'] },
     'pi':          { userDirs: ['.pi/agent/skills', '.agents/skills'], projectSubdirs: [CODEY_SKILLS_SUBDIR, '.pi/skills', '.agents/skills'] },
+    // cursor-agent also reads the .claude and .agents conventions.
+    'cursor':      { userDirs: ['.cursor/skills', '.agents/skills'], projectSubdirs: [CODEY_SKILLS_SUBDIR, '.cursor/skills', '.agents/skills'] },
+    // grok also reads the .claude and ~/.cursor skill folders.
+    'grok':        { userDirs: ['.grok/skills'], projectSubdirs: [CODEY_SKILLS_SUBDIR, '.grok/skills'] },
   }
 
   function configuredUserSkillDirs(agentKey: string, home: string, pathMod: typeof import('path')): string[] {
@@ -4853,7 +4901,7 @@ app.whenReady().then(async () => {
     }
 
     let listed = uniqueSkills(fsMod, pathMod, skills)
-    listed = markCodeyBundledSkills(fsMod, pathMod, listed, [browserSkillStatus(home), chromeCompanionSkillStatus(home)])
+    listed = markCodeyBundledSkills(fsMod, pathMod, listed, [browserSkillStatus(home), chromeCompanionSkillStatus(home), terminalSkillStatus(home)])
     for (const pack of listSkillPacks(home)) {
       for (const name of pack.skills) {
         listed = markSkillManagedBy(fsMod, pathMod, listed, pathMod.join(pack.dir, name), 'codey')
@@ -5689,7 +5737,9 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   isQuitting = true
-  for (const sessionId of terminalSessions.keys()) disposeTerminalSession(sessionId)
+  terminalControlPermission?.dispose()
+  void terminalAgentBridge?.stop()
+  terminalSessions.closeAll()
   // Detach the browser surface but let Electron own final WebContents teardown.
   // Closing child contents while the native window is already quitting can race
   // Chromium's view destruction and terminate the browser process with SIGTRAP.

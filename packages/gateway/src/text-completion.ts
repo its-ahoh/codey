@@ -1,5 +1,5 @@
 import { request } from 'undici';
-import { ModelConfig } from '@codey/core';
+import { DEDICATED_API_TYPES, ModelConfig } from '@codey/core';
 
 /**
  * Minimal one-shot text completion against a hosted LLM API.
@@ -27,9 +27,12 @@ export interface TextCompletionOptions {
   timeoutMs?: number;
 }
 
-/** True when `model` carries enough credentials to be callable directly. */
+/** True when `model` carries enough credentials to be callable directly.
+ *  A dedicated key (Cursor, xAI) never is: this path only speaks the
+ *  Anthropic/OpenAI wire formats at their endpoints, so such a model must run
+ *  through its own CLI instead. */
 export function canRunDirectly(model: ModelConfig | undefined): model is ModelConfig {
-  return Boolean(model?.apiKey && model.model);
+  return Boolean(model?.apiKey && model.model && !(model.apiType && DEDICATED_API_TYPES.has(model.apiType)));
 }
 
 interface BuiltCompletion {

@@ -22,6 +22,8 @@ import type { ContextPanelTab } from './ChatContextPanel'
 import { useQuickQuestion } from '../hooks/useQuickQuestion'
 import { parseTeamMessage } from './teamMessageFormat'
 import { groupMessages, isLatestChatMessage } from './teamGroup'
+import { InlineRenameTitle } from './InlineRenameTitle'
+import { renameBotChat } from './renameBotChat'
 import { BotAvatar } from './BotAvatar'
 import { botAvatarState } from './botAvatarModel'
 import { StatusSidecar } from './StatusSidecar'
@@ -42,7 +44,7 @@ import { statusLine } from './checklistView'
 import { composerPlaceholder } from './coreOfflineView'
 import { getDraft, setDraft, subscribeDrafts } from './chatDrafts'
 import { isBottomTerminalOpen, setBottomTerminalOpen as rememberBottomTerminalOpen } from './terminalVisibility'
-import { AGENT_API_TYPE, AGENT_NAMES, ApiType, modelFitsApiType } from './modelApiType'
+import { AGENT_API_TYPE, AGENT_NAMES, ApiType, CLI_DEFAULT_MODEL, modelFitsApiType } from './modelApiType'
 import { useInstalledAgents } from './installedAgents'
 import {
   appendMentionContext, applyMention, filterEntries, findActiveMention, findResourceMentions,
@@ -458,7 +460,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
   chat,
 }) => {
   const outerRef = useRef<HTMLDivElement>(null)
-  const { state, createChat, sendMessage, removeQueuedMessage, resumeQueue, stopChat, clearRestore, setSelection, setAgentModel, setEffort, setExecutionMode, bindWorktree, createWorktree, setPullRequest, setContextPanelOpen, setSoloAdvisor, linkChannel, unlinkChannel, resolvePermission, generateTaskBrief } = useChats()
+  const { state, createChat, renameChat, sendMessage, removeQueuedMessage, resumeQueue, stopChat, clearRestore, setSelection, setAgentModel, setEffort, setExecutionMode, bindWorktree, createWorktree, setPullRequest, setContextPanelOpen, setSoloAdvisor, linkChannel, unlinkChannel, resolvePermission, generateTaskBrief } = useChats()
   const flight = state.inFlight[chatId]
   const queuedMessages = state.queuedMessages[chatId] ?? []
   // A stop holds the queue instead of emptying it, so these prompts stay put
@@ -1141,6 +1143,14 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
   const resolvedRightPanelMode: WorkspaceDockTool | null = rightPanelMode
     ?? (chat?.contextPanelOpen ? 'overview' : null)
   const panelOpen = resolvedRightPanelMode !== null
+  // An agent working in this chat's Terminal (the Terminal plugin): make sure
+  // the user can see it. A Terminal already docked on the right stays there.
+  const terminalDockedRight = resolvedRightPanelMode === 'terminal'
+  useEffect(() => window.codey.terminal.onAgentOpen(event => {
+    if (event.chatId !== chatId || !workingDir || terminalDockedRight) return
+    if (event.cwd && event.cwd !== workingDir) return
+    setBottomTerminalOpen(true)
+  }), [chatId, workingDir, terminalDockedRight])
   const overviewOpen = resolvedRightPanelMode === 'overview'
 
   // The Status sidecar floats over the chat's top-right when the panel is
@@ -1188,7 +1198,10 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
   // Resolve which agent/model are *actually* used for this chat.
   // Priority: per-chat override → gateway fallback default.
   const effectiveAgent: string = chat.agent ?? defaultAgent ?? 'claude-code'
-  const effectiveModel: string | undefined = chat.model ?? agentDefaultModels[effectiveAgent]
+  // Same rule as the gateway: the model pinned in Settings, else none (the
+  // agent's own default). Codey never guesses one from the catalog.
+  const inheritedModel: string | undefined = agentDefaultModels[effectiveAgent]
+  const effectiveModel: string | undefined = chat.model ?? inheritedModel
   const effectiveEffort: string = chat.effort ?? agentDefaultEfforts[effectiveAgent] ?? 'medium'
   // What each run setting resolves to with no per-chat override — the value the
   // dropdown's first entry stands for, and the entry the list below it omits so
@@ -1197,7 +1210,6 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
   // for that first render instead of naming a fallback that may not be the
   // configured default.
   const inheritedAgent: string | undefined = defaultAgent ?? undefined
-  const inheritedModel: string | undefined = agentDefaultModels[effectiveAgent]
   const inheritedEffort: string = agentDefaultEfforts[effectiveAgent] ?? 'medium'
   const effectiveAdvisorAgent = advisorConfig.agent ?? defaultAgent ?? 'claude-code'
   const effectiveAdvisorModel = advisorConfig.model ?? agentDefaultModels[effectiveAdvisorAgent] ?? 'Default model'
@@ -1205,7 +1217,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
   // members each carry their own — so it opts out and waits for the real values.
   const turnIdentity = chat.selection.type === 'team'
     ? undefined
-    : { agent: effectiveAgent as ChatMessage['agent'], model: effectiveModel }
+    : { agent: effectiveAgent as ChatMessage['agent'], model: effectiveModel ?? 'default' }
   const apiTypeForAgent = AGENT_API_TYPE[effectiveAgent]
   const modelsForAgent = models.filter(m => modelFitsApiType(m.apiType, apiTypeForAgent))
 
@@ -1835,7 +1847,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
         <div style={styles.headerIdentity}>
           <span style={styles.workspaceTag} title={chat.botChat ? undefined : chat.workspaceName}>{chat.botChat?.kind === 'direct'
             ? <BotAvatar name={chat.botChat.members[0]} config={bots.find(bot => bot.name === chat.botChat!.members[0])?.config.avatar} state={flight?.queuedPosition ? 'waiting' : isSending ? 'working' : 'idle'} size={24} />
-            : chat.botChat?.kind === 'group' ? <TeamAvatar name={chat.title} members={chat.botChat.members} bots={bots} size={24} state={flight?.queuedPosition ? 'waiting' : isSending ? 'working' : 'idle'} /> : null}{chat.botChat ? (chat.botChat.kind === 'direct' && chat.title === chat.botChat.members[0] ? bots.find(bot => bot.name === chat.botChat!.members[0])?.config.displayName || chat.title : chat.title) : chat.title?.trim() || 'New Chat'}</span>
+            : chat.botChat?.kind === 'group' ? <TeamAvatar name={chat.title} members={chat.botChat.members} bots={bots} size={24} state={flight?.queuedPosition ? 'waiting' : isSending ? 'working' : 'idle'} /> : null}<InlineRenameTitle title={chat.botChat ? (chat.botChat.kind === 'direct' && chat.title === chat.botChat.members[0] ? bots.find(bot => bot.name === chat.botChat!.members[0])?.config.displayName || chat.title : chat.title) : chat.title?.trim() || 'New Chat'} onRename={title => chat.botChat?.kind === 'direct' ? renameBotChat(chat, bots.find(bot => bot.name === chat.botChat!.members[0]), title, renameChat) : renameChat(chat.id, title)} /></span>
           {chat.botChat?.kind === 'direct' && isSending && <span role="status" style={{ fontSize: 12, color: C.fg3 }}>{flight?.queuedPosition ? 'Queued' : 'Working…'}</span>}
           {chat.botChat && <BotMembers key={chat.id} chat={chat} />}
         {!chat.botChat && <div><BranchPicker
@@ -2721,9 +2733,13 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                         onChange={e => void onModelChange(e.target.value)}
                         style={styles.runSettingSelect}
                         title={`Model: ${effectiveModel ?? 'unset'}${chat.model ? ' (override)' : ' (default)'}`}
-                        disabled={modelsForAgent.length === 0}
                       >
-                        <option value="">{inheritedModel ? `${inheritedModel} (default)` : 'agent default'}</option>
+                        <option value="">{`${inheritedModel ?? CLI_DEFAULT_MODEL} (from Settings)`}</option>
+                        {/* Overrides a model pinned in Settings; with none pinned, the
+                            empty choice already means the same thing. */}
+                        {((inheritedModel && inheritedModel !== CLI_DEFAULT_MODEL) || chat.model === CLI_DEFAULT_MODEL) && (
+                          <option value={CLI_DEFAULT_MODEL}>{CLI_DEFAULT_MODEL}</option>
+                        )}
                         {modelsForAgent.filter(m => m.model !== inheritedModel || m.model === chat.model).map(m => (
                           <option key={m.model} value={m.model}>{m.model}</option>
                         ))}

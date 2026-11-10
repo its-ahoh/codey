@@ -5,6 +5,9 @@ import type { ChatStreamEvent, QQStreamEvent } from '../../packages/gateway/src/
 import type { TaskBrief } from '../types'
 import type { TeamConfigRaw } from '../../packages/core/src/workspace'
 import type { ApiKeyEntry } from '../../packages/core/src/types/index'
+import type { BalanceResult, CatalogModel, CatalogProvider, ModelListResult } from '../../packages/core/src/providers'
+import type { UsageSummary } from '../../packages/core/src/usage'
+export type { BalanceResult, CatalogModel, CatalogProvider, ModelListResult, UsageSummary }
 import type { UpdaterEvent } from './hooks/updaterState'
 import type { CoreState } from '../electron/core-state'
 import type { ScannedSkill } from '../electron/skills'
@@ -144,7 +147,7 @@ export interface AgentMcpServer {
 
 export interface ModelEntry {
   /** 'all' = dual-protocol provider, usable by every agent. */
-  apiType: 'anthropic' | 'openai' | 'all'
+  apiType: 'anthropic' | 'openai' | 'all' | 'cursor' | 'grok'
   model: string
   apiKeyRef?: string
   provider?: string
@@ -180,6 +183,26 @@ export interface BrowserPageContext {
 }
 
 export type BrowserControlSurface = 'browser' | 'chrome'
+
+/** An agent opened or typed into a terminal; the chat's panel should show it.
+ *  `sessionId` is absent while a first command awaits approval. */
+export interface TerminalAgentOpenEvent {
+  chatId: string
+  sessionId?: string
+  cwd?: string
+}
+
+export interface TerminalControlRequest {
+  chatId: string
+  sessionId?: string
+  command: string
+  preview: string
+}
+
+export interface TerminalControlPermissionState {
+  always: boolean
+  pending: TerminalControlRequest | null
+}
 export type BrowserControlLevel = 'write' | 'full'
 export type BrowserControlGrant = 'none' | BrowserControlLevel
 
@@ -422,6 +445,19 @@ declare global {
         save: (entry: ApiKeyEntry) => Promise<IpcResult<void>>
         delete: (name: string) => Promise<IpcResult<void>>
         rename: (oldName: string, newName: string) => Promise<IpcResult<void>>
+      }
+      providers: {
+        /** Curated presets first, then every models.dev provider (curated only when offline). */
+        list: () => Promise<IpcResult<CatalogProvider[]>>
+        /** A provider's models from models.dev, newest first. No key needed. */
+        catalogModels: (provider: string) => Promise<IpcResult<CatalogModel[]>>
+        /** Models the saved key can use, asked of the provider (models.dev as fallback). */
+        models: (keyName: string) => Promise<IpcResult<ModelListResult>>
+        balance: (keyName: string) => Promise<IpcResult<BalanceResult>>
+      }
+      usage: {
+        /** Token totals and list-price cost for the last `days` days (max 90). */
+        summary: (days: number) => Promise<IpcResult<UsageSummary & { balanceKeys: string[] }>>
       }
       fallback: {
         get: () => Promise<IpcResult<{ enabled: boolean; order: Array<{ agent: string; model?: string }> }>>
@@ -683,7 +719,7 @@ declare global {
         onZoom: (handler: (factor: number) => void) => () => void
       }
       terminal: {
-        list: (chatId: string) => Promise<IpcResult<Array<{ sessionId: string; chatId: string; cwd: string; pid: number; alive: boolean }>>>
+        list: (chatId: string) => Promise<IpcResult<Array<{ sessionId: string; chatId: string; cwd: string; pid: number; alive: boolean; agent: boolean }>>>
         open: (input: { sessionId?: string; chatId: string; cwd: string; cols: number; rows: number }) => Promise<IpcResult<{ sessionId: string; chatId: string; cwd: string; pid: number; output: string; alive: boolean }>>
         write: (sessionId: string, data: string) => Promise<IpcResult<void>>
         resize: (sessionId: string, cols: number, rows: number) => Promise<IpcResult<void>>
@@ -692,6 +728,14 @@ declare global {
         close: (sessionId: string) => Promise<IpcResult<void>>
         onData: (handler: (event: { sessionId: string; chatId: string; data: string }) => void) => () => void
         onExit: (handler: (event: { sessionId: string; chatId: string; exitCode: number; signal?: number }) => void) => () => void
+        onAgentOpen: (handler: (event: TerminalAgentOpenEvent) => void) => () => void
+        controlPermission: {
+          get: () => Promise<IpcResult<TerminalControlPermissionState>>
+          approve: (scope: 'once' | 'always') => Promise<IpcResult<TerminalControlPermissionState>>
+          deny: () => Promise<IpcResult<TerminalControlPermissionState>>
+          revoke: () => Promise<IpcResult<TerminalControlPermissionState>>
+        }
+        onControlPermission: (handler: (state: TerminalControlPermissionState) => void) => () => void
       }
       chromeCompanion: {
         status: () => Promise<IpcResult<ChromeCompanionStatus>>
