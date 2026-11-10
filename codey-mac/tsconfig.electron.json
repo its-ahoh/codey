@@ -10,5 +10,5 @@
     "rootDir": "."
   },
   "include": ["electron/**/*"],
-  "exclude": ["node_modules", "dist", "dist-electron", "electron/**/*.test.ts"]
+  "exclude": ["node_modules", "dist", "dist-electron", "electron/**/*.test.ts", "electron/**/*.fixture.ts"]
 }

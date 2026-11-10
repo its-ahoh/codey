@@ -140,6 +140,10 @@
         "to": "browser-agent-cli.cjs"
       },
       {
+        "from": "electron/terminal-agent-cli.cjs",
+        "to": "terminal-agent-cli.cjs"
+      },
+      {
         "from": "../chrome-extension",
         "to": "chrome-extension"
       }
