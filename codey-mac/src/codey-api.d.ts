@@ -5,6 +5,9 @@ import type { ChatStreamEvent, QQStreamEvent } from '../../packages/gateway/src/
 import type { TaskBrief } from '../types'
 import type { TeamConfigRaw } from '../../packages/core/src/workspace'
 import type { ApiKeyEntry } from '../../packages/core/src/types/index'
+import type { BalanceResult, CatalogModel, CatalogProvider, ModelListResult } from '../../packages/core/src/providers'
+import type { UsageSummary } from '../../packages/core/src/usage'
+export type { BalanceResult, CatalogModel, CatalogProvider, ModelListResult, UsageSummary }
 import type { UpdaterEvent } from './hooks/updaterState'
 import type { CoreState } from '../electron/core-state'
 import type { ScannedSkill } from '../electron/skills'
@@ -422,6 +425,19 @@ declare global {
         save: (entry: ApiKeyEntry) => Promise<IpcResult<void>>
         delete: (name: string) => Promise<IpcResult<void>>
         rename: (oldName: string, newName: string) => Promise<IpcResult<void>>
+      }
+      providers: {
+        /** Curated presets first, then every models.dev provider (curated only when offline). */
+        list: () => Promise<IpcResult<CatalogProvider[]>>
+        /** A provider's models from models.dev, newest first. No key needed. */
+        catalogModels: (provider: string) => Promise<IpcResult<CatalogModel[]>>
+        /** Models the saved key can use, asked of the provider (models.dev as fallback). */
+        models: (keyName: string) => Promise<IpcResult<ModelListResult>>
+        balance: (keyName: string) => Promise<IpcResult<BalanceResult>>
+      }
+      usage: {
+        /** Token totals and list-price cost for the last `days` days (max 90). */
+        summary: (days: number) => Promise<IpcResult<UsageSummary & { balanceKeys: string[] }>>
       }
       fallback: {
         get: () => Promise<IpcResult<{ enabled: boolean; order: Array<{ agent: string; model?: string }> }>>

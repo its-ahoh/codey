@@ -28,7 +28,7 @@ import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, VoiceChan
 import { synthesizeSpeech } from './voice-tts';
 import { runTextCompletion, streamTextCompletion, canRunDirectly } from './text-completion';
 import { AgentFactory, isThinkingEffort } from '@codey/core';
-import { pruneCodeyTmp } from '@codey/core';
+import { pruneCodeyTmp, appendUsage, pruneUsage, usageRecordFrom } from '@codey/core';
 import { Logger } from './logger';
 import { ContextManager, ContextWindow } from '@codey/core';
 import { WorkspaceManager, TeamConfigRaw, TeamConfig, DEFAULT_ROUNDTABLE_SETTINGS, normalizeDispatchMode } from '@codey/core';
@@ -825,6 +825,19 @@ export class Codey {
     this.agentFactory.setExternalMcpProvider(() =>
       this.configManager?.getEnabledExternalMcpServers()
     );
+    // Usage accounting for Settings ▸ Models & keys ▸ Usage. The key binding
+    // is read from the live catalogue at record time, so a renamed model or
+    // key still lands under the name the user sees now.
+    this.agentFactory.setRunObserver((agent, request, response) => {
+      const model = request.model?.model;
+      const entry = model ? this.configManager?.getModel(model) : undefined;
+      const apiKey = entry?.apiKeyRef;
+      // The key's provider says who bills it; a keyless model falls back to
+      // the provider picked on the model itself.
+      const provider = (apiKey ? this.configManager?.getApiKey(apiKey)?.provider : undefined) ?? entry?.provider;
+      const record = usageRecordFrom(agent, response, { model, apiKey, provider });
+      if (record) appendUsage(record);
+    });
     this.logger = logger || Logger.getInstance();
     this.contextManager = new ContextManager({
       ttlMs: (config.context?.ttlMinutes ?? 60) * 60 * 1000,
@@ -1801,6 +1814,8 @@ export class Codey {
     // actively writing — a leftover from a crashed run would otherwise sit
     // there until the next one.
     pruneCodeyTmp();
+    // Keep 90 days of usage so the log can't grow without bound.
+    pruneUsage(90 * 24 * 60 * 60 * 1000);
 
     // Load workspace and bots
     await this.workspaceManager.load();

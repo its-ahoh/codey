@@ -99,6 +99,7 @@ export class AgentFactory {
   private agents: Map<CodingAgent, CodingAgentAdapter> = new Map();
   private envProvider?: (agent: CodingAgent) => Record<string, string> | undefined;
   private externalMcpProvider?: () => Record<string, McpServerSpec> | undefined;
+  private runObserver?: (agent: CodingAgent, request: AgentRequest, response: AgentResponse) => void;
 
   constructor() {
     this.register('claude-code', new ClaudeCodeAdapter());
@@ -132,6 +133,15 @@ export class AgentFactory {
    */
   setExternalMcpProvider(provider: () => Record<string, McpServerSpec> | undefined): void {
     this.externalMcpProvider = provider;
+  }
+
+  /**
+   * Called after every adapter run with the request and its response — the
+   * one place every agent turn passes through, so usage accounting sees
+   * Advisor, Aide and bot turns alike. Observer errors are swallowed.
+   */
+  setRunObserver(observer: (agent: CodingAgent, request: AgentRequest, response: AgentResponse) => void): void {
+    this.runObserver = observer;
   }
 
   resetSessions(): void {
@@ -198,6 +208,8 @@ export class AgentFactory {
       }
     }
 
-    return adapter.run(request);
+    const response = await adapter.run(request);
+    try { this.runObserver?.(agent, request, response); } catch { /* accounting must not fail the run */ }
+    return response;
   }
 }

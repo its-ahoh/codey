@@ -110,6 +110,15 @@ contextBridge.exposeInMainWorld('codey', {
     delete: (name: string) => ipcRenderer.invoke('apiKeys:delete', name),
     rename: (oldName: string, newName: string) => ipcRenderer.invoke('apiKeys:rename', oldName, newName),
   },
+  providers: {
+    list: () => ipcRenderer.invoke('providers:list'),
+    catalogModels: (provider: string) => ipcRenderer.invoke('providers:catalogModels', provider),
+    models: (keyName: string) => ipcRenderer.invoke('providers:models', keyName),
+    balance: (keyName: string) => ipcRenderer.invoke('providers:balance', keyName),
+  },
+  usage: {
+    summary: (days: number) => ipcRenderer.invoke('usage:summary', days),
+  },
   fallback: {
     get: () => ipcRenderer.invoke('fallback:get'),
     set: (fb: any) => ipcRenderer.invoke('fallback:set', fb),

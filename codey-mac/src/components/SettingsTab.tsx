@@ -3,13 +3,15 @@ import { apiService } from '../services/api'
 import { C } from '../theme'
 import { fieldStyle, inputStyle, pageStyle, selectStyle, pillButton, Section, Toggle, unwrap } from './settingsAtoms'
 import { UIIcon } from './UIIcons'
+import { ProviderButton, ProviderLogo, ProviderPickerModal } from './ProviderPicker'
+import type { CatalogModel, CatalogProvider } from '../codey-api'
 import { AGENT_API_TYPE, AGENT_NAMES, ApiType, agentsPinnedTo, missingAllEndpoints, modelFitsApiType } from './modelApiType'
 
 interface SettingsTabProps {
   isGatewayRunning: boolean
 }
 
-interface ApiKeyEntry { name: string; apiKey: string; anthropicBaseUrl?: string; openaiBaseUrl?: string; purpose?: 'general' | 'voice' }
+interface ApiKeyEntry { name: string; apiKey: string; anthropicBaseUrl?: string; openaiBaseUrl?: string; purpose?: 'general' | 'voice'; provider?: string }
 interface ModelEntry {
   apiType: ApiType
   model: string
@@ -68,11 +70,12 @@ const AllEndpointsHint: React.FC<{ keyEntry?: ApiKeyEntry }> = ({ keyEntry }) =>
 const ModelRow: React.FC<{
   entry: ModelEntry
   apis: ApiKeyEntry[]
+  providers: CatalogProvider[]
   isNew?: boolean
   onSave: (draft: ModelEntry, previousId: string) => Promise<void>
   onDelete?: (modelId: string) => Promise<void>
   onCancel?: () => void
-}> = ({ entry, apis, isNew, onSave, onDelete, onCancel }) => {
+}> = ({ entry, apis, providers, isNew, onSave, onDelete, onCancel }) => {
   const [editing, setEditing] = useState(!!isNew)
   const [draft, setDraft] = useState<ModelEntry>(entry)
   const [busy, setBusy] = useState(false)
@@ -83,6 +86,62 @@ const ModelRow: React.FC<{
   // would wipe in-flight keystrokes. Key on `entry.model` so identity churn
   // alone doesn't trigger a reset.
   useEffect(() => { if (!editing) setDraft(entry) }, [entry.model, editing])
+
+  // The picked company's models from models.dev — loads as soon as a company
+  // is chosen, no key needed.
+  const [catalog, setCatalog] = useState<CatalogModel[]>([])
+  useEffect(() => {
+    if (!editing || !draft.provider) { setCatalog([]); return }
+    let live = true
+    window.codey.providers.catalogModels(draft.provider)
+      .then(r => { if (live) setCatalog(r.ok ? r.data : []) })
+      .catch(() => { if (live) setCatalog([]) })
+    return () => { live = false }
+  }, [editing, draft.provider])
+
+  const [picking, setPicking] = useState(false)
+  const pickProvider = (id: string | undefined, model?: string) => {
+    const next: ModelEntry = { ...draft, provider: id, ...(model ? { model } : {}) }
+    // With no key bound, a new model takes the protocol the company speaks.
+    const p = providers.find(pp => pp.id === id)
+    if (isNew && !draft.apiKeyRef && p && draft.apiType !== 'cursor' && draft.apiType !== 'grok') {
+      const a = !!p.anthropicBaseUrl, o = !!p.openaiBaseUrl
+      if (a || o) next.apiType = a && o ? 'all' : a ? 'anthropic' : 'openai'
+    }
+    setDraft(next)
+    setRemote({ busy: false, models: [] })
+  }
+
+  // Model ids the selected key can use, for the Model ID suggestions.
+  const [remote, setRemote] = useState<{ busy: boolean; models: string[]; note?: string; err?: string }>({ busy: false, models: [] })
+  const loadModels = async () => {
+    if (!draft.apiKeyRef) return
+    setRemote({ busy: true, models: [] })
+    try {
+      const r = unwrap(await window.codey.providers.models(draft.apiKeyRef))
+      setRemote({ busy: false, models: r.models, note: `${r.models.length} models from ${r.source === 'provider' ? 'the provider' : 'models.dev'}` })
+    } catch (e: any) {
+      setRemote({ busy: false, models: [], err: `Couldn't list models: ${e?.message ?? String(e)}. Type the id instead.` })
+    }
+  }
+  const pickKey = (ref: string | undefined) => {
+    const next: ModelEntry = { ...draft, apiKeyRef: ref }
+    // A new model on a key inherits the protocol that key can actually serve.
+    const k = apis.find(a => a.name === ref)
+    // ...and the key's company, unless one is already picked.
+    if (k?.provider && !draft.provider) next.provider = k.provider
+    if (isNew && k && draft.apiType !== 'cursor' && draft.apiType !== 'grok') {
+      const a = !!k.anthropicBaseUrl, o = !!k.openaiBaseUrl
+      if (a || o) next.apiType = a && o ? 'all' : a ? 'anthropic' : 'openai'
+    }
+    setDraft(next)
+    setRemote({ busy: false, models: [] })
+  }
+  const listId = `model-ids-${entry.model || 'new'}`
+  // The key's live list wins (it is what this key can really use); otherwise
+  // the company's public list.
+  const suggestions: CatalogModel[] = remote.models.length ? remote.models.map(id => ({ id })) : catalog
+  const providerLabel = providers.find(p => p.id === draft.provider)?.label ?? draft.provider
 
   const save = async () => {
     if (!draft.model.trim()) return
@@ -101,7 +160,8 @@ const ModelRow: React.FC<{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
       }}>
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontWeight: 600, fontSize: 13 }}>
+          <div style={{ fontWeight: 600, fontSize: 13, display: 'flex', alignItems: 'center', gap: 7 }}>
+            {entry.provider && <ProviderLogo provider={providers.find(p => p.id === entry.provider)} label={entry.provider} size={18} />}
             {entry.model} <span style={{ color: C.fg3, fontWeight: 400, fontSize: 12, marginLeft: 6 }}>[{entry.apiType}]</span>
           </div>
           {entry.apiKeyRef && (
@@ -127,9 +187,39 @@ const ModelRow: React.FC<{
       background: C.surface2, marginBottom: 8,
     }}>
       <div style={{ display: 'grid', gridTemplateColumns: '100px 1fr', gap: 8, alignItems: 'center' }}>
+        <label style={{ color: C.fg3, fontSize: 12 }}>Provider</label>
+        <ProviderButton providers={providers} value={draft.provider} placeholder="Choose a provider and model"
+          onOpen={() => setPicking(true)} onClear={() => pickProvider(undefined)} ariaLabel="Model provider" />
+        <label style={{ color: C.fg3, fontSize: 12 }}>API Key</label>
+        <select
+          value={draft.apiKeyRef ?? ''}
+          onChange={e => pickKey(e.target.value || undefined)}
+          style={{ ...selectStyle, width: '100%' }}
+        >
+          <option value="">(use default — env vars)</option>
+          {[...apis].filter(a => a.purpose !== 'voice').sort((a, b) => a.name.localeCompare(b.name)).map(a => (
+            <option key={a.name} value={a.name}>{a.name}</option>
+          ))}
+        </select>
         <label style={{ color: C.fg3, fontSize: 12 }}>Model ID</label>
-        <input value={draft.model} onChange={e => setDraft({ ...draft, model: e.target.value })}
-          placeholder="e.g. claude-sonnet-4-5" style={{ ...inputStyle, width: '100%' }}/>
+        <div style={{ display: 'flex', gap: 6, minWidth: 0 }}>
+          <input value={draft.model} onChange={e => setDraft({ ...draft, model: e.target.value })}
+            list={suggestions.length ? listId : undefined}
+            placeholder={suggestions.length ? 'Pick or type a model id' : 'e.g. claude-sonnet-4-5'} style={{ ...inputStyle, flex: 1, minWidth: 0 }}/>
+          <button onClick={() => void loadModels()} disabled={!draft.apiKeyRef || remote.busy} style={pillButton('ghost')}
+            title={draft.apiKeyRef ? 'Ask the selected key which models it can use' : 'Pick an API key first'}>
+            {remote.busy ? 'Loading…' : 'Load models'}
+          </button>
+          {suggestions.length > 0 && (
+            <datalist id={listId}>{suggestions.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}</datalist>
+          )}
+        </div>
+        {(remote.note || remote.err || catalog.length > 0) && <>
+          <span />
+          <div style={{ color: remote.err ? C.warningFg : C.fg3, fontSize: 12 }}>
+            {remote.err ?? remote.note ?? `${catalog.length} ${providerLabel} models listed by models.dev. Your key or proxy may accept only some of them.`}
+          </div>
+        </>}
         <label style={{ color: C.fg3, fontSize: 12 }}>API Type</label>
         <select value={draft.apiType} onChange={e => {
           setDraft({ ...draft, apiType: e.target.value as ApiType })
@@ -141,22 +231,15 @@ const ModelRow: React.FC<{
           <option value="cursor">cursor (Cursor CLI only, CURSOR_API_KEY)</option>
           <option value="grok">grok (Grok Build only, XAI_API_KEY)</option>
         </select>
-        <label style={{ color: C.fg3, fontSize: 12 }}>API Key</label>
-        <select
-          value={draft.apiKeyRef ?? ''}
-          onChange={e => setDraft({ ...draft, apiKeyRef: e.target.value || undefined })}
-          style={{ ...selectStyle, width: '100%' }}
-        >
-          <option value="">(use default — env vars)</option>
-          {[...apis].filter(a => a.purpose !== 'voice').sort((a, b) => a.name.localeCompare(b.name)).map(a => (
-            <option key={a.name} value={a.name}>{a.name}</option>
-          ))}
-        </select>
         {draft.apiType === 'all' && <>
           <span />
           <AllEndpointsHint keyEntry={apis.find(a => a.name === draft.apiKeyRef)} />
         </>}
       </div>
+      {picking && (
+        <ProviderPickerModal providers={providers} mode="model" onClose={() => setPicking(false)}
+          onPickModel={(providerId, modelId) => pickProvider(providerId, modelId)} />
+      )}
       {err && <div style={{ color: C.red, fontSize: 12, marginTop: 8 }}>{err}</div>}
       <div style={{ display: 'flex', gap: 6, marginTop: 10, justifyContent: 'flex-end' }}>
         <button onClick={() => { setEditing(false); setDraft(entry); setErr(null); onCancel?.() }} style={pillButton('ghost')} disabled={busy}>Cancel</button>
@@ -319,6 +402,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
   const [advisor, setAdvisor] = useState<{ agent: string; model: string }>({ agent: '', model: '' })
   const [aide, setAide] = useState<{ agent: string; model: string }>({ agent: '', model: '' })
   const [apis, setApis] = useState<ApiKeyEntry[]>([])
+  const [providers, setProviders] = useState<CatalogProvider[]>([])
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -337,6 +421,8 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
       setAide({ agent: ai.agent ?? '', model: ai.model ?? '' })
       setApis(a as ApiKeyEntry[])
     } catch (e: any) { setError(e?.message ?? String(e)) }
+    // The company list only feeds the picker; failing leaves "Any".
+    try { setProviders(unwrap(await window.codey.providers.list())) } catch { /* keep Any only */ }
   }, [])
 
   useEffect(() => { if (isGatewayRunning) reload() }, [isGatewayRunning, reload])
@@ -492,6 +578,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
         <ModelRow
           entry={{ apiType: 'anthropic', model: '' }}
           apis={apis}
+          providers={providers}
           isNew
           onSave={saveModel}
           onCancel={() => setCreating(false)}
@@ -502,7 +589,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({ isGatewayRunning }) =>
       )}
       {[...models]
         .sort((a, b) => a.apiType.localeCompare(b.apiType) || a.model.localeCompare(b.model))
-        .map(m => <ModelRow key={m.model} entry={m} apis={apis} onSave={saveModel} onDelete={deleteModel}/>)}
+        .map(m => <ModelRow key={m.model} entry={m} apis={apis} providers={providers} onSave={saveModel} onDelete={deleteModel}/>)}
 
       <Section title="Agent fallback" right={
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
