@@ -272,7 +272,7 @@ const FallbackList: React.FC<{
               </select>
               {(() => {
                 // An empty row runs the model the first row for the same agent
-                // pins, so only call it the agent's own model when there is none.
+                // pins, so only label it plain "default" when there is none.
                 const first = order.find(o => o.agent === entry.agent && !!o.model)?.model
                 const pinned = first === CLI_DEFAULT_MODEL ? undefined : first
                 return (
@@ -284,9 +284,9 @@ const FallbackList: React.FC<{
                 {pinned
                   ? <>
                       <option value="">{`(same as ${pinned})`}</option>
-                      <option value={CLI_DEFAULT_MODEL}>{`${CLI_DEFAULT_MODEL} (agent's own model)`}</option>
+                      <option value={CLI_DEFAULT_MODEL}>{CLI_DEFAULT_MODEL}</option>
                     </>
-                  : <option value="">{`${CLI_DEFAULT_MODEL} (agent's own model)`}</option>}
+                  : <option value="">{CLI_DEFAULT_MODEL}</option>}
                 {modelsForAgent(entry.agent).map(m => (
                   <option key={m.model} value={m.model}>{m.model} [{m.apiType}]</option>
                 ))}
