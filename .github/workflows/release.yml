@@ -42,6 +42,28 @@ jobs:
       - name: Build gateway
         run: npm run build -w @codey/gateway
 
+      # The voice helper is an electron-builder extraResource. Calling
+      # electron-builder directly skips the `prebuild:mac` npm hook, and a
+      # missing extraResource is not an error, so without this step the app
+      # ships with no CodeyVoice and voice input fails on launch.
+      # SwiftPM's shared cache can be missing on the runner; keep it in .build.
+      - name: Resolve voice helper packages
+        working-directory: voice
+        run: |
+          for attempt in 1 2 3; do
+            swift package --cache-path .build/swiftpm-cache resolve && exit 0
+            echo "Package resolve failed (attempt $attempt), retrying..."
+            sleep 15
+          done
+          exit 1
+
+      - name: Build voice helper
+        env:
+          SWIFT_FLAGS: --cache-path .build/swiftpm-cache
+        run: |
+          npm run build:helper -w codey-mac
+          test -x voice/CodeyVoice || { echo "::error::voice/CodeyVoice was not built"; exit 1; }
+
       # Signing + notarization require these repo secrets (Settings → Secrets and
       # variables → Actions). Without them electron-builder can't sign/notarize
       # and the release silently fails late in the build, so fail fast here with
