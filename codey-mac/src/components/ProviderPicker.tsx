@@ -9,23 +9,41 @@ import type { CatalogModel, CatalogProvider } from '../codey-api'
 /**
  * Company logo on a light tile: the colour LobeHub version where one exists,
  * otherwise models.dev's plain black mark (which would vanish on the dark theme
- * without the tile). Local gateways have no logo; offline it falls back to the
- * first letter.
+ * without the tile). Companies with neither show their first letter.
  */
-const LOBEHUB_ICONS_VERSION = '1.102.0'
-const colorLogoUrl = (slug: string) =>
-  `https://cdn.jsdelivr.net/npm/@lobehub/icons-static-svg@${LOBEHUB_ICONS_VERSION}/icons/${encodeURIComponent(slug)}-color.svg`
-const monoLogoUrl = (id: string) => `https://models.dev/logos/${encodeURIComponent(id)}.svg`
+// Logos ship inside the app (src/assets/provider-logos.json, refreshed by
+// scripts/fetch-provider-logos.mjs), so drawing them never touches the
+// network. The ~0.7 MB bank is a separate chunk loaded the first time a logo
+// is shown, not part of the startup bundle.
+type LogoBank = { color: Record<string, string>; mono: Record<string, string> }
+let logoBank: LogoBank | null = null
+let logoBankLoad: Promise<LogoBank> | null = null
+const loadLogoBank = () => (logoBankLoad ??= import('../assets/provider-logos.json')
+  .then(m => (logoBank = ((m as { default?: LogoBank }).default ?? m) as LogoBank)))
+
+const dataUrls = new Map<string, string>()
+const svgDataUrl = (svg: string) => {
+  let url = dataUrls.get(svg)
+  if (!url) { url = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`; dataUrls.set(svg, url) }
+  return url
+}
 
 export const ProviderLogo: React.FC<{ provider?: CatalogProvider; label?: string; size?: number }> = ({ provider, label, size = 28 }) => {
+  const [bank, setBank] = useState<LogoBank | null>(logoBank)
+  useEffect(() => {
+    if (bank) return
+    let live = true
+    loadLogoBank().then(b => { if (live) setBank(b) }).catch(() => { /* letters only */ })
+    return () => { live = false }
+  }, [bank])
   // Colour logo first, then the models.dev mark, then the first letter —
-  // each step taken only when the one before fails to load.
+  // each step taken only when the one before is missing or fails to draw.
   const sources = [
-    provider?.colorLogo && colorLogoUrl(provider.colorLogo),
-    provider?.logoId && monoLogoUrl(provider.logoId),
-  ].filter((u): u is string => !!u)
+    provider?.colorLogo ? bank?.color[provider.colorLogo] : undefined,
+    provider?.logoId ? bank?.mono[provider.logoId] : undefined,
+  ].filter((svg): svg is string => !!svg).map(svgDataUrl)
   const [attempt, setAttempt] = useState(0)
-  useEffect(() => setAttempt(0), [provider?.colorLogo, provider?.logoId])
+  useEffect(() => setAttempt(0), [provider?.colorLogo, provider?.logoId, bank])
   const src = sources[attempt]
   const text = (provider?.label ?? label ?? '?').trim()
   const tile: React.CSSProperties = {
@@ -110,9 +128,27 @@ export const ProviderPickerModal: React.FC<{
   const [query, setQuery] = useState('')
   const [models, setModels] = useState<{ busy: boolean; list: CatalogModel[] }>({ busy: false, list: [] })
   const searchRef = useRef<HTMLInputElement>(null)
+  const dialogRef = useRef<HTMLDivElement>(null)
+
+  // Hand focus back to whatever opened the picker when it closes.
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null
+    return () => { opener?.focus?.() }
+  }, [])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Keep Tab inside the dialog: wrap from the last control to the first
+      // and back, so focus never lands on the page underneath.
+      if (e.key === 'Tab' && dialogRef.current) {
+        const focusable = [...dialogRef.current.querySelectorAll<HTMLElement>('button:not(:disabled), input, [tabindex]:not([tabindex="-1"])')]
+        if (focusable.length === 0) return
+        const first = focusable[0], last = focusable[focusable.length - 1]
+        const inside = dialogRef.current.contains(document.activeElement)
+        if (e.shiftKey && (document.activeElement === first || !inside)) { e.preventDefault(); last.focus() }
+        else if (!e.shiftKey && (document.activeElement === last || !inside)) { e.preventDefault(); first.focus() }
+        return
+      }
       if (e.key !== 'Escape') return
       e.stopPropagation()
       if (step) back(); else onClose()
@@ -153,7 +189,7 @@ export const ProviderPickerModal: React.FC<{
 
   return createPortal(
     <div style={styles.backdrop} onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}>
-      <div role="dialog" aria-label={step ? 'Choose a model' : 'Choose a provider'} style={styles.modal}>
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label={step ? 'Choose a model' : 'Choose a provider'} style={styles.modal}>
         <div style={styles.header}>
           {step && (
             <button type="button" onClick={back} style={{ ...pillButton('ghost'), padding: '5px 9px' }} aria-label="Back to providers">‹</button>

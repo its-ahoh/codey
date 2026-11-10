@@ -62,15 +62,9 @@ export const UsageTab: React.FC<{ isGatewayRunning: boolean }> = ({ isGatewayRun
     finally { setBusy(false) }
   }, [days])
 
-  useEffect(() => { if (isGatewayRunning) void reload() }, [isGatewayRunning, reload])
-
-  if (!isGatewayRunning) {
-    return (
-      <div style={pageStyle}>
-        <div style={{ marginTop: 40, textAlign: 'center', color: C.fg3, fontSize: 13 }}>Gateway not available</div>
-      </div>
-    )
-  }
+  // The log is a file the app reads directly, so this works with the gateway
+  // stopped; reload when it comes back in case it wrote new runs meanwhile.
+  useEffect(() => { void reload() }, [isGatewayRunning, reload])
 
   const t = data?.totals
   return (
