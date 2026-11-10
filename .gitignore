@@ -19,6 +19,8 @@ workspaces/*
 codey-mac/dist-electron/
 codey-mac/release/
 codey-mac/release-local/
+codey-mac/test-results/
+codey-mac/playwright-report/
 # git worktrees
 .worktrees/
 

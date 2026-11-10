@@ -28,6 +28,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:e2e": "npm run build:dependencies && vite build && playwright test",
     "check:browser-fill": "electron scripts/check-browser-fill.cjs"
   },
   "dependencies": {
@@ -50,6 +51,7 @@
   },
   "devDependencies": {
     "@electron/notarize": "^2.2.1",
+    "@playwright/test": "^1.65.0",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
     "@vitejs/plugin-react": "^4.2.0",
