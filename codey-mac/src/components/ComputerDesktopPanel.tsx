@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import type { ComputerDesktop, ComputerControlState } from '../../electron/computer-control'
 import { C } from '../theme'
-import { desktopKey, windowPoint } from './computerDesktopInput'
 
 export const ComputerDesktopPanel: React.FC = () => {
   const [state, setState] = useState<ComputerControlState>()
@@ -15,33 +14,22 @@ export const ComputerDesktopPanel: React.FC = () => {
   return <DesktopSurface key={`${state.desktop.sessionId}:${state.desktop.window}`} desktop={state.desktop} agent={state.active?.agent ?? 'Agent'} />
 }
 
+/**
+ * Watch-only view of the window an agent is working in, which may sit on
+ * another desktop. The video takes no input: clicking it jumps to the real
+ * window, and the user works there after pausing the agent.
+ */
 export const DesktopSurface: React.FC<{ desktop: ComputerDesktop; agent: string }> = ({ desktop, agent }) => {
   const video = useRef<HTMLVideoElement>(null)
-  const keyboard = useRef<HTMLTextAreaElement>(null)
   const media = useRef<MediaStream>()
   const streamId = useRef('')
   const generation = useRef(0)
   const mounted = useRef(true)
-  const lastFrame = useRef(-Infinity)
-  const gesture = useRef<{ x: number; y: number; button: number }>()
-  const composing = useRef(false)
-  const compositionTimer = useRef<ReturnType<typeof setTimeout>>()
-  const textTimer = useRef<ReturnType<typeof setTimeout>>()
-  const textBuffer = useRef('')
-  const inputEpoch = useRef(0)
-  const inputs = useRef<Promise<void>>(Promise.resolve())
-  const pendingInputs = useRef(0)
-  const wheel = useRef<{ dx: number; dy: number; x: number; y: number }>()
-  const wheelTimer = useRef<ReturnType<typeof setTimeout>>()
-  const scrolling = useRef(false)
   const [live, setLive] = useState(false)
-  const [fresh, setFresh] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [wide, setWide] = useState(false)
-  const human = desktop.controller === 'human' && !desktop.transitioning
-  const current = useRef({ desktop, human, fresh })
-  current.current = { desktop, human, fresh }
+  const paused = desktop.controller === 'human' && !desktop.transitioning
   const button: React.CSSProperties = { padding: '7px 10px', border: `1px solid ${C.border}`, borderRadius: 7, background: C.surface2, color: C.fg, cursor: 'pointer' }
   const stopVideo = () => {
     generation.current++
@@ -50,30 +38,12 @@ export const DesktopSurface: React.FC<{ desktop: ComputerDesktop; agent: string 
     if (video.current) video.current.srcObject = null
     if (streamId.current) void window.codey.computer.streamStopped(streamId.current)
     streamId.current = ''
-    gesture.current = undefined
-    inputEpoch.current++
-    textBuffer.current = ''
-    clearTimeout(textTimer.current); clearTimeout(compositionTimer.current)
-    clearTimeout(wheelTimer.current); wheelTimer.current = undefined; wheel.current = undefined
-    lastFrame.current = -Infinity
-    if (mounted.current) { setLive(false); setFresh(false) }
+    if (mounted.current) setLive(false)
   }
   useEffect(() => {
     mounted.current = true
-    // "Fresh" means the capture is running and has shown a frame. It cannot
-    // mean "a frame arrived recently": window capture only delivers a frame
-    // when the window repaints, so an idle window would never be usable.
-    const timer = setInterval(() => setFresh(media.current?.getVideoTracks()[0]?.readyState === 'live' && lastFrame.current > -Infinity), 300)
-    return () => { mounted.current = false; clearInterval(timer); stopVideo() }
+    return () => { mounted.current = false; stopVideo() }
   }, [])
-  useEffect(() => {
-    gesture.current = undefined
-    inputEpoch.current++
-    textBuffer.current = ''
-    clearTimeout(textTimer.current); clearTimeout(compositionTimer.current)
-    clearTimeout(wheelTimer.current); wheelTimer.current = undefined; wheel.current = undefined
-    if (keyboard.current) keyboard.current.value = ''
-  }, [desktop.controller, desktop.transitioning])
 
   const startVideo = async () => {
     setBusy(true); setError('')
@@ -96,12 +66,6 @@ export const DesktopSurface: React.FC<{ desktop: ComputerDesktop; agent: string 
         if (media.current === stream) { stopVideo(); if (mounted.current) setError('Live view ended. Start it again to continue.') }
       })
       await element.play()
-      const frame = () => {
-        if (media.current !== stream || !mounted.current) return
-        lastFrame.current = performance.now()
-        element.requestVideoFrameCallback(frame)
-      }
-      element.requestVideoFrameCallback(frame)
       setLive(true)
     } catch (e) {
       if (grant) await window.codey.computer.streamStopped(grant)
@@ -109,65 +73,15 @@ export const DesktopSurface: React.FC<{ desktop: ComputerDesktop; agent: string 
       if (mounted.current) setError(e instanceof Error ? e.message : String(e))
     } finally { if (mounted.current) setBusy(false) }
   }
-  const handoff = async (take: boolean) => {
+  const run = async (action: () => Promise<{ ok: true } | { ok: false; error: string }>) => {
     setBusy(true); setError('')
-    gesture.current = undefined
     try {
-      if (!take) { flushText(); await inputs.current }
-      const result = await window.codey.computer.handoff(desktop.sessionId, desktop.window, take, streamId.current)
+      const result = await action()
       if (!result.ok) throw new Error(result.error)
-      if (take) keyboard.current?.focus({ preventScroll: true })
-    } catch (e) { setError(e instanceof Error ? e.message : String(e)) }
+    } catch (e) { if (mounted.current) setError(e instanceof Error ? e.message : String(e)) }
     finally { if (mounted.current) setBusy(false) }
   }
-  const send = (args: Record<string, unknown>): Promise<void> => {
-    if (!current.current.human || !current.current.fresh || !streamId.current || !video.current) return Promise.resolve()
-    if (pendingInputs.current >= 12) { setError('Input is busy. Wait for it to finish.'); return Promise.resolve() }
-    if (args.tool !== 'type_text') flushText()
-    const expectedEpoch = inputEpoch.current
-    const expected = current.current.desktop
-    const id = streamId.current
-    const dimensions = { frameWidth: video.current.videoWidth, frameHeight: video.current.videoHeight, frameAt: Date.now() - (performance.now() - lastFrame.current) }
-    pendingInputs.current++
-    return inputs.current = inputs.current.then(async () => {
-      if (!mounted.current || !current.current.human || !current.current.fresh || streamId.current !== id ||
-        current.current.desktop.controlVersion !== expected.controlVersion || inputEpoch.current !== expectedEpoch) return
-      const result = await window.codey.computer.input(expected.sessionId, expected.window, { ...args, ...dimensions }, id, expected.controlVersion)
-      if (!result.ok) throw new Error(result.error)
-      if (result.data.isError) throw new Error(result.data.text ?? 'The application refused this input')
-    }).catch(e => { inputEpoch.current++; if (mounted.current) setError(e instanceof Error ? e.message : String(e)) })
-      .finally(() => { pendingInputs.current-- })
-  }
-  // One swipe is dozens of wheel events. Add them up and send a single scroll,
-  // and never start the next one while the last is still on its way.
-  const flushWheel = () => {
-    wheelTimer.current = undefined
-    const pending = wheel.current
-    if (!pending) return
-    if (scrolling.current) { wheelTimer.current = setTimeout(flushWheel, 60); return }
-    wheel.current = undefined
-    const horizontal = Math.abs(pending.dx) > Math.abs(pending.dy)
-    const distance = horizontal ? pending.dx : pending.dy
-    if (!distance) return
-    scrolling.current = true
-    void send({ tool: 'scroll', x: pending.x, y: pending.y,
-      direction: horizontal ? (distance > 0 ? 'right' : 'left') : (distance > 0 ? 'down' : 'up'),
-      amount: Math.min(6, Math.max(1, Math.round(Math.abs(distance) / 80))) }).finally(() => { scrolling.current = false })
-  }
-  const point = (x: number, y: number) => {
-    const element = video.current
-    return element ? windowPoint(element.getBoundingClientRect(), element.videoWidth, element.videoHeight, x, y) : null
-  }
-  const flushText = () => {
-    clearTimeout(textTimer.current)
-    const text = textBuffer.current; textBuffer.current = ''
-    if (text) send({ tool: 'type_text', text })
-  }
-  const insert = (text: string) => {
-    textBuffer.current += text
-    clearTimeout(textTimer.current)
-    textTimer.current = setTimeout(flushText, 100)
-  }
+  const reveal = () => run(() => window.codey.computer.reveal(desktop.sessionId, desktop.window))
   return <aside aria-label="Live application desktop" style={{ flex: `0 0 ${wide ? '65%' : '42%'}`, minWidth: 320, maxWidth: wide ? 1200 : 720,
     display: 'flex', flexDirection: 'column', borderLeft: `1px solid ${C.border}`, background: C.surface, color: C.fg, overflow: 'hidden' }}>
     <header style={{ padding: 14, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -177,63 +91,21 @@ export const DesktopSurface: React.FC<{ desktop: ComputerDesktop; agent: string 
     </header>
     <div style={{ padding: '0 14px 12px', fontSize: 12, color: C.fg2, overflowWrap: 'anywhere' }}>{desktop.title || 'Untitled window'}</div>
     <div style={{ padding: '0 14px 12px', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-      <span role="status">{desktop.transitioning ? 'Switching control…' : human ? 'You have control' : `${agent} has control`}</span>
+      <span role="status">{desktop.transitioning ? 'Switching…' : paused ? `${agent} is paused` : `${agent} is working`}</span>
       {!live ? <button style={button} disabled={busy} onClick={() => void startVideo()}>Start live view</button>
         : <button style={button} onClick={stopVideo}>Pause video</button>}
-      <button style={button} disabled={busy || desktop.transitioning || (!human && (!live || !fresh))} onClick={() => void handoff(!human)}>{human ? 'Return control' : 'Take control'}</button>
+      <button style={button} disabled={busy || desktop.transitioning}
+        onClick={() => void run(() => window.codey.computer.handoff(desktop.sessionId, desktop.window, !paused))}>{paused ? 'Resume agent' : 'Pause agent'}</button>
+      <button style={button} disabled={busy} onClick={() => void reveal()}>Go to window</button>
     </div>
-    <div style={{ flex: 1, minHeight: 160, position: 'relative', background: '#090b0e', display: 'flex', alignItems: 'center', overflow: 'hidden' }}
-      onContextMenu={event => event.preventDefault()}
-      onPointerDown={event => {
-        if (!human || !fresh || (event.button !== 0 && event.button !== 2)) return
-        const p = point(event.clientX, event.clientY)
-        if (!p) return
-        event.preventDefault(); keyboard.current?.focus({ preventScroll: true })
-        gesture.current = { ...p, button: event.button }; event.currentTarget.setPointerCapture(event.pointerId)
-      }}
-      onPointerCancel={() => { gesture.current = undefined }}
-      onPointerUp={event => {
-        const start = gesture.current; gesture.current = undefined
-        if (!start || !human || !fresh) return
-        const end = point(event.clientX, event.clientY)
-        if (!end) return
-        if (Math.hypot((start.x - end.x) * (video.current?.videoWidth ?? 0), (start.y - end.y) * (video.current?.videoHeight ?? 0)) > 5 && start.button === 0) {
-          send({ tool: 'drag', from_x: start.x, from_y: start.y, to_x: end.x, to_y: end.y })
-        } else send({ tool: 'click', x: end.x, y: end.y, button: start.button === 2 ? 'right' : 'left' })
-      }}
-      onWheel={event => {
-        if (!human || !fresh) return
-        const p = point(event.clientX, event.clientY)
-        if (!p) return
-        wheel.current = { dx: (wheel.current?.dx ?? 0) + event.deltaX, dy: (wheel.current?.dy ?? 0) + event.deltaY, ...p }
-        wheelTimer.current ??= setTimeout(flushWheel, 60)
-      }}>
-      <video ref={video} muted playsInline aria-label="Live window video" style={{ width: '100%', height: '100%', objectFit: 'contain', cursor: human ? 'crosshair' : 'default' }} />
+    <div style={{ flex: 1, minHeight: 160, position: 'relative', background: '#090b0e', display: 'flex', alignItems: 'center', overflow: 'hidden' }}>
+      <video ref={video} muted playsInline aria-label="Live window video. Click to go to this window." title="Go to this window"
+        onClick={() => { if (live && !busy) void reveal() }}
+        style={{ width: '100%', height: '100%', objectFit: 'contain', cursor: live ? 'pointer' : 'default' }} />
       {!live && <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: '#adb3bc', pointerEvents: 'none' }}>Start live view to watch this window.</div>}
-      {live && !fresh && <div role="status" style={{ position: 'absolute', bottom: 12, left: 12, color: '#fff', background: '#252525', padding: 8 }}>Waiting for fresh video · input paused</div>}
-      <textarea ref={keyboard} aria-label="Keyboard input for the application" disabled={!human || !fresh}
-        style={{ position: 'absolute', width: 1, height: 1, opacity: 0, pointerEvents: 'none' }}
-        onBlur={() => { gesture.current = undefined }}
-        onCompositionStart={() => { clearTimeout(compositionTimer.current); compositionTimer.current = undefined; composing.current = true }}
-        onCompositionEnd={() => {
-          composing.current = false
-          compositionTimer.current = setTimeout(() => {
-            compositionTimer.current = undefined
-            if (keyboard.current) { insert(keyboard.current.value); keyboard.current.value = '' }
-          }, 20)
-        }}
-        onInput={event => { if (!composing.current && !compositionTimer.current) { insert(event.currentTarget.value); event.currentTarget.value = '' } }}
-        onPaste={event => { event.preventDefault(); insert(event.clipboardData.getData('text/plain')) }}
-        onKeyDown={event => {
-          event.stopPropagation()
-          if (composing.current || event.nativeEvent.isComposing) return
-          if (event.ctrlKey && event.shiftKey && event.key === 'Escape') { event.preventDefault(); void handoff(false); return }
-          const action = desktopKey(event)
-          if (action) { event.preventDefault(); send(action) }
-        }} />
     </div>
     <footer style={{ padding: 14, fontSize: 12, color: C.fg2 }}>
-      {human ? 'Click the video to type. Drag, right-click and scroll directly. Ctrl+Shift+Esc returns control.' : 'Take control to use the mouse and keyboard. Agent input pauses until you return control.'}
+      {paused ? 'The agent is paused. Use the window yourself, then resume the agent.' : 'Click the video to go to this window. Pause the agent before you use the window yourself.'}
       {error && <p role="alert" style={{ color: C.fg, marginBottom: 0 }}>{error}</p>}
     </footer>
   </aside>

@@ -164,7 +164,7 @@ describe('bounded computer control', () => {
     await running
     await takeover
     expect(await queued).toBeInstanceOf(Error)
-    await expect(lease.execute({ action: 'act' })).rejects.toThrow('user has control')
+    await expect(lease.execute({ action: 'act' })).rejects.toThrow('paused computer control')
     await expect(lease.execute({ action: 'human_input' }, 'human')).resolves.toEqual({ text: 'ok' })
     await lease.handoff(false)
     await expect(lease.execute({ action: 'human_input' }, 'human')).rejects.toThrow('Take control')
@@ -182,7 +182,7 @@ describe('bounded computer control', () => {
       validate?.()
       return { text: 'must not run' }
     })
-    await expect(lease.execute({ action: 'human_input' }, 'human', () => permitted)).rejects.toThrow('live view')
+    await expect(lease.execute({ action: 'human_input' }, 'human', () => permitted)).rejects.toThrow('abandoned')
     await lease.dispose()
   })
 

@@ -13,12 +13,11 @@ const actionFields: Record<string, string[]> = {
 
 /** Resolve targets inside Codey. Agents never supply process IDs or native socket paths. */
 export function computerCommands(client: CuaDriverLike, apps: ComputerApp[]) {
-  type Geometry = { width: number; height: number; frameWidth: number; frameHeight: number; at: number }
-  const windows = new Map<string, { pid: number; windowId: number; bundleId: string; observed: boolean; geometry?: Geometry }>()
+  const windows = new Map<string, { pid: number; windowId: number; bundleId: string; observed: boolean }>()
   return async (command: ComputerCommand, validate: () => void = () => {}): Promise<ComputerReply> => {
     validate()
     if (command.action === 'invalidate') {
-      for (const target of windows.values()) { target.observed = false; target.geometry = undefined }
+      for (const target of windows.values()) target.observed = false
       return {}
     }
     if (command.action === 'windows') {
@@ -28,7 +27,10 @@ export function computerCommands(client: CuaDriverLike, apps: ComputerApp[]) {
       const result: NonNullable<ComputerReply['windows']> = []
       for (const [id, target] of windows) if (target.bundleId === allowed.bundleId) windows.delete(id)
       for (const process of processes) {
-        const listed = await client.listWindows({ pid: process.pid, onScreenOnly: true })
+        // The driver works in the background, so a window on another Space
+        // (or minimized) is a valid target: the user can keep their own
+        // desktop while the agent works on a different one.
+        const listed = await client.listWindows({ pid: process.pid, onScreenOnly: false })
         for (const window of listed.windows) {
           if (window.pid !== undefined && window.pid !== process.pid) continue
           const windowId = Number(window.windowId)
@@ -38,64 +40,19 @@ export function computerCommands(client: CuaDriverLike, apps: ComputerApp[]) {
           result.push({ id, title: window.title, app: allowed.name })
         }
       }
-      return { windows: result, text: result.length ? undefined : 'No visible windows. Open the application and try again.' }
+      return { windows: result, text: result.length ? undefined : 'No windows. Open the application and try again.' }
     }
-    if (!['observe', 'act', 'inspect', 'human_input'].includes(command.action)) throw new Error('Unknown Codey computer command')
+    if (!['observe', 'act', 'inspect'].includes(command.action)) throw new Error('Unknown Codey computer command')
     const target = windows.get(command.window ?? '')
     if (!target) throw new Error('List windows first and use a returned window ID')
     const current = (await client.listApps({})).apps.find(app => app.pid === target.pid && app.bundleId === target.bundleId && app.running)
     if (!current) { windows.delete(command.window!); throw new Error('The target application has changed; list windows again') }
-    // Liveness checks must still find a window that is minimized, hidden or on
-    // another Space: it exists, it is just not drawn. Input and observation
-    // keep requiring a visible window.
-    const listed = await client.listWindows({ pid: target.pid, onScreenOnly: command.action !== 'inspect' })
+    const listed = await client.listWindows({ pid: target.pid, onScreenOnly: false })
     const nativeWindow = listed.windows.find(window => window.windowId.toString() === String(target.windowId) &&
       (window.pid === undefined || window.pid === target.pid))
     if (!nativeWindow) { windows.delete(command.window!); throw new Error('The window has closed or is unavailable') }
-    const resolved = { pid: target.pid, windowId: target.windowId, title: nativeWindow.title, app: current.name ?? target.bundleId }
+    const resolved = { pid: target.pid, windowId: target.windowId, bundleId: target.bundleId, title: nativeWindow.title, app: current.name ?? target.bundleId }
     if (command.action === 'inspect') return { target: resolved }
-    if (command.action === 'human_input') {
-      const args = command.args
-      if (!args || !['click', 'drag', 'scroll', 'type_text', 'press_key', 'hotkey'].includes(String(args.tool))) throw new Error('Invalid human input')
-      validate()
-      const coordinates = ['x', 'y', 'from_x', 'from_y', 'to_x', 'to_y']
-      const frameWidth = args.frameWidth
-      const frameHeight = args.frameHeight
-      let width = 0
-      let height = 0
-      // Only pointer input needs the window's pixel size. Keys skip the
-      // screenshot, and a burst of pointer input shares one measurement for as
-      // long as the video frame it was aimed at keeps the same size.
-      if (coordinates.some(key => args[key] !== undefined)) {
-        const cached = target.geometry
-        if (cached && cached.frameWidth === frameWidth && cached.frameHeight === frameHeight && Date.now() - cached.at < 2000) {
-          width = cached.width; height = cached.height
-        } else {
-          target.geometry = undefined
-          const observed = await client.callTool('get_window_state', JSON.stringify({ pid: target.pid, window_id: target.windowId,
-            include_screenshot: true, include_accessibility_tree: false, max_dimension: 1280 }))
-          if (observed.isError || !observed.images.length || !observed.structuredJson) throw new Error('Cannot verify the target window for input')
-          const snapshot = JSON.parse(observed.structuredJson)
-          width = snapshot.screenshot_width
-          height = snapshot.screenshot_height
-          if (![width, height, frameWidth, frameHeight].every(n => typeof n === 'number' && Number.isFinite(n) && n > 0) ||
-            Math.abs(width / height / (Number(frameWidth) / Number(frameHeight)) - 1) > 0.02) {
-            throw new Error('Window geometry changed. Wait for the live view to update and try again.')
-          }
-          target.geometry = { width, height, frameWidth: Number(frameWidth), frameHeight: Number(frameHeight), at: Date.now() }
-        }
-      }
-      const mapped: Record<string, unknown> = { ...args }
-      delete mapped.frameWidth; delete mapped.frameHeight
-      for (const key of coordinates) {
-        if (mapped[key] === undefined) continue
-        const value = mapped[key]
-        if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1) throw new Error('Input is outside the window')
-        mapped[key] = Math.min((key.endsWith('x') ? width : height) - 1, value * (key.endsWith('x') ? width : height))
-      }
-      command = { action: 'act', window: command.window, args: mapped }
-      target.observed = true
-    }
     let name = 'get_window_state'
     const input: Record<string, unknown> = { pid: target.pid, window_id: target.windowId }
     if (command.action === 'observe') {

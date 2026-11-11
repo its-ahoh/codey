@@ -362,8 +362,8 @@ declare global {
         status(): Promise<IpcResult<ComputerControlState>>
         armStream(sessionId: string, window: string): Promise<IpcResult<string>>
         streamStopped(streamId: string): Promise<IpcResult<void>>
-        handoff(sessionId: string, window: string, human: boolean, streamId: string): Promise<IpcResult<ComputerDesktop>>
-        input(sessionId: string, window: string, args: Record<string, unknown>, streamId: string, controlVersion: number): Promise<IpcResult<ComputerReply>>
+        handoff(sessionId: string, window: string, human: boolean): Promise<IpcResult<ComputerDesktop>>
+        reveal(sessionId: string, window: string): Promise<IpcResult<void>>
         preview(known?: number): Promise<IpcResult<ComputerPreview | { unchanged: true } | null>>
         view(command: ComputerCommand): Promise<IpcResult<ComputerReply>>
         configure(enabled: boolean, apps: ComputerApp[]): Promise<IpcResult<ComputerControlState>>

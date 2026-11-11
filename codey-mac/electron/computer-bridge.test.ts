@@ -96,7 +96,7 @@ describe('Codey computer bridge', () => {
       await lease.dispose()
     } finally { await bridge.shutdown() }
   })
-  it('exposes takeover only to Codey and rejects old input after handback', async () => {
+  it('lets only Codey pause the agent, and blocks agent input while paused', async () => {
     const { bridge } = setup()
     try {
       const lease = (await bridge.prepare('codex', request))!
@@ -105,11 +105,10 @@ describe('Codey computer bridge', () => {
       const desktop = bridge.desktop()!
       expect((await call(env, { action: 'human_input', window: 'sample' })).status).toBe(400)
       const taken = await bridge.handoff(desktop.sessionId, desktop.window, true)
-      expect((await call(env, { action: 'act', window: 'sample' })).body.error).toContain('user has control')
-      await bridge.humanInput(taken.sessionId, taken.window, { tool: 'click' }, taken.controlVersion)
+      expect((await call(env, { action: 'act', window: 'sample' })).body.error).toContain('paused computer control')
       await bridge.handoff(taken.sessionId, taken.window, false)
+      expect((await call(env, { action: 'observe', window: 'sample' })).status).toBe(200)
       const again = await bridge.handoff(taken.sessionId, taken.window, true)
-      await expect(bridge.humanInput(taken.sessionId, taken.window, { tool: 'click' }, taken.controlVersion)).rejects.toThrow('Take control')
       expect(again.controlVersion).toBeGreaterThan(taken.controlVersion)
       await lease.dispose()
       expect(bridge.desktop()).toBeNull()
@@ -123,7 +122,7 @@ describe('Codey computer bridge', () => {
       await bridge.handoff(desktop.sessionId, desktop.window, true)
       const lease = (await bridge.prepare('pi', request))!
       const result = await call(lease.request.extraEnv!, { action: 'observe', window: 'sample' })
-      expect(result.body.error).toContain('user has control')
+      expect(result.body.error).toContain('paused computer control')
       expect(approve).toHaveBeenCalledOnce()
       expect(bridge.desktop()?.controller).toBe('human')
       await lease.dispose()

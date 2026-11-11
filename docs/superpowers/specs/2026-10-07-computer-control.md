@@ -20,22 +20,24 @@ The stream is local to Codey, is not recorded, and is independent of the agent's
 CUA snapshots. Frame delivery does not refresh accessibility snapshots or stale
 an agent's element references. Agent image tools continue to use observations.
 
-Take control pauses agent desktop requests, drains the current operation and
-invalidates queued input before enabling the user's mouse and keyboard. Click,
-right-click, completed drag gestures, scroll, text/IME, paste and keyboard
-shortcuts go through the same bounded Cua runtime. Return control invalidates
-old human input and requires the agent to observe again. Already delivered input
-cannot be rolled back. Ctrl+Shift+Esc returns control from the keyboard surface.
+The video is watch-only. Its purpose is the case where the agent works in a
+window on another desktop (Space) while the user stays on their own: window
+discovery includes off-screen windows, and input is delivered in the background.
+Clicking the video (or Go to window) activates the approved application, which
+makes macOS switch to the desktop holding it; the user then works in the real
+window. Codey never forwards mouse or keyboard input through the video.
+
+Pause agent stops agent desktop requests, drains the current operation and
+invalidates queued input, so the agent cannot type while the user uses the
+window. Resume agent requires the agent to observe again. Pausing does not need
+the video. Already delivered input cannot be rolled back.
 
 The main process validates each stream grant against a trusted top-level
 renderer, a user gesture, the current task, native window ownership and macOS
 permission. Single-use grants expire after ten seconds. Window disappearance,
 task termination, renderer navigation/crash or permission revocation ends access.
-A hidden/reloaded panel stops its tracks; paused video leaves a human-owned task
-paused until explicit handback or Stop. Input requires a live stream grant and a
-recent decoded frame. Native input rechecks that grant after taking its targeting
-snapshot. Coordinates account for video letterboxing and screenshot scaling;
-a changed aspect ratio refuses input rather than guessing.
+A hidden/reloaded panel stops its tracks; a paused agent stays paused until the
+user resumes it or chooses Stop.
 
 ## Use
 
@@ -57,7 +59,7 @@ App selections persist, but enablement resets off at launch. Changing selection
 stops existing sessions. A wider selection needs another task and approval.
 Agents take over a local preview by closing it and requesting their own grant.
 While an agent owns the desktop, the panel follows its selected window. A user
-can take control of that window. Agents cannot displace a human-owned preview.
+can pause the agent there. Agents cannot displace a paused preview.
 Stop the current task's computer access before opening an unrelated preview.
 
 ## Boundaries and lifetime
@@ -104,7 +106,7 @@ physical path. Existing release signing/notarization includes the driver.
 
 Tests cover lazy approval, all-agent CLI delivery, per-task credential revocation,
 image lifetime, preview takeover, queued cancellation, target restrictions,
-exact-window video grants, handoff barriers, human input geometry, stale frames,
+exact-window video grants, pause barriers, off-screen window discovery,
 stream cleanup and renderer lifecycle,
 trusted renderer IPC, OS prerequisites and factory cleanup. Package smoke checks
 load the real SDK, check the binary version and execute the packaged CLI help
@@ -112,9 +114,10 @@ without granting or exercising desktop access.
 
 Live acceptance still requires a human-granted macOS permission session: preview
 a fixture app, start live video, inspect the same window through an agent,
-take control, click/type/scroll/drag, return control and verify a fresh agent
-observation. Deny a new task, stop active/queued work, close or resize the target,
-revoke Screen Recording, then start a fresh task. Check Retina scaling, IME and
+put the window on another desktop and confirm the agent still observes and
+acts and the video still updates, click the video to jump there, pause the
+agent, use the window, resume and verify a fresh agent observation. Deny a new task, stop active/queued work, close or resize the target,
+revoke Screen Recording, then start a fresh task. Check Retina scaling and
 application-specific background input support. Video frame rate and input latency
 are targets, not measured performance claims.
 Mock tests and builds do not establish live desktop correctness.

@@ -17,7 +17,6 @@ export function createComputerBridge(control: ComputerControl, cli: string, runt
   let previewOwner: string | undefined
   let desktop: ComputerDesktop | null = null
   let owner: { run: Run; lease: ComputerLease } | undefined
-  let humanInputs = 0
   let viewer: Run | undefined
   let closed = false
   let agentRequests = 0
@@ -80,7 +79,7 @@ export function createComputerBridge(control: ComputerControl, cli: string, runt
         if (!local) agentRequests++
         try {
           if (!local && viewer) {
-            if (desktop?.controller === 'human' || desktop?.transitioning) throw new Error('The user has control. Wait for handback before opening computer tools.')
+            if (desktop?.controller === 'human' || desktop?.transitioning) throw new Error('The user paused computer control. Wait until they resume it before opening computer tools.')
             const previousViewer = viewer
             viewer = undefined
             await previousViewer.dispose()
@@ -188,14 +187,6 @@ export function createComputerBridge(control: ComputerControl, cli: string, runt
         await current.run.dispose()
         throw error
       }
-    },
-    async humanInput(sessionId: string, window: string, args: Record<string, unknown>, controlVersion: number, permitted: () => boolean = () => true) {
-      const current = owner
-      if (!current || desktop?.sessionId !== sessionId || desktop.window !== window || desktop.controller !== 'human' || desktop.transitioning || desktop.controlVersion !== controlVersion) throw new Error('Take control of this window before sending input')
-      if (humanInputs >= 8) throw new Error('Input queue is full. Wait for the previous input to finish.')
-      humanInputs++
-      try { return await current.lease.execute({ action: 'human_input', window, args }, 'human', permitted) }
-      finally { humanInputs-- }
     },
     async view(command: ComputerCommand) {
       if (closed || stopping) throw new Error('Computer control is stopping')

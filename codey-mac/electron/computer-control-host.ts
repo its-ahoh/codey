@@ -137,20 +137,18 @@ export function createComputerControlHost(changed: (state: ComputerControlState)
   }))
   ipcMain.handle('computer:armStream', wrap((sessionId: string, window: string) => capture.arm(sessionId, window)))
   ipcMain.handle('computer:streamStopped', wrap((streamId: string) => capture.release(streamId)))
-  ipcMain.handle('computer:handoff', wrap((sessionId: string, window: string, human: boolean, streamId: string) => {
-    if (human && !capture.isActive(streamId, sessionId, window)) throw new Error('Start live view before taking control')
+  // Pausing needs no video: the user works in the real window, and the agent
+  // must simply not type into it at the same time.
+  ipcMain.handle('computer:handoff', wrap((sessionId: string, window: string, human: boolean) => {
     if (typeof human !== 'boolean') throw new Error('Invalid control owner')
     return bridge.handoff(sessionId, window, human)
   }))
-  ipcMain.handle('computer:input', wrap((sessionId: string, window: string, args: Record<string, unknown>, streamId: string, controlVersion: number) => {
-    if (!capture.isActive(streamId, sessionId, window)) throw new Error('The live view has ended')
-    if (!args || typeof args !== 'object' || JSON.stringify(args).length > 16384) throw new Error('Invalid input')
-    const { frameAt, ...input } = args
-    // A frame must have been shown, but its age says nothing: window capture
-    // only delivers a frame when the window repaints, so an idle window has an
-    // old frame that is still exactly what is on screen.
-    if (typeof frameAt !== 'number' || !Number.isFinite(frameAt) || Date.now() - frameAt < -100) throw new Error('A video frame is required')
-    return bridge.humanInput(sessionId, window, input, controlVersion, () => capture.isActive(streamId, sessionId, window))
+  ipcMain.handle('computer:reveal', wrap(async (sessionId: string, window: string) => {
+    const target = await bridge.inspectDesktop(sessionId, window)
+    const bundleId = control.apps.find(item => item.bundleId === target.bundleId)?.bundleId
+    if (!bundleId) throw new Error('This window is outside the approved apps')
+    // Activating the app makes macOS switch to the desktop that holds it.
+    await exec('/usr/bin/open', ['-b', bundleId], { timeout: 5000 })
   }))
   // The preview carries a full screenshot; send it only when it is new.
   ipcMain.handle('computer:preview', wrap((known?: unknown) => {

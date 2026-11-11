@@ -28,7 +28,7 @@ export interface ComputerDesktop {
   sessionId: string; window: string; title: string; app: string
   controller: 'agent' | 'human'; transitioning: boolean; controlVersion: number
 }
-export interface ComputerTarget { pid: number; windowId: number; title: string; app: string }
+export interface ComputerTarget { pid: number; windowId: number; title: string; app: string; bundleId?: string }
 export interface ComputerReply { target?: ComputerTarget; text?: string; windows?: { id: string; title: string; app: string }[]; images?: { mimeType: string; dataBase64: string }[]; data?: unknown; isError?: boolean }
 export interface ComputerPreview { updatedAt: number; window?: string; reply: ComputerReply }
 export type ComputerOrigin = 'agent' | 'human' | 'monitor'
@@ -188,11 +188,11 @@ export class ComputerControl {
           const validate = (delivered = false) => {
             controller.signal.throwIfAborted()
             if (origin !== 'monitor' && submittedGeneration !== generation) throw new Error('Control changed; observe again before continuing')
-            if (origin === 'agent' && human) throw new Error('The user has control. Wait for handback, then observe again.')
+            if (origin === 'agent' && human) throw new Error('The user paused computer control. Wait until they resume it, then observe again.')
             if (origin === 'human' && !human) throw new Error('Take control before sending input')
             // Once the driver has delivered the input, a stream that ended
             // meanwhile must not relabel it as cancelled.
-            if (!delivered && !permitted()) throw new Error('The live view changed or stopped; input was cancelled')
+            if (!delivered && !permitted()) throw new Error('The request was abandoned before it was delivered')
             if (!this.deps.ready()) throw new Error('Computer control permissions were revoked')
           }
           const result = calls.then(async () => {

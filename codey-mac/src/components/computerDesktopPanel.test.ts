@@ -8,43 +8,48 @@ import type { ComputerDesktop } from '../../electron/computer-control'
 const desktop: ComputerDesktop = { sessionId: 'fixture', window: '51:23', app: 'Canvas', title: 'Sample', controller: 'agent', transitioning: false, controlVersion: 0 }
 let root: Root
 let container: HTMLDivElement
-let frame: VideoFrameRequestCallback
-let track: { stop: ReturnType<typeof vi.fn>; addEventListener: ReturnType<typeof vi.fn>; readyState: 'live' | 'ended' }
-let api: { armStream: ReturnType<typeof vi.fn>; streamStopped: ReturnType<typeof vi.fn>; handoff: ReturnType<typeof vi.fn>; input: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn> }
+let track: { stop: ReturnType<typeof vi.fn>; addEventListener: ReturnType<typeof vi.fn> }
+let api: Record<'armStream' | 'streamStopped' | 'handoff' | 'reveal' | 'stop', ReturnType<typeof vi.fn>>
 let getDisplayMedia: ReturnType<typeof vi.fn>
 function button(text: string) { return [...container.querySelectorAll('button')].find(b => b.textContent === text)! }
 async function click(text: string) { await act(async () => { button(text).click() }) }
 beforeEach(async () => {
-  vi.useFakeTimers()
   ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
-  track = { stop: vi.fn(), addEventListener: vi.fn(), readyState: 'live' }
+  track = { stop: vi.fn(), addEventListener: vi.fn() }
   const stream = { getTracks: () => [track], getVideoTracks: () => [track] }
   getDisplayMedia = vi.fn(async () => stream)
   Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: { getDisplayMedia } })
   vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue()
-  HTMLVideoElement.prototype.requestVideoFrameCallback = vi.fn(callback => { frame = callback; return 1 })
   api = { armStream: vi.fn(async () => ({ ok: true, data: 'video-grant' })), streamStopped: vi.fn(async () => ({ ok: true })),
-    handoff: vi.fn(async () => ({ ok: true, data: desktop })), input: vi.fn(async () => ({ ok: true, data: {} })), stop: vi.fn(async () => ({ ok: true })) }
+    handoff: vi.fn(async () => ({ ok: true, data: desktop })), reveal: vi.fn(async () => ({ ok: true })), stop: vi.fn(async () => ({ ok: true })) }
   window.codey = { computer: api } as any
   container = document.createElement('div'); document.body.append(container); root = createRoot(container)
   await act(async () => { root.render(React.createElement(DesktopSurface, { desktop, agent: 'Bot' })) })
 })
-afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.useRealTimers(); vi.restoreAllMocks() })
+afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.restoreAllMocks() })
 describe('live desktop panel', () => {
-  it('uses video streaming without polling screenshots and only enables takeover after a decoded frame', async () => {
-    expect(button('Take control').disabled).toBe(true)
+  it('streams the window and jumps to it on click, without sending any input', async () => {
+    const video = container.querySelector('video')!
+    await act(async () => { video.click() })
+    expect(api.reveal).not.toHaveBeenCalled()
     await click('Start live view')
     expect(getDisplayMedia).toHaveBeenCalledWith({ audio: false, video: { frameRate: { ideal: 30, max: 30 } } })
-    await act(async () => { vi.advanceTimersByTime(300) })
-    expect(button('Take control').disabled).toBe(true)
-    await act(async () => { frame(0, {} as VideoFrameCallbackMetadata); vi.advanceTimersByTime(300) })
-    expect(button('Take control').disabled).toBe(false)
-    await click('Take control')
-    expect(api.handoff).toHaveBeenCalledWith('fixture', '51:23', true, 'video-grant')
+    await act(async () => { video.click() })
+    expect(api.reveal).toHaveBeenCalledWith('fixture', '51:23')
+    expect(container.querySelector('textarea')).toBeNull()
     await click('Pause video')
     expect(track.stop).toHaveBeenCalledOnce()
     expect(api.streamStopped).toHaveBeenCalledWith('video-grant')
-    expect(button('Take control').disabled).toBe(true)
+  })
+  it('pauses and resumes the agent without needing the video', async () => {
+    await click('Pause agent')
+    expect(api.handoff).toHaveBeenCalledWith('fixture', '51:23', true)
+    await act(async () => { root.render(React.createElement(DesktopSurface, { desktop: { ...desktop, controller: 'human', controlVersion: 1 }, agent: 'Bot' })) })
+    expect(container.querySelector('[role=status]')!.textContent).toBe('Bot is paused')
+    await click('Resume agent')
+    expect(api.handoff).toHaveBeenLastCalledWith('fixture', '51:23', false)
+    await click('Go to window')
+    expect(api.reveal).toHaveBeenCalledWith('fixture', '51:23')
   })
   it('stops tracks when the desktop panel unmounts, including a stream that resolves late', async () => {
     let finish!: (stream: unknown) => void
@@ -54,40 +59,5 @@ describe('live desktop panel', () => {
     await act(async () => { finish({ getTracks: () => [track], getVideoTracks: () => [track] }) })
     expect(track.stop).toHaveBeenCalledOnce()
     expect(api.streamStopped).toHaveBeenCalledWith('video-grant')
-  })
-  it('keeps input on an idle window and pauses it when capture ends, without handing control back', async () => {
-    await click('Start live view')
-    await act(async () => {
-      frame(0, {} as VideoFrameCallbackMetadata)
-      root.render(React.createElement(DesktopSurface, { desktop: { ...desktop, controller: 'human', controlVersion: 1 }, agent: 'Bot' }))
-      vi.advanceTimersByTime(300)
-    })
-    const input = container.querySelector('textarea')!
-    expect(input.disabled).toBe(false)
-    // An idle window repaints nothing, so no new frame arrives. That is not a stall.
-    await act(async () => { vi.advanceTimersByTime(5000) })
-    expect(input.disabled).toBe(false)
-    track.readyState = 'ended'
-    await act(async () => { vi.advanceTimersByTime(300) })
-    expect(input.disabled).toBe(true)
-    expect(api.handoff).not.toHaveBeenCalled()
-    expect(button('Return control').disabled).toBe(false)
-  })
-  it('sends one scroll for a whole swipe of wheel events', async () => {
-    await click('Start live view')
-    await act(async () => {
-      frame(0, {} as VideoFrameCallbackMetadata)
-      root.render(React.createElement(DesktopSurface, { desktop: { ...desktop, controller: 'human', controlVersion: 1 }, agent: 'Bot' }))
-      vi.advanceTimersByTime(300)
-    })
-    const video = container.querySelector('video')!
-    Object.defineProperty(video, 'videoWidth', { value: 800 }); Object.defineProperty(video, 'videoHeight', { value: 400 })
-    video.getBoundingClientRect = () => ({ left: 0, top: 0, width: 800, height: 400 }) as DOMRect
-    await act(async () => {
-      for (let i = 0; i < 30; i++) video.dispatchEvent(new WheelEvent('wheel', { bubbles: true, clientX: 400, clientY: 200, deltaY: 8 }))
-      await vi.advanceTimersByTimeAsync(100)
-    })
-    expect(api.input).toHaveBeenCalledOnce()
-    expect(api.input.mock.calls[0][2]).toMatchObject({ tool: 'scroll', direction: 'down', amount: 3, x: 0.5, y: 0.5 })
   })
 })

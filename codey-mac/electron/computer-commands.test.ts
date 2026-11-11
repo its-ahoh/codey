@@ -31,14 +31,6 @@ describe('Codey window commands', () => {
     await expect(execute({ action: 'act', window: '42:10', args: { tool: 'press_key', key: 'Return' } })).rejects.toThrow('changed')
     expect(callTool).toHaveBeenCalledOnce()
   })
-  it('maps live-video coordinates through a fresh window observation and refuses changed geometry', async () => {
-    const { execute, callTool } = setup()
-    await execute({ action: 'windows', bundleId: 'org.example.Canvas' })
-    await execute({ action: 'human_input', window: '42:10', args: { tool: 'click', x: 0.25, y: 0.5, frameWidth: 800, frameHeight: 400 } })
-    expect(JSON.parse(callTool.mock.calls[1][1])).toMatchObject({ pid: 42, window_id: 10, x: 300, y: 300 })
-    await expect(execute({ action: 'human_input', window: '42:10', args: { tool: 'click', x: 0.25, y: 0.5, frameWidth: 400, frameHeight: 400 } })).rejects.toThrow('geometry changed')
-    expect(callTool.mock.calls.filter(call => call[0] === 'click')).toHaveLength(1)
-  })
   it('never captures pixels when checking a video target and invalidates observations on handoff', async () => {
     const { execute, callTool } = setup()
     await execute({ action: 'windows', bundleId: 'org.example.Canvas' })
@@ -48,25 +40,13 @@ describe('Codey window commands', () => {
     await execute({ action: 'invalidate' })
     await expect(execute({ action: 'act', window: '42:10', args: { tool: 'press_key', key: 'Return' } })).rejects.toThrow('Observe')
   })
-  it('types without a screenshot and measures the window once for a burst of pointer input', async () => {
-    const { execute, callTool } = setup()
-    await execute({ action: 'windows', bundleId: 'org.example.Canvas' })
-    await execute({ action: 'human_input', window: '42:10', args: { tool: 'type_text', text: 'hi', frameWidth: 800, frameHeight: 400 } })
-    expect(callTool.mock.calls.map(call => call[0])).toEqual(['type_text'])
-    const click = { action: 'human_input', window: '42:10', args: { tool: 'click', x: 0.5, y: 0.5, frameWidth: 800, frameHeight: 400 } }
-    await execute(click)
-    await execute(click)
-    expect(callTool.mock.calls.filter(call => call[0] === 'get_window_state')).toHaveLength(1)
-    expect(callTool.mock.calls.filter(call => call[0] === 'click')).toHaveLength(2)
-    // A resized video frame is a new aim, so the window is measured again.
-    await expect(execute({ ...click, args: { ...click.args, frameWidth: 400 } })).rejects.toThrow('geometry changed')
-  })
-  it('still finds a minimized or hidden window when only checking that it exists', async () => {
+  it('finds windows on another desktop, so the agent can work where the user is not', async () => {
     const { execute, listWindows } = setup()
     await execute({ action: 'windows', bundleId: 'org.example.Canvas' })
-    await execute({ action: 'inspect', window: '42:10' })
     expect(listWindows).toHaveBeenLastCalledWith({ pid: 42, onScreenOnly: false })
+    await expect(execute({ action: 'inspect', window: '42:10' })).resolves.toMatchObject({ target: { bundleId: 'org.example.Canvas' } })
     await execute({ action: 'observe', window: '42:10' })
-    expect(listWindows).toHaveBeenLastCalledWith({ pid: 42, onScreenOnly: true })
+    expect(listWindows).toHaveBeenLastCalledWith({ pid: 42, onScreenOnly: false })
+    await expect(execute({ action: 'human_input', window: '42:10', args: { tool: 'click' } })).rejects.toThrow('Unknown')
   })
 })

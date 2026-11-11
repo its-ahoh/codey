@@ -71,7 +71,7 @@ export const ComputerTab: React.FC<{ onOpenDesktop?: () => void }> = ({ onOpenDe
       <p style={{ color: C.fg2 }}>Off by default at launch. Ordinary coding tasks do not request access. Codey asks when an agent first uses computer tools. One task controls applications at a time.</p>
     </div>
     <h4>Application desktop</h4>
-    <p style={{ color: C.fg2 }}>Choose a window to open the desktop panel beside your chat. Start live view there to watch it and take over mouse and keyboard control.</p>
+    <p style={{ color: C.fg2 }}>Choose a window to open the desktop panel beside your chat. Start live view there to watch it, even when the window is on another desktop. Click the video to go to the window.</p>
     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
       {state?.apps.map(item => <button key={item.bundleId} style={button} disabled={busy || !state.enabled || (!!state.active && state.active.agent !== 'Codey preview')}
         onClick={() => void run(async () => {
