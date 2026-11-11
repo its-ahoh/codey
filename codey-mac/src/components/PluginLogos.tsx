@@ -30,29 +30,41 @@ const TerminalLogo: React.FC<{ size: number }> = ({ size }) => (
   </svg>
 )
 
-const BrowserLogo: React.FC<{ size: number }> = ({ size }) => (
-  <svg
-    aria-hidden="true"
-    width={size}
-    height={size}
-    viewBox="0 0 32 32"
-    fill="none"
-    xmlns="http://www.w3.org/2000/svg"
-  >
-    <rect x="1" y="2" width="30" height="28" rx="8" fill="#6558F5" />
-    <path d="M1 9.5h30V22a8 8 0 0 1-8 8H9a8 8 0 0 1-8-8V9.5Z" fill="#3B82F6" />
-    <circle cx="6" cy="6" r="1.25" fill="#FCA5A5" />
-    <circle cx="10" cy="6" r="1.25" fill="#FDE68A" />
-    <circle cx="14" cy="6" r="1.25" fill="#86EFAC" />
-    <path
-      d="m17.1 12.3 7.6 3.15c.7.29.71 1.27.02 1.58l-2.91 1.29 2.34 2.34a1 1 0 0 1 0 1.41l-1.08 1.08a1 1 0 0 1-1.41 0l-2.34-2.34-1.29 2.91c-.31.69-1.29.68-1.58-.02l-3.15-7.6a2.94 2.94 0 0 1 3.8-3.8Z"
-      fill="white"
-      stroke="#DBEAFE"
-      strokeWidth=".65"
-      strokeLinejoin="round"
-    />
-  </svg>
-)
+/** A globe on a blue tile, with a pointer resting on it: the web, driven by
+ *  an agent. Same tile shape as the Terminal mark so the list reads as a set. */
+const BrowserLogo: React.FC<{ size: number }> = ({ size }) => {
+  const gradientId = `browser-logo-${React.useId().replace(/:/g, '')}`
+  return (
+    <svg
+      aria-hidden="true"
+      width={size}
+      height={size}
+      viewBox="0 0 32 32"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <defs>
+        <linearGradient id={gradientId} x1="16" y1="2" x2="16" y2="30" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#4F8BFF" />
+          <stop offset="1" stopColor="#2457E6" />
+        </linearGradient>
+      </defs>
+      <rect x="1" y="2" width="30" height="28" rx="8" fill={`url(#${gradientId})`} />
+      <g stroke="white" strokeWidth="1.7" strokeLinecap="round">
+        <circle cx="15" cy="15" r="8" />
+        <ellipse cx="15" cy="15" rx="3.4" ry="8" />
+        <path d="M7.4 12.4h15.2M7.4 17.6h15.2" />
+      </g>
+      <path
+        d="M18.3 17.3 27.4 20.9l-4 1.6-1.6 4Z"
+        fill="white"
+        stroke="#2457E6"
+        strokeWidth="1.6"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
 
 const ChromeCompanionLogo: React.FC<{ size: number }> = ({ size }) => (
   <svg
