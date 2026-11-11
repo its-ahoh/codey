@@ -8,7 +8,7 @@ import {
   type Session,
   type WebContents,
 } from 'electron'
-import { CdpPage, toCdpKeyEvents, toCdpMouseEvent, type CdpRef, type PointerInput } from './browser-cdp'
+import { CdpPage, findCdpNodeByRef, toCdpKeyEvents, toCdpMouseEvent, type CdpDomNode, type CdpRef, type KeyModifier, type PointerInput } from './browser-cdp'
 import type { BrowserSitePermissionDetails, BrowserSitePermissionManager } from './browser-site-permissions'
 import {
   assertProfileName,
@@ -284,39 +284,24 @@ function refFunction(body: string): string {
   }`
 }
 
-/** Scroll an iframe into view and return its content box origin in the viewport. */
-const FRAME_CONTENT_ORIGIN_FUNCTION = refFunction(`
-  el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' })
-  const rect = codeyRect(el)
-  const style = codeyStyle(el)
-  return {
-    left: rect.left + el.clientLeft + (parseFloat(style.paddingLeft) || 0),
-    top: rect.top + el.clientTop + (parseFloat(style.paddingTop) || 0),
-  }
-`)
+/** A first CDP pointer event that is not acknowledged this fast means the page is not taking input. */
+const INPUT_PROBE_MS = 500
+/** Longest wait for any later input event before the gesture is reported as failed. */
+const INPUT_ACK_MS = 5000
 
-interface CdpDomNode {
-  nodeId: number
-  attributes?: string[]
-  children?: CdpDomNode[]
-  shadowRoots?: CdpDomNode[]
-  contentDocument?: CdpDomNode
-}
-
-/** Find the node carrying data-codey-ref=ref in a pierced CDP DOM tree. */
-export function findCdpNodeByRef(root: CdpDomNode, ref: string): number | null {
-  const stack: CdpDomNode[] = [root]
-  while (stack.length > 0) {
-    const node = stack.pop()!
-    const attributes = node.attributes ?? []
-    for (let index = 0; index + 1 < attributes.length; index += 2) {
-      if (attributes[index] === 'data-codey-ref' && attributes[index + 1] === ref) return node.nodeId
-    }
-    if (node.contentDocument) stack.push(node.contentDocument)
-    for (const child of node.shadowRoots ?? []) stack.push(child)
-    for (const child of node.children ?? []) stack.push(child)
+/** Reject when `pending` has not settled within `ms`. */
+async function settleWithin<T>(pending: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  // The command may still settle after the caller moved on; never leave that unhandled.
+  pending.catch(() => undefined)
+  try {
+    return await Promise.race([
+      pending,
+      new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error(message)), ms) }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
   }
-  return null
 }
 
 const MUTATING_NAVIGATION = /(^|[\/_?&=.-])(logout|log-out|signout|sign-out|delete|remove|unsubscribe|subscribe|purchase|checkout|pay|confirm|like|follow|bookmark|favorite|vote|join|leave|create|update)([\/_?&=.-]|$)/i
@@ -845,7 +830,7 @@ export class BrowserController {
     const from = this.validatePoint(fromX, fromY)
     const to = this.validatePoint(toX, toY)
     const count = Math.max(1, Math.min(100, Math.round(steps) || 12))
-    await this.withPointer(contents, async send => {
+    await this.withPointer(contents, from, async send => {
       await send({ type: 'mouseMove', ...from })
       await send({ type: 'mouseDown', ...from, button: 'left', clickCount: 1 })
       for (let index = 1; index <= count; index += 1) {
@@ -981,10 +966,10 @@ export class BrowserController {
       if (part === 'alt' || part === 'option') return 'alt'
       if (part === 'shift') return 'shift'
       throw new Error(`Unsupported key modifier: ${part}`)
-    }) as Array<'meta' | 'control' | 'alt' | 'shift'>
+    }) as KeyModifier[]
     const keyCode = [' ', 'space', 'spacebar'].includes(requestedKey.toLowerCase()) ? 'Space' : requestedKey
-    const cdpKeys = modifiers.length === 0 ? toCdpKeyEvents(keyCode) : null
-    if (cdpKeys && await this.sendThroughCdp(contents, cdpKeys.map(params => ['Input.dispatchKeyEvent', params]))) {
+    const cdpKeys = this.attachedTo ? toCdpKeyEvents(keyCode, modifiers) : null
+    if (cdpKeys && await this.sendKeysThroughCdp(contents, cdpKeys)) {
       return this.actionResult(`Pressed ${key}${ref ? ` on ${ref}` : ''}`)
     }
     contents.sendInputEvent({ type: 'keyDown', keyCode, modifiers })
@@ -1004,10 +989,8 @@ export class BrowserController {
     const contents = this.requirePage()
     const point = this.validatePoint(x, y)
     if (!Number.isFinite(deltaX) || !Number.isFinite(deltaY)) throw new Error('Scroll deltas must be finite numbers')
-    contents.sendInputEvent({
-      type: 'mouseWheel', ...point,
-      deltaX: Math.round(deltaX), deltaY: Math.round(deltaY),
-      canScroll: true,
+    await this.withPointer(contents, point, async send => {
+      await send({ type: 'mouseWheel', ...point, deltaX: Math.round(deltaX), deltaY: Math.round(deltaY) })
     })
     return this.actionResult(`Scrolled at ${point.x}, ${point.y} by ${Math.round(deltaX)}, ${Math.round(deltaY)}`)
   }
@@ -1022,6 +1005,7 @@ export class BrowserController {
     if (!['visible', 'hidden', 'enabled'].includes(state)) throw new Error('Wait state must be visible, hidden, or enabled')
     const timeoutMs = Math.max(100, Math.min(60000, Math.round(request.timeoutMs ?? 10000)))
     const started = Date.now()
+    const poll = async (): Promise<BrowserActionResult> => {
     while (Date.now() - started <= timeoutMs) {
       try {
         const contents = this.requirePage()
@@ -1055,6 +1039,28 @@ export class BrowserController {
       await new Promise<void>(resolve => setTimeout(resolve, 100))
     }
     throw new Error(`Timed out waiting for ${kind}: ${value}`)
+    }
+
+    // Polling an accessibility ref would otherwise attach and detach the
+    // debugger ten times a second; hold one attachment for the whole wait.
+    let held: { contents: WebContents; withFrames: boolean } | null = null
+    if (kind === 'ref' && this.cdpRefs) {
+      try {
+        const contents = this.requirePage()
+        held = { contents, withFrames: this.cdpRefFor(value, contents)?.targetId != null }
+      } catch { /* an unknown ref simply polls as hidden */ }
+    }
+    if (!held) return await poll()
+    let holding = false
+    try {
+      return await CdpPage.run(held.contents, held.withFrames, async () => {
+        holding = true
+        return await poll()
+      })
+    } catch (error) {
+      if (holding) throw error
+      return await poll()
+    }
   }
 
   async upload(ref: string, filePaths: string[]): Promise<BrowserActionResult> {
@@ -1075,18 +1081,14 @@ export class BrowserController {
       return this.actionResult(`Attached ${files.length} file${files.length === 1 ? '' : 's'} to ${ref}`)
     }
 
-    const attachedHere = !contents.debugger.isAttached()
-    if (attachedHere) contents.debugger.attach('1.3')
-    try {
-      // DOM.querySelector stops at shadow and frame boundaries, so search the
-      // pierced tree for the ref the snapshot stamped.
-      const document = await contents.debugger.sendCommand('DOM.getDocument', { depth: -1, pierce: true }) as { root: CdpDomNode }
+    // Page-script refs are stamped attributes. DOM.querySelector stops at
+    // shadow and frame boundaries, so search the pierced tree instead.
+    await CdpPage.run(contents, false, async page => {
+      const document = await page.send<{ root: CdpDomNode }>('DOM.getDocument', { depth: -1, pierce: true })
       const nodeId = findCdpNodeByRef(document.root, ref)
       if (!nodeId) throw new Error(`Element ${ref} is no longer available; take a new snapshot`)
-      await contents.debugger.sendCommand('DOM.setFileInputFiles', { nodeId, files })
-    } finally {
-      if (attachedHere && contents.debugger.isAttached()) contents.debugger.detach()
-    }
+      await page.send('DOM.setFileInputFiles', { nodeId, files })
+    })
     return this.actionResult(`Attached ${files.length} file${files.length === 1 ? '' : 's'} to ${ref}`)
   }
 
@@ -1723,24 +1725,37 @@ export class BrowserController {
   private async elementPoint(ref: string): Promise<{ x: number; y: number }> {
     this.assertRef(ref)
     const contents = this.requirePage()
-    const body = `
+    const prepare = `
       if (el.disabled || el.getAttribute('aria-disabled') === 'true') throw new Error('Element ${ref} is disabled')
       el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' })
-      const rect = codeyRect(el)
-      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
     `
     const cdpRef = this.cdpRefFor(ref, contents)
-    const point = cdpRef?.targetId
-      // Inside a cross-site frame the rect is relative to that frame; add
-      // where the frame sits in the page.
-      ? await CdpPage.run(contents, true, async page => {
-        const objectId = await page.resolve(cdpRef, ref)
-        const inner = await page.callOn<{ x: number; y: number }>(objectId, refFunction(body), cdpRef.targetId)
-        const offset = await page.frameOffset(cdpRef.targetId, FRAME_CONTENT_ORIGIN_FUNCTION)
-        return { x: inner.x + offset.x, y: inner.y + offset.y }
-      })
-      : await this.runOnRef<{ x: number; y: number }>(ref, body)
-    return { x: Math.round(point.x), y: Math.round(point.y) }
+    if (!cdpRef) {
+      const point = await this.runOnRef<{ x: number; y: number }>(ref, `
+        ${prepare}
+        const rect = codeyRect(el)
+        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+      `)
+      return { x: Math.round(point.x), y: Math.round(point.y) }
+    }
+    // A function called on the node runs in the node's own frame, where the
+    // enclosing iframes cannot be seen. Chromium's quads are measured against
+    // the page, so the geometry comes from there.
+    return await CdpPage.run(contents, cdpRef.targetId !== null, async page => {
+      const objectId = await page.resolve(cdpRef, ref)
+      await page.callOn(objectId, refFunction(prepare), cdpRef.targetId)
+      const viewport = await this.getViewport()
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        const point = await page.centerOf(cdpRef, ref)
+        const onScreen = viewport.width <= 0 || viewport.height <= 0
+          || (point.x >= 0 && point.y >= 0 && point.x < viewport.width && point.y < viewport.height)
+        if (onScreen) return { x: Math.round(point.x), y: Math.round(point.y) }
+        // A scroll inside a cross-site frame reaches the embedding page a
+        // moment later; measure again once it has.
+        await this.sleep(50)
+      }
+      throw new Error(`Element ${ref} could not be scrolled into view`)
+    })
   }
 
   /** The CDP location of a ref from the current accessibility snapshot, if any. */
@@ -1788,7 +1803,7 @@ export class BrowserController {
       x: Math.max(0, target.x - 40 - Math.round(this.random() * 40)),
       y: Math.max(0, target.y - 30 - Math.round(this.random() * 30)),
     }
-    await this.withPointer(contents, async send => {
+    await this.withPointer(contents, from, async send => {
       for (const point of this.buildPointerPath(from, target)) {
         await send({ type: 'mouseMove', x: point.x, y: point.y })
         await this.sleep(this.humanDelay(6, 10))
@@ -1806,7 +1821,7 @@ export class BrowserController {
     await this.humanMove(contents, target)
     await this.sleep(this.humanDelay(40, 90))
     const count = Math.max(1, Math.min(3, Math.round(clickCount) || 1))
-    await this.withPointer(contents, async send => {
+    await this.withPointer(contents, target, async send => {
       for (let index = 1; index <= count; index += 1) {
         await send({ type: 'mouseDown', x: target.x, y: target.y, button: 'left', clickCount: index })
         await this.sleep(this.humanDelay(55, 70))
@@ -1818,30 +1833,60 @@ export class BrowserController {
 
   /**
    * Send a pointer gesture through CDP so it is hit-tested into cross-site
-   * frames. If the debugger cannot attach (DevTools open), use Electron's
-   * input path. A gesture that fails after it started is not replayed, so a
-   * click can never land twice.
+   * frames, or through Electron's input path when CDP cannot take it.
+   *
+   * Chromium never acknowledges CDP pointer input for a page that is not on
+   * screen (panel closed, window hidden or minimized), so the command would
+   * wait forever. Electron's path still works there. A harmless pointer move
+   * to `at` is sent first: if it is not acknowledged quickly, the whole
+   * gesture uses the Electron path. Once the gesture itself has started it is
+   * never replayed, so a click cannot land twice.
    */
-  private async withPointer(contents: WebContents, gesture: (send: (event: PointerInput) => Promise<void>) => Promise<void>): Promise<void> {
+  private async withPointer(
+    contents: WebContents,
+    at: { x: number; y: number },
+    gesture: (send: (event: PointerInput) => Promise<void>) => Promise<void>,
+  ): Promise<void> {
+    const electronSend = async (event: PointerInput): Promise<void> => {
+      contents.sendInputEvent(event.type === 'mouseWheel' ? { ...event, canScroll: true } : event)
+    }
+    if (!this.attachedTo) return await gesture(electronSend)
     let started = false
     try {
       await CdpPage.run(contents, false, async page => {
+        await settleWithin(
+          page.send('Input.dispatchMouseEvent', toCdpMouseEvent({ type: 'mouseMove', x: at.x, y: at.y })),
+          INPUT_PROBE_MS,
+          'The page is not taking pointer input',
+        )
         started = true
-        await gesture(async event => { await page.send('Input.dispatchMouseEvent', toCdpMouseEvent(event)) })
+        await gesture(async event => {
+          await settleWithin(
+            page.send('Input.dispatchMouseEvent', toCdpMouseEvent(event)),
+            INPUT_ACK_MS,
+            'The page stopped responding to input; check that the Browser panel is open',
+          )
+        })
       })
     } catch (error) {
       if (started) throw error
-      await gesture(async event => { contents.sendInputEvent(event) })
+      await gesture(electronSend)
     }
   }
 
-  /** Send CDP commands in one attached session; false when the debugger is unavailable. */
-  private async sendThroughCdp(contents: WebContents, commands: Array<[string, Record<string, unknown>]>): Promise<boolean> {
+  /** Send one key press through CDP; false when the debugger is unavailable. */
+  private async sendKeysThroughCdp(contents: WebContents, events: Array<Record<string, unknown>>): Promise<boolean> {
     let started = false
     try {
       await CdpPage.run(contents, false, async page => {
         started = true
-        for (const [method, params] of commands) await page.send(method, params)
+        for (const event of events) {
+          await settleWithin(
+            page.send('Input.dispatchKeyEvent', event),
+            INPUT_ACK_MS,
+            'The page stopped responding to input; check that the Browser panel is open',
+          )
+        }
       })
       return true
     } catch (error) {

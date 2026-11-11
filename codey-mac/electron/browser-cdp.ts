@@ -16,6 +16,12 @@ export interface CdpRef {
   backendNodeId: number
   /** Target ID of an out-of-process iframe, or null for the page itself. */
   targetId: string | null
+  /**
+   * Loader ID of the document the target showed at snapshot time. A
+   * cross-site navigation starts a new renderer whose node IDs begin again,
+   * so an old ID could name an unrelated node; the loader ID tells them apart.
+   */
+  documentId: string
 }
 
 export interface CdpAxValue {
@@ -26,6 +32,7 @@ export interface CdpAxValue {
 export interface CdpAxNode {
   nodeId: string
   ignored?: boolean
+  ignoredReasons?: Array<{ name: string }>
   role?: CdpAxValue
   name?: CdpAxValue
   value?: CdpAxValue
@@ -37,6 +44,7 @@ export interface CdpDomNode {
   nodeId: number
   backendNodeId?: number
   nodeName?: string
+  nodeValue?: string
   attributes?: string[]
   children?: CdpDomNode[]
   shadowRoots?: CdpDomNode[]
@@ -67,6 +75,8 @@ const CONTAINER_ROLES = new Set(['RootWebArea', 'WebArea', 'Iframe', 'IframePres
 const FIELD_TAGS = new Set(['input', 'textarea', 'select'])
 
 export const MAX_SNAPSHOT_ELEMENTS = 500
+/** Upper bound on aria-hidden nodes described per frame; most are text and icons. */
+const MAX_ARIA_HIDDEN_CANDIDATES = 200
 
 function axProperty(node: CdpAxNode, name: string): unknown {
   return node.properties?.find(property => property.name === name)?.value?.value
@@ -79,18 +89,20 @@ function attributeMap(node: CdpDomNode | undefined): Map<string, string> {
   return map
 }
 
-/** Index every node of a pierced DOM.getDocument tree by backend node ID. */
-export function indexDomTree(root: CdpDomNode): Map<number, CdpDomNode> {
-  const index = new Map<number, CdpDomNode>()
+/** Find the node carrying data-codey-ref=ref in a pierced DOM.getDocument tree. */
+export function findCdpNodeByRef(root: CdpDomNode, ref: string): number | null {
   const stack: CdpDomNode[] = [root]
   while (stack.length > 0) {
     const node = stack.pop()!
-    if (typeof node.backendNodeId === 'number') index.set(node.backendNodeId, node)
+    const attributes = node.attributes ?? []
+    for (let index = 0; index + 1 < attributes.length; index += 2) {
+      if (attributes[index] === 'data-codey-ref' && attributes[index + 1] === ref) return node.nodeId
+    }
     if (node.contentDocument) stack.push(node.contentDocument)
     for (const child of node.shadowRoots ?? []) stack.push(child)
     for (const child of node.children ?? []) stack.push(child)
   }
-  return index
+  return null
 }
 
 /** True when an accessibility node is something the agent can act on. */
@@ -106,44 +118,87 @@ export function isActionableAxNode(node: CdpAxNode): boolean {
   return focusable && name.length > 0
 }
 
-/** Turn one frame's accessibility nodes into snapshot elements. */
-export function elementsFromAxTree(
-  nodes: CdpAxNode[],
-  dom: Map<number, CdpDomNode>,
-  targetId: string | null,
-): CdpSnapshotElement[] {
-  const elements: CdpSnapshotElement[] = []
-  for (const node of nodes) {
-    if (!isActionableAxNode(node)) continue
-    const backendNodeId = node.backendDOMNodeId as number
-    const domNode = dom.get(backendNodeId)
-    const attributes = attributeMap(domNode)
-    const tag = String(domNode?.nodeName ?? '').toLowerCase()
-    // A native select's options are chosen with `select`, not clicked one by one.
-    if (tag === 'option') continue
-    const type = tag === 'input' ? (attributes.get('type') || 'text').toLowerCase() : ''
-    const editable = !!axProperty(node, 'editable')
-    const rawValue = node.value?.value
-    const value = type === 'password' || (!FIELD_TAGS.has(tag) && !editable) || rawValue === undefined
-      ? undefined
-      : String(rawValue).slice(0, 300)
-    const checked = axProperty(node, 'checked')
-    elements.push({
-      tag,
-      role: String(node.role?.value ?? ''),
-      label: String(node.name?.value ?? '').replace(/\s+/g, ' ').trim().slice(0, 300),
-      type,
-      ...(value !== undefined ? { value } : {}),
-      ...(checked !== undefined ? { checked: checked === 'true' || checked === true } : {}),
-      disabled: axProperty(node, 'disabled') === true,
-      ref: { backendNodeId, targetId },
-    })
+/**
+ * True for a node the tree drops only because of aria-hidden. Sites put
+ * aria-hidden on icon buttons and decorative wrappers that still render and
+ * still take clicks, so these get a second look against the DOM.
+ */
+export function isAriaHiddenAxNode(node: CdpAxNode): boolean {
+  return !!node.ignored && typeof node.backendDOMNodeId === 'number'
+    && (node.ignoredReasons ?? []).some(reason => reason.name.startsWith('ariaHidden'))
+}
+
+/** True when a DOM node is a native or ARIA control, judged from tag and attributes alone. */
+export function isInteractiveDomNode(node: CdpDomNode): boolean {
+  const tag = String(node.nodeName ?? '').toLowerCase()
+  const attributes = attributeMap(node)
+  if (tag === 'button' || tag === 'textarea' || tag === 'select') return true
+  if (tag === 'a') return attributes.has('href')
+  if (tag === 'input') return (attributes.get('type') || 'text').toLowerCase() !== 'hidden'
+  if (ACTION_ROLES.has(attributes.get('role') ?? '')) return true
+  const editable = attributes.get('contenteditable')
+  return editable === '' || editable === 'true'
+}
+
+function domText(node: CdpDomNode): string {
+  let text = ''
+  const stack: CdpDomNode[] = [...(node.children ?? [])].reverse()
+  while (stack.length > 0) {
+    const current = stack.pop()!
+    if (current.nodeName === '#text') text += (current.nodeValue ?? '') + ' '
+    for (const child of [...(current.children ?? [])].reverse()) stack.push(child)
   }
-  return elements
+  return text
+}
+
+const clean = (text: string): string => text.replace(/\s+/g, ' ').trim().slice(0, 300)
+
+/**
+ * Snapshot element for one accessibility node and its DOM node, or null when
+ * the pair is not something to list.
+ */
+export function elementFromAx(node: CdpAxNode, dom: CdpDomNode, ref: CdpRef): CdpSnapshotElement | null {
+  const attributes = attributeMap(dom)
+  const tag = String(dom.nodeName ?? '').toLowerCase()
+  // A native select's options are chosen with `select`, not clicked one by one.
+  if (tag === 'option') return null
+  const type = tag === 'input' ? (attributes.get('type') || 'text').toLowerCase() : ''
+
+  if (isAriaHiddenAxNode(node)) {
+    if (!isInteractiveDomNode(dom)) return null
+    // The tree computed no name or state for an ignored node; read what the markup says.
+    return {
+      tag,
+      role: attributes.get('role') ?? '',
+      label: clean(attributes.get('aria-label') || attributes.get('title') || attributes.get('placeholder')
+        || domText(dom) || attributes.get('name') || ''),
+      type,
+      disabled: attributes.has('disabled') || attributes.get('aria-disabled') === 'true',
+      ref,
+    }
+  }
+  if (!isActionableAxNode(node)) return null
+
+  const editable = !!axProperty(node, 'editable')
+  const rawValue = node.value?.value
+  const value = type === 'password' || (!FIELD_TAGS.has(tag) && !editable) || rawValue === undefined
+    ? undefined
+    : String(rawValue).slice(0, 300)
+  const checked = axProperty(node, 'checked')
+  return {
+    tag,
+    role: String(node.role?.value ?? ''),
+    label: clean(String(node.name?.value ?? '')),
+    type,
+    ...(value !== undefined ? { value } : {}),
+    ...(checked !== undefined ? { checked: checked === 'true' || checked === true } : {}),
+    disabled: axProperty(node, 'disabled') === true,
+    ref,
+  }
 }
 
 interface FrameTree {
-  frame: { id: string }
+  frame: { id: string; loaderId?: string }
   childFrames?: FrameTree[]
 }
 
@@ -164,9 +219,9 @@ interface FrameTarget {
   parentSessionId?: string
 }
 
-interface AttachedToTarget {
+interface TargetEvent {
   sessionId: string
-  targetInfo: { type: string; targetId: string }
+  targetInfo?: { type: string; targetId: string }
 }
 
 interface ExceptionDetails {
@@ -180,36 +235,97 @@ export function exceptionMessage(details: ExceptionDetails): string {
   return description.split('\n')[0].replace(/^[A-Za-z]*Error: /, '')
 }
 
+const AUTO_ATTACH = { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }
+
 /**
- * One attached debugger session over a page and, when asked, its cross-site
- * frames. Attach for the duration of one command; refs keep backend node IDs,
- * which stay valid across sessions for as long as the node exists.
+ * The one debugger attachment a page has, shared by every command running on
+ * it right now. Commands overlap (a `wait` polls while a click runs), so the
+ * attachment is counted: only the last user to finish detaches, and frame
+ * sessions found by one user serve the others.
  */
-export class CdpPage {
-  private readonly frames = new Map<string, FrameTarget>()
+interface SharedAttachment {
+  users: number
+  attachedHere: boolean
+  frames: Map<string, FrameTarget>
+  /** setAutoAttach calls still in flight on newly attached frame sessions. */
+  settling: Set<Promise<unknown>>
+  framesReady: Promise<void> | null
+  onMessage: (event: unknown, method: string, params: TargetEvent, sessionId?: string) => void
+  onDetach: () => void
+}
 
-  private constructor(private readonly contents: WebContents) {}
+const attachments = new WeakMap<WebContents, SharedAttachment>()
 
-  static async run<T>(contents: WebContents, withFrames: boolean, task: (page: CdpPage) => Promise<T>): Promise<T> {
-    const attachedHere = !contents.debugger.isAttached()
-    if (attachedHere) contents.debugger.attach('1.3')
-    const page = new CdpPage(contents)
-    const onMessage = (_event: unknown, method: string, params: AttachedToTarget, sessionId?: string) => {
+function openAttachment(contents: WebContents): SharedAttachment {
+  const attachedHere = !contents.debugger.isAttached()
+  if (attachedHere) contents.debugger.attach('1.3')
+  const shared: SharedAttachment = {
+    users: 0,
+    attachedHere,
+    frames: new Map(),
+    settling: new Set(),
+    framesReady: null,
+    onMessage: (_event, method, params, sessionId) => {
+      if (method === 'Target.detachedFromTarget') {
+        for (const [targetId, frame] of shared.frames) if (frame.sessionId === params?.sessionId) shared.frames.delete(targetId)
+        return
+      }
       if (method !== 'Target.attachedToTarget' || params?.targetInfo?.type !== 'iframe') return
-      page.frames.set(params.targetInfo.targetId, {
+      shared.frames.set(params.targetInfo.targetId, {
         sessionId: params.sessionId,
         ...(sessionId ? { parentSessionId: sessionId } : {}),
       })
-    }
+      // Frames nested inside this one are announced only once it auto-attaches too.
+      const nested = contents.debugger.sendCommand('Target.setAutoAttach', AUTO_ATTACH, params.sessionId).catch(() => undefined)
+      shared.settling.add(nested)
+      void nested.finally(() => shared.settling.delete(nested))
+    },
+    // DevTools or a crash can drop the attachment; the next command starts a new one.
+    onDetach: () => { if (attachments.get(contents) === shared) attachments.delete(contents) },
+  }
+  try {
+    contents.debugger.on('message', shared.onMessage)
+    contents.debugger.on('detach', shared.onDetach)
+  } catch (error) {
+    closeAttachment(contents, shared)
+    throw error
+  }
+  attachments.set(contents, shared)
+  return shared
+}
+
+function closeAttachment(contents: WebContents, shared: SharedAttachment): void {
+  if (attachments.get(contents) === shared) attachments.delete(contents)
+  try {
+    contents.debugger.removeListener('message', shared.onMessage)
+    contents.debugger.removeListener('detach', shared.onDetach)
+  } catch { /* listeners were never added */ }
+  if (shared.attachedHere && contents.debugger.isAttached()) {
+    try { contents.debugger.detach() } catch { /* already gone */ }
+  }
+}
+
+/**
+ * CDP access to a page and, when asked, its cross-site frames, for the length
+ * of one command. Refs keep backend node IDs, which stay valid across
+ * attachments for as long as the node and its document exist.
+ */
+export class CdpPage {
+  private constructor(
+    private readonly contents: WebContents,
+    private readonly shared: SharedAttachment,
+  ) {}
+
+  static async run<T>(contents: WebContents, withFrames: boolean, task: (page: CdpPage) => Promise<T>): Promise<T> {
+    const shared = attachments.get(contents) ?? openAttachment(contents)
+    shared.users += 1
     try {
-      contents.debugger.on('message', onMessage)
+      const page = new CdpPage(contents, shared)
       if (withFrames) await page.attachFrames()
       return await task(page)
     } finally {
-      contents.debugger.removeListener('message', onMessage)
-      if (attachedHere && contents.debugger.isAttached()) {
-        try { contents.debugger.detach() } catch { /* already gone */ }
-      }
+      shared.users -= 1
+      if (shared.users === 0) closeAttachment(contents, shared)
     }
   }
 
@@ -220,41 +336,48 @@ export class CdpPage {
 
   /** Auto-attach to cross-site frames, then to frames nested inside them. */
   private async attachFrames(): Promise<void> {
-    const autoAttach = { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }
-    await this.contents.debugger.sendCommand('Target.setAutoAttach', autoAttach)
-    // Chromium reports already-running frames before the command resolves;
-    // walk each newly found session once so nested frames are reached too.
-    const visited = new Set<string>()
-    for (let round = 0; round < 8; round += 1) {
-      const pending = Array.from(this.frames.values()).filter(frame => !visited.has(frame.sessionId))
-      if (pending.length === 0) break
-      for (const frame of pending) {
-        visited.add(frame.sessionId)
-        await this.contents.debugger.sendCommand('Target.setAutoAttach', autoAttach, frame.sessionId).catch(() => undefined)
+    const shared = this.shared
+    shared.framesReady ??= (async () => {
+      await this.contents.debugger.sendCommand('Target.setAutoAttach', AUTO_ATTACH)
+      // Chromium announces running frames before the command resolves, and
+      // each announcement starts auto-attach on that frame. Wait until a full
+      // turn of the event loop passes with nothing new in flight.
+      for (let round = 0; round < 16; round += 1) {
+        await Promise.all(shared.settling)
+        await new Promise<void>(resolve => setImmediate(resolve))
+        if (shared.settling.size === 0) break
       }
+    })()
+    const ready = shared.framesReady
+    try {
+      await ready
+    } catch (error) {
+      // Let the next command try again, unless one already has.
+      if (shared.framesReady === ready) shared.framesReady = null
+      throw error
     }
   }
 
   private sessionFor(targetId: string): string {
-    const frame = this.frames.get(targetId)
+    const frame = this.shared.frames.get(targetId)
     if (!frame) throw new Error('That frame is no longer on the page; take a new snapshot')
     return frame.sessionId
   }
 
   private targetForSession(sessionId: string | undefined): string | null {
     if (!sessionId) return null
-    for (const [targetId, frame] of this.frames) if (frame.sessionId === sessionId) return targetId
+    for (const [targetId, frame] of this.shared.frames) if (frame.sessionId === sessionId) return targetId
     return null
   }
 
   /** Actionable elements of the page, then of each cross-site frame. */
   async snapshot(limit = MAX_SNAPSHOT_ELEMENTS): Promise<CdpSnapshotElement[]> {
     const elements: CdpSnapshotElement[] = []
-    for (const targetId of [null, ...this.frames.keys()]) {
+    for (const targetId of [null, ...this.shared.frames.keys()]) {
       if (elements.length >= limit) break
       let frameElements: CdpSnapshotElement[]
       try {
-        frameElements = await this.snapshotTarget(targetId)
+        frameElements = await this.snapshotTarget(targetId, limit - elements.length)
       } catch (error) {
         // A frame can disappear mid-snapshot; the page itself must not.
         if (targetId === null) throw error
@@ -265,13 +388,11 @@ export class CdpPage {
     return elements.slice(0, limit)
   }
 
-  private async snapshotTarget(targetId: string | null): Promise<CdpSnapshotElement[]> {
-    const document = await this.send<{ root: CdpDomNode }>('DOM.getDocument', { depth: -1, pierce: true }, targetId)
-    if (!document?.root) throw new Error('DOM.getDocument returned no document')
-    const dom = indexDomTree(document.root)
-    const tree = await this.send<{ frameTree: FrameTree }>('Page.getFrameTree', {}, targetId)
+  private async snapshotTarget(targetId: string | null, limit: number): Promise<CdpSnapshotElement[]> {
+    const tree = await this.send<{ frameTree?: FrameTree }>('Page.getFrameTree', {}, targetId)
     if (!tree?.frameTree) throw new Error('Page.getFrameTree returned no frames')
-    const elements: CdpSnapshotElement[] = []
+    const documentId = String(tree.frameTree.frame.loaderId ?? '')
+    const candidates: CdpAxNode[] = []
     // Same-process frames are listed here and read in this session. A
     // cross-site frame belongs to another process and fails; its own session
     // reads it instead.
@@ -284,18 +405,54 @@ export class CdpPage {
         continue
       }
       if (!Array.isArray(result?.nodes)) throw new Error('Accessibility.getFullAXTree returned no nodes')
-      elements.push(...elementsFromAxTree(result.nodes, dom, targetId))
+      let ariaHidden = 0
+      for (const node of result.nodes) {
+        if (isActionableAxNode(node)) candidates.push(node)
+        else if (isAriaHiddenAxNode(node) && ariaHidden < MAX_ARIA_HIDDEN_CANDIDATES) {
+          ariaHidden += 1
+          candidates.push(node)
+        }
+      }
     }
+    // Tag and attributes come from one small describe call per kept node,
+    // rather than shipping the whole document tree for every snapshot.
+    const described = await Promise.all(candidates.map(async node => {
+      try {
+        const result = await this.send<{ node?: CdpDomNode }>('DOM.describeNode', {
+          backendNodeId: node.backendDOMNodeId,
+          // An ignored node has no computed name; its text children stand in.
+          ...(node.ignored ? { depth: 3 } : {}),
+        }, targetId)
+        return result?.node ?? null
+      } catch {
+        return null
+      }
+    }))
+    const elements: CdpSnapshotElement[] = []
+    candidates.forEach((node, index) => {
+      const dom = described[index]
+      if (!dom || elements.length >= limit) return
+      const element = elementFromAx(node, dom, { backendNodeId: node.backendDOMNodeId as number, targetId, documentId })
+      if (element) elements.push(element)
+    })
     return elements
   }
 
-  /** Remote object for a ref, or a clear error when the node is gone. */
+  /** Remote object for a ref, or a clear error when its node or document is gone. */
   async resolve(ref: CdpRef, label: string): Promise<string> {
+    const gone = new Error(`Element ${label} is no longer available; take a new snapshot`)
+    let tree: { frameTree?: FrameTree }
+    try {
+      tree = await this.send('Page.getFrameTree', {}, ref.targetId)
+    } catch {
+      throw gone
+    }
+    if (String(tree?.frameTree?.frame.loaderId ?? '') !== ref.documentId) throw gone
     try {
       const resolved = await this.send<{ object?: { objectId?: string } }>('DOM.resolveNode', { backendNodeId: ref.backendNodeId }, ref.targetId)
       if (resolved?.object?.objectId) return resolved.object.objectId
     } catch { /* fall through */ }
-    throw new Error(`Element ${label} is no longer available; take a new snapshot`)
+    throw gone
   }
 
   /** Run `function() { body }` with `this` bound to the node and return its value. */
@@ -312,24 +469,43 @@ export class CdpPage {
   }
 
   /**
-   * Offset of a cross-site frame's viewport inside the top-level viewport:
-   * the embedding iframe's content box, summed up through every parent frame.
-   * Scrolls each embedding iframe into view on the way.
+   * Centre of a ref's box in top-level viewport coordinates. Chromium's quads
+   * already account for same-process frames; a cross-site frame reports in
+   * its own viewport, so its position in the page is added.
    */
-  async frameOffset(targetId: string | null, rectFunction: string): Promise<{ x: number; y: number }> {
+  async centerOf(ref: CdpRef, label: string): Promise<{ x: number; y: number }> {
+    let quads: number[][] | undefined
+    try {
+      quads = (await this.send<{ quads?: number[][] }>('DOM.getContentQuads', { backendNodeId: ref.backendNodeId }, ref.targetId))?.quads
+    } catch { /* not rendered */ }
+    const quad = quads?.find(candidate => candidate.length === 8)
+    if (!quad) throw new Error(`Element ${label} is not visible on the page`)
+    const offset = await this.frameOffset(ref.targetId)
+    return {
+      x: (quad[0] + quad[2] + quad[4] + quad[6]) / 4 + offset.x,
+      y: (quad[1] + quad[3] + quad[5] + quad[7]) / 4 + offset.y,
+    }
+  }
+
+  /**
+   * Where a cross-site frame's viewport sits in the top-level viewport: the
+   * content box of the iframe that embeds it, summed through every parent.
+   */
+  private async frameOffset(targetId: string | null): Promise<{ x: number; y: number }> {
     let x = 0
     let y = 0
     let current = targetId
     for (let depth = 0; current && depth < 8; depth += 1) {
-      const frame = this.frames.get(current)
+      const frame = this.shared.frames.get(current)
       if (!frame) throw new Error('That frame is no longer on the page; take a new snapshot')
       const parentTarget = this.targetForSession(frame.parentSessionId)
       const owner = await this.send<{ backendNodeId?: number }>('DOM.getFrameOwner', { frameId: current }, parentTarget)
       if (typeof owner?.backendNodeId !== 'number') throw new Error('Could not locate the frame on the page')
-      const objectId = await this.resolve({ backendNodeId: owner.backendNodeId, targetId: parentTarget }, 'frame')
-      const box = await this.callOn<{ left: number; top: number }>(objectId, rectFunction, parentTarget)
-      x += box.left
-      y += box.top
+      const box = await this.send<{ model?: { content?: number[] } }>('DOM.getBoxModel', { backendNodeId: owner.backendNodeId }, parentTarget)
+      const content = box?.model?.content
+      if (!content || content.length < 2) throw new Error('Could not locate the frame on the page')
+      x += content[0]
+      y += content[1]
       current = parentTarget
     }
     return { x, y }
@@ -340,16 +516,22 @@ export class CdpPage {
 export type PointerInput =
   | { type: 'mouseMove'; x: number; y: number; button?: 'left' }
   | { type: 'mouseDown' | 'mouseUp'; x: number; y: number; button: 'left'; clickCount: number }
+  | { type: 'mouseWheel'; x: number; y: number; deltaX: number; deltaY: number }
 
 /**
  * CDP pointer event for an Electron one. Electron's sendInputEvent hands
- * events straight to the top page's widget, so a click over a cross-site
- * iframe never reaches it; Input.dispatchMouseEvent goes through Chromium's
- * input router, which hit-tests into the frame.
+ * events straight to the top page's widget, so a click or wheel over a
+ * cross-site iframe never reaches it; Input.dispatchMouseEvent goes through
+ * Chromium's input router, which hit-tests into the frame.
  */
 export function toCdpMouseEvent(event: PointerInput): Record<string, unknown> {
   if (event.type === 'mouseMove') {
     return { type: 'mouseMoved', x: event.x, y: event.y, button: event.button ?? 'none', buttons: event.button ? 1 : 0 }
+  }
+  if (event.type === 'mouseWheel') {
+    // Electron counts a positive delta as wheel-up; CDP, like the DOM, counts
+    // it as scroll-down. Flip so both paths move the page the same way.
+    return { type: 'mouseWheel', x: event.x, y: event.y, deltaX: -event.deltaX, deltaY: -event.deltaY }
   }
   return {
     type: event.type === 'mouseDown' ? 'mousePressed' : 'mouseReleased',
@@ -384,14 +566,28 @@ const NAMED_KEYS: Record<string, { key: string; code: string; keyCode: number; t
   pagedown: { key: 'PageDown', code: 'PageDown', keyCode: 34 },
 }
 
+export type KeyModifier = 'meta' | 'control' | 'alt' | 'shift'
+
+const MODIFIER_BITS: Record<KeyModifier, number> = { alt: 1, control: 2, meta: 4, shift: 8 }
+
 /**
- * CDP key events for one key press with no modifiers, or null when the key is
- * not mapped. Keyboard input from sendInputEvent also stops at the top page,
- * so typing into a focused field inside a cross-site frame needs this path.
- * Shortcuts stay on the Electron path: on macOS, CDP does not run editing
- * commands such as Cmd+A without an explicit command list.
+ * macOS runs editing shortcuts from the app menu, which CDP key events skip,
+ * so each one names the editing command to run.
  */
-export function toCdpKeyEvents(keyCode: string): Array<Record<string, unknown>> | null {
+const MAC_EDITING_COMMANDS: Record<string, string> = {
+  a: 'selectAll', c: 'copy', v: 'paste', x: 'cut', z: 'undo', 'shift+z': 'redo',
+}
+
+/**
+ * CDP key events for one key press, or null when this combination should stay
+ * on the Electron path. Keyboard input from sendInputEvent stops at the top
+ * page, so keys for a field inside a cross-site frame need this path.
+ */
+export function toCdpKeyEvents(
+  keyCode: string,
+  modifiers: KeyModifier[] = [],
+  platform: string = process.platform,
+): Array<Record<string, unknown>> | null {
   const named = NAMED_KEYS[keyCode.toLowerCase()]
   let key: string, code: string, virtual: number, text: string | undefined
   if (named) {
@@ -410,8 +606,36 @@ export function toCdpKeyEvents(keyCode: string): Array<Record<string, unknown>> 
   } else {
     return null
   }
+
+  const held = new Set(modifiers)
+  const bits = modifiers.reduce((mask, modifier) => mask | MODIFIER_BITS[modifier], 0)
+  let commands: string[] | undefined
+  const shortcut = held.has('meta') || held.has('control') || held.has('alt')
+  if (shortcut) {
+    // A shortcut triggers an action; it never inserts its own character.
+    text = undefined
+    if (platform === 'darwin' && held.has('meta')) {
+      if (held.has('control') || held.has('alt')) return null
+      const command = MAC_EDITING_COMMANDS[(held.has('shift') ? 'shift+' : '') + keyCode.toLowerCase()]
+      if (!command) return null
+      commands = [command]
+    }
+  } else if (held.has('shift') && text !== undefined && !named) {
+    // Shift+letter types the capital; other shifted symbols depend on the
+    // keyboard layout, which only the Electron path knows.
+    if (!/^[a-zA-Z]$/.test(keyCode)) return null
+    key = keyCode.toUpperCase()
+    text = key
+  }
+
+  const shared = { key, code, windowsVirtualKeyCode: virtual, ...(bits ? { modifiers: bits } : {}) }
   return [
-    { type: text !== undefined ? 'keyDown' : 'rawKeyDown', key, code, windowsVirtualKeyCode: virtual, ...(text !== undefined ? { text, unmodifiedText: text } : {}) },
-    { type: 'keyUp', key, code, windowsVirtualKeyCode: virtual },
+    {
+      type: text !== undefined ? 'keyDown' : 'rawKeyDown',
+      ...shared,
+      ...(text !== undefined ? { text, unmodifiedText: text } : {}),
+      ...(commands ? { commands } : {}),
+    },
+    { type: 'keyUp', ...shared },
   ]
 }
