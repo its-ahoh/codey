@@ -24,6 +24,7 @@ export * from './browser-skill';
 export * from './chrome-companion-skill';
 export * from './bundled-skill';
 export * from './terminal-skill';
+export * from './computer-skill';
 export * from './skill-pack';
 export * from './tool-policy';
 
@@ -132,10 +133,18 @@ export function addExternalMcpServers(
   };
 }
 
+/** Optional desktop-owned capabilities live exactly as long as one adapter run. */
+export interface AgentRunLease {
+  request: AgentRequest;
+  dispose(): Promise<void>;
+}
+export type AgentRunLeaseProvider = (agent: CodingAgent, request: AgentRequest) => Promise<AgentRunLease | undefined>;
+
 // Agent factory
 export class AgentFactory {
   private agents: Map<CodingAgent, CodingAgentAdapter> = new Map();
   private envProvider?: (agent: CodingAgent) => Record<string, string> | undefined;
+  private runLeaseProvider?: AgentRunLeaseProvider;
   private externalMcpProvider?: () => Record<string, McpServerSpec> | undefined;
   private runObserver?: (agent: CodingAgent, request: AgentRequest, response: AgentResponse) => void;
 
@@ -171,6 +180,10 @@ export class AgentFactory {
    */
   setExternalMcpProvider(provider: () => Record<string, McpServerSpec> | undefined): void {
     this.externalMcpProvider = provider;
+  }
+
+  setRunLeaseProvider(provider: AgentRunLeaseProvider): void {
+    this.runLeaseProvider = provider;
   }
 
   /**
@@ -254,7 +267,27 @@ export class AgentFactory {
       }
     }
 
-    const response = await adapter.run(request);
+    // An optional capability that cannot start must not take the task down
+    // with it: run without it. The owner reports why through its own state.
+    let lease: AgentRunLease | undefined;
+    try {
+      lease = await this.runLeaseProvider?.(agent, request);
+    } catch {
+      lease = undefined;
+    }
+    let response: AgentResponse;
+    try {
+      // Adapter exceptions keep propagating exactly as they did before leases
+      // existed; callers own that error handling.
+      response = await adapter.run(lease?.request ?? request);
+    } finally {
+      try {
+        await lease?.dispose();
+      } catch {
+        // The lease owner reports teardown failures through its own state and
+        // disables unsafe reuse. Cleanup must not replace the agent response.
+      }
+    }
     try { this.runObserver?.(agent, request, response); } catch { /* accounting must not fail the run */ }
     return response;
   }

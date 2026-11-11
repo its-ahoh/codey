@@ -1,0 +1,237 @@
+import { createComputerCapture } from './computer-capture'
+import { createComputerBridge } from './computer-bridge'
+import { computerCommands } from './computer-commands'
+import { loadComputerDriverSdk } from './computer-driver-sdk'
+import { app, dialog, ipcMain, systemPreferences, desktopCapturer } from 'electron'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { basename, join } from 'node:path'
+import { ComputerControl, computerManifest, validateComputerApps, type ComputerControlState, type ComputerDriver, type ComputerCommand } from './computer-control'
+
+const exec = promisify(execFile)
+const binaryPath = () => app.isPackaged
+  ? join(process.resourcesPath, 'cua-driver', 'cua-driver')
+  : join(app.getAppPath(), 'build', 'cua-driver', 'cua-driver')
+const permissions = () => ({
+  accessibility: process.platform === 'darwin' && systemPreferences.isTrustedAccessibilityClient(false),
+  screenRecording: process.platform === 'darwin' && systemPreferences.getMediaAccessStatus('screen') === 'granted',
+})
+
+function createDriver(onExit: () => void): ComputerDriver {
+  let host: import('@trycua/cua-driver').EmbeddedCuaDriverHostLike | undefined
+  let execute: ReturnType<typeof computerCommands> | undefined
+  let directory: string | undefined
+  let stopped = false
+  let stopping: Promise<void> | undefined
+  let starting: Promise<void> | undefined
+  const launch = async (apps: Parameters<ComputerDriver['start']>[0]) => {
+    const sdk = await loadComputerDriverSdk()
+    if (stopped) throw new Error('Computer control was stopped')
+    const root = join(app.getPath('userData'), 'computer-control-runs')
+    mkdirSync(root, { recursive: true, mode: 0o700 })
+    directory = mkdtempSync(join(root, 'run-'))
+    const manifest = join(directory, 'capabilities.json')
+    writeFileSync(manifest, JSON.stringify(computerManifest(apps)), { mode: 0o600 })
+    host = sdk.EmbeddedCuaDriverHost.withOptions({
+      binaryPath: binaryPath(), hostBundleId: 'com.codey.mac',
+      permissionMode: sdk.EmbeddedPermissionMode.Bounded,
+      capabilityManifestPath: manifest, approveCapabilityManifest: true,
+      approveSessionPolicy: false, dangerouslyBypassApprovals: false,
+      environment: [], inheritStderr: true, noOverlay: false,
+    })
+    const connection = await host.start()
+    if (stopped) throw new Error('Computer control was stopped')
+    void host.waitForExit(connection.generation).then(() => { if (!stopped) onExit() }, () => { if (!stopped) onExit() })
+    execute = computerCommands(sdk.CuaDriver.connect(connection.socketPath), apps)
+  }
+  return {
+    start(apps) { return starting ??= launch(apps) },
+    async execute(command, validate) {
+      if (stopped || !execute) throw new Error('Computer driver is unavailable')
+      return execute(command, validate)
+    },
+    stop() {
+      stopped = true
+      return stopping ??= (async () => {
+        // Never tear the native host down underneath its own start: wait for
+        // the start to settle so the process it spawned is the one stopped.
+        // The wait is bounded so a start that hangs cannot block teardown.
+        if (starting) await Promise.race([starting.catch(() => {}), new Promise(resolve => setTimeout(resolve, 10000))])
+        try { await host?.stop() } finally {
+          if (host && 'uniffiDestroy' in host && typeof host.uniffiDestroy === 'function') host.uniffiDestroy()
+          if (directory) rmSync(directory, { recursive: true, force: true })
+        }
+      })()
+    },
+  }
+}
+
+/** The Computer plugin's skill file: where the on/off switch is remembered,
+ *  and what teaches agents the CLI. */
+export interface ComputerSkillSwitch {
+  isActive(): boolean
+  setEnabled(enabled: boolean): Promise<unknown>
+}
+
+export function createComputerControlHost(changed: (state: ComputerControlState) => void,
+  trustedRenderer: () => Electron.WebContents | undefined, skill: ComputerSkillSwitch) {
+  const file = join(app.getPath('userData'), 'computer-control.json')
+  const state = (): ComputerControlState => ({
+    enabled: control.enabled, apps: control.apps, available: process.platform === 'darwin' && existsSync(binaryPath()),
+    ...permissions(), active: control.active, queued: control.queued, desktop: bridge.desktop(),
+  })
+  const control = new ComputerControl({
+    ready: () => { const p = permissions(); return existsSync(binaryPath()) && p.accessibility && p.screenRecording },
+    changed: () => changed(state()),
+    driver: createDriver,
+    approve: async (agent, apps, signal, chatId) => {
+      const result = await dialog.showMessageBox({
+        type: 'question', title: 'Allow computer control?',
+        message: `Allow ${agent} to read and control these apps for this task?`,
+        detail: apps.map(item => `${item.name} (${item.bundleId})`).join('\n') +
+          `\n\n${chatId ? `Chat: ${chatId}\n` : ''}Window content and screenshots may be sent to your selected model. Access ends with this task.`,
+        buttons: ['Deny', 'Allow this task'], defaultId: 0, cancelId: 0, noLink: true, signal,
+      })
+      return !signal.aborted && result.response === 1
+    },
+  })
+  const bridge = createComputerBridge(control, app.isPackaged
+    ? join(process.resourcesPath, 'computer-agent-cli.cjs')
+    : join(app.getAppPath(), 'electron', 'computer-agent-cli.cjs'), process.execPath, () => {
+    capture?.sync(bridge.desktop())
+    changed(state())
+  })
+  const capture = createComputerCapture({
+    renderer: trustedRenderer, permitted: () => control.enabled && permissions().screenRecording,
+    inspect: bridge.inspectDesktop,
+    sources: () => desktopCapturer.getSources({ types: ['window'], thumbnailSize: { width: 0, height: 0 }, fetchWindowIcons: false }),
+  })
+  try { control.apps = validateComputerApps(JSON.parse(readFileSync(file, 'utf8')).apps) } catch { /* first run */ }
+  // The skill file is the remembered switch, and the Skills tab can flip it
+  // too. Follow it: off when the file is off, on when the file is on and setup
+  // (permissions, driver, an app list) is complete. A switch left on with
+  // incomplete setup stays off until setup is fixed, then comes back by itself.
+  let reconciling: Promise<void> = Promise.resolve()
+  const reconcile = () => reconciling = reconciling.then(async () => {
+    let wanted = false
+    try { wanted = skill.isActive() } catch { /* unreadable home: off */ }
+    if (wanted === control.enabled) return
+    if (!wanted) { await bridge.stop(); await control.configure(false, control.apps) }
+    else if (control.apps.length > 0) await control.configure(true, control.apps)
+  }).catch(() => { /* setup incomplete or shutting down: stay off */ })
+  void reconcile()
+  const wrap = (fn: (...args: any[]) => unknown) => async (event: Electron.IpcMainInvokeEvent, ...args: any[]) => {
+    // Only Codey's local renderer may grant desktop access.
+    if (event.sender !== trustedRenderer() || event.senderFrame !== event.sender.mainFrame) return { ok: false, error: 'Untrusted computer control request' }
+    const url = event.senderFrame?.url ?? ''
+    if (!url.startsWith('file://') && !( !app.isPackaged && /^http:\/\/localhost:\d+\//.test(url))) {
+      return { ok: false, error: 'Untrusted computer control request' }
+    }
+    try { return { ok: true, data: await fn(...args) } }
+    catch (error) { return { ok: false, error: error instanceof Error ? error.message : String(error) } }
+  }
+  ipcMain.handle('computer:status', wrap(async () => { await reconcile(); return state() }))
+  ipcMain.handle('computer:configure', wrap(async (enabled: boolean, apps: unknown) => {
+    if (typeof enabled !== 'boolean') throw new Error('Invalid computer control setting')
+    await reconciling
+    await bridge.stop()
+    await control.configure(enabled, apps)
+    writeFileSync(file, JSON.stringify({ apps: control.apps }), { mode: 0o600 })
+    try { await skill.setEnabled(enabled) } catch (error) {
+      // Never run with a switch that was not remembered.
+      await control.configure(false, control.apps)
+      throw error
+    }
+    return state()
+  }))
+  ipcMain.handle('computer:permissions', wrap(async () => {
+    const sdk = await loadComputerDriverSdk()
+    const p = sdk.requestMacOsPermissions()
+    if (!p.screenRecording) await sdk.openMacOsScreenRecordingSettings()
+    return state()
+  }))
+  ipcMain.handle('computer:pickApp', wrap(async () => {
+    const result = await dialog.showOpenDialog({ title: 'Choose an application', defaultPath: '/Applications',
+      properties: ['openFile'], filters: [{ name: 'Applications', extensions: ['app'] }] })
+    if (result.canceled || !result.filePaths[0]) return null
+    const path = result.filePaths[0]
+    if (!path.endsWith('.app')) throw new Error('Choose an application bundle')
+    const { stdout } = await exec('/usr/bin/plutil', ['-extract', 'CFBundleIdentifier', 'raw', '-o', '-', join(path, 'Contents', 'Info.plist')],
+      { timeout: 5000, maxBuffer: 4096 })
+    return validateComputerApps([{ bundleId: stdout.trim(), name: basename(path, '.app') }])[0]
+  }))
+  ipcMain.handle('computer:armStream', wrap((sessionId: string, window: string) => capture.arm(sessionId, window)))
+  ipcMain.handle('computer:streamStopped', wrap((streamId: string) => capture.release(streamId)))
+  // Pausing needs no video: the user works in the real window, and the agent
+  // must simply not type into it at the same time.
+  ipcMain.handle('computer:handoff', wrap((sessionId: string, window: string, human: boolean) => {
+    if (typeof human !== 'boolean') throw new Error('Invalid control owner')
+    return bridge.handoff(sessionId, window, human)
+  }))
+  ipcMain.handle('computer:reveal', wrap(async (sessionId: string, window: string) => {
+    const target = await bridge.inspectDesktop(sessionId, window)
+    const bundleId = control.apps.find(item => item.bundleId === target.bundleId)?.bundleId
+    if (!bundleId) throw new Error('This window is outside the approved apps')
+    // Activating the app makes macOS switch to the desktop that holds it.
+    await exec('/usr/bin/open', ['-b', bundleId], { timeout: 5000 })
+  }))
+  // The preview carries a full screenshot; send it only when it is new.
+  ipcMain.handle('computer:preview', wrap((known?: unknown) => {
+    const preview = bridge.preview()
+    return preview && preview.updatedAt === known ? { unchanged: true as const } : preview
+  }))
+  ipcMain.handle('computer:view', wrap((command: ComputerCommand) => {
+    if (!command || !['windows', 'observe'].includes(command.action)) throw new Error('Invalid viewer command')
+    return bridge.view(command)
+  }))
+  ipcMain.handle('computer:stop', wrap(async () => { await bridge.stop(); return state() }))
+  let checking = false
+  let misses = { key: '', count: 0 }
+  const monitor = setInterval(() => {
+    if (checking || !control.active) return
+    checking = true
+    void (async () => {
+      const p = permissions()
+      const current = bridge.desktop()
+      if (!p.accessibility || !p.screenRecording) { await bridge.stop(); return }
+      if (current) {
+        const key = `${current.sessionId}:${current.window}`
+        try {
+          await bridge.inspectDesktop(current.sessionId, current.window)
+          misses = { key, count: 0 }
+        } catch {
+          const next = bridge.desktop()
+          if (next?.sessionId !== current.sessionId || next.window !== current.window) return
+          // One failed check may be a driver hiccup. Only a window that stays
+          // gone is acted on, and then only its live view is closed unless the
+          // user is the one holding control.
+          misses = { key, count: misses.key === key ? misses.count + 1 : 1 }
+          if (misses.count < 3) return
+          misses = { key: '', count: 0 }
+          if (!bridge.dropDesktop(current.sessionId, current.window)) await bridge.stop()
+        }
+      }
+    })().catch(() => {}).finally(() => { checking = false })
+  }, 2000)
+  monitor.unref()
+  const prepare: typeof bridge.prepare = async (agent, request) => { await reconcile(); return bridge.prepare(agent, request) }
+  return { control, state, prepare, reconcile,
+    attachRenderer(contents: Electron.WebContents) {
+      contents.session.setDisplayMediaRequestHandler((request, callback) => {
+        void capture.handle(request, callback)
+      }, { useSystemPicker: false })
+      const revoke = () => { capture.revoke(); void bridge.stop().catch(() => {}) }
+      contents.on('render-process-gone', revoke)
+      contents.once('destroyed', revoke)
+      contents.on('did-start-navigation', (_event, _url, _inPlace, isMainFrame) => { if (isMainFrame) revoke() })
+    },
+    /** True while a session could be holding a native driver or a queue. */
+    needsShutdown: () => control.enabled || !!control.active || control.queued > 0,
+    discard: () => { clearInterval(monitor); capture.revoke(); bridge.discard() },
+    shutdown: async () => {
+      clearInterval(monitor); capture.revoke()
+      await bridge.shutdown(); await control.shutdown()
+    },
+  }
+}
