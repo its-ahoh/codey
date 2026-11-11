@@ -64,6 +64,14 @@ jobs:
           npm run build:helper -w codey-mac
           test -x voice/CodeyVoice || { echo "::error::voice/CodeyVoice was not built"; exit 1; }
 
+      # Same trap as the voice helper: the driver is staged by `prepare:cua`,
+      # which only the npm `pre*` hooks run. electron-builder signs
+      # Contents/Resources/cua-driver/cua-driver, so it must exist first.
+      - name: Stage Cua driver
+        run: |
+          npm run prepare:cua -w codey-mac
+          test -x codey-mac/build/cua-driver/cua-driver || { echo "::error::codey-mac/build/cua-driver/cua-driver was not staged"; exit 1; }
+
       # Signing + notarization require these repo secrets (Settings → Secrets and
       # variables → Actions). Without them electron-builder can't sign/notarize
       # and the release silently fails late in the build, so fail fast here with

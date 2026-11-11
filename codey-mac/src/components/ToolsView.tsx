@@ -1,3 +1,4 @@
+import { ComputerTab } from './ComputerTab'
 import React, { useState } from 'react'
 import { C } from '../theme'
 import { OverlayWindow } from './OverlayWindow'
@@ -9,12 +10,13 @@ import { UIIcon, type IconName } from './UIIcons'
 
 interface Props { onClose: () => void }
 
-type Tab = 'skills' | 'playbooks' | 'plugins' | 'mcp'
+type Tab = 'skills' | 'playbooks' | 'plugins' | 'mcp' | 'computer'
 
 const TABS: { key: Tab; label: string; icon: IconName }[] = [
   { key: 'skills',  label: 'Skills',  icon: 'sparkle' },
   { key: 'playbooks', label: 'Playbooks', icon: 'archive' },
   { key: 'plugins', label: 'Plugins', icon: 'tools' },
+  { key: 'computer', label: 'Computer', icon: 'tools' },
   { key: 'mcp', label: 'MCPs', icon: 'server' },
 ]
 
@@ -74,6 +76,7 @@ export const ToolsView: React.FC<Props> = ({ onClose }) => {
         {tab === 'skills' && <SkillsTab addRequest={addSkillRequest} searchQuery={searchQuery} />}
         {tab === 'playbooks' && <PlaybooksTab searchQuery={searchQuery} />}
         {tab === 'plugins' && <PluginsTab searchQuery={searchQuery} />}
+        {tab === 'computer' && <ComputerTab onOpenDesktop={onClose} />}
         {tab === 'mcp' && <McpTab searchQuery={searchQuery} />}
       </div>
     </OverlayWindow>

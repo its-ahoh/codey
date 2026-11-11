@@ -1,3 +1,4 @@
+import { createComputerControlHost } from './computer-control-host'
 import { app, BrowserWindow, Menu, ipcMain, Tray, nativeImage, shell, dialog, protocol, net, globalShortcut, clipboard, Notification, systemPreferences, screen, session, powerMonitor } from 'electron'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
@@ -73,6 +74,7 @@ let trayState: import('./tray-state').TrayStateMap = {}
 let trayRebuildTimer: NodeJS.Timeout | null = null
 let isQuitting = false
 let inProcessGateway: Codey | null = null
+let computerControlHost: ReturnType<typeof createComputerControlHost> | undefined
 const coreStateStore = createCoreStateStore((s) => sendToRenderer('core:state', s))
 const turnTracker = createTurnTracker()
 // Separate tracker so the chime dedupes per turn independently of banners.
@@ -257,6 +259,8 @@ function createWindow() {
       plugins: true,
     }
   })
+
+  computerControlHost?.attachRenderer(mainWindow.webContents)
 
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show()
@@ -1102,6 +1106,7 @@ async function bootInProcessCore() {
     }
     const runtimeCfg = buildRuntimeConfig(coreConfigManager.get())
     inProcessGateway = new Codey(runtimeCfg, undefined, join(root, 'workspaces'), coreConfigManager, botManager)
+    inProcessGateway.setAgentRunLeaseProvider((agent, request) => computerControlHost?.prepare(agent, request) ?? Promise.resolve(undefined))
     // Apply config changes to the running gateway when the renderer edits them.
     // applyConfig is async so a missing await would swallow channel-start errors.
     coreConfigManager.on('change', (updated: any) => {
@@ -2048,6 +2053,7 @@ async function pickBrowserPasskey(request: BrowserPasskeyPickerRequest): Promise
 }
 
 app.whenReady().then(async () => {
+  computerControlHost = createComputerControlHost(state => sendToRenderer('computer:changed', state), () => mainWindow?.webContents)
   powerMonitor.on('resume', () => sendToRenderer('chats:resume'))
   if (isDistributionSmokeTest) {
     console.log('CODEY_DIST_SMOKE_OK')
@@ -5704,8 +5710,24 @@ app.on('window-all-closed', () => {
   }
 })
 
-app.on('before-quit', () => {
+let computerShutdownComplete = false
+app.on('before-quit', event => {
+  // Only hold the quit open while a native driver may be running. Preventing
+  // it unconditionally makes macOS report that Codey cancelled a logout or
+  // restart, and an unbounded wait would leave Cmd+Q doing nothing.
+  if (computerControlHost?.needsShutdown() && !computerShutdownComplete) {
+    event.preventDefault()
+    const finish = () => {
+      if (computerShutdownComplete) return
+      computerShutdownComplete = true
+      app.quit()
+    }
+    const timer = setTimeout(finish, 3000)
+    void computerControlHost.shutdown().catch(() => {}).finally(() => { clearTimeout(timer); finish() })
+    return
+  }
   isQuitting = true
+  if (!computerShutdownComplete) computerControlHost?.discard()
   terminalControlPermission?.dispose()
   void terminalAgentBridge?.stop()
   terminalSessions.closeAll()
