@@ -382,8 +382,9 @@ describe('BrowserController accessibility snapshot', () => {
     await controller.press('shift+Tab')
     expect(keys()[0]).toMatchObject({ type: 'rawKeyDown', key: 'Tab', modifiers: 8 })
     expect(contents.sendInputEvent).not.toHaveBeenCalled()
-    await controller.press('cmd+alt+i')
-    expect(contents.sendInputEvent).toHaveBeenCalledWith({ type: 'keyDown', keyCode: 'i', modifiers: ['meta', 'alt'] })
+    // A key with no CDP mapping stays on the Electron path on every platform.
+    await controller.press('alt+MediaPlayPause')
+    expect(contents.sendInputEvent).toHaveBeenCalledWith({ type: 'keyDown', keyCode: 'MediaPlayPause', modifiers: ['alt'] })
   })
 
   it('holds one debugger attachment for a whole ref wait', async () => {
