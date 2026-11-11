@@ -20,10 +20,10 @@ export interface PluginInfo extends BrowserSkillStatus {
 export const PLUGINS: Array<Pick<PluginInfo, 'id' | 'name' | 'tagline' | 'description'>> = [
   {
     id: 'browser',
-    name: 'Codey Browser',
+    name: 'Browser',
     tagline: 'Codey’s own browser window — its own profiles and logins.',
     description:
-      'Let agents see and control the in-app Codey Browser. Works with every agent '
+      'Let agents see and control the in-app Browser. Works with every agent '
       + 'Codey runs. Browsing stays view-only by default; actions that change page '
       + 'state still require your approval in the app.',
   },
