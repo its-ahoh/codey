@@ -8,6 +8,7 @@ import {
   type Session,
   type WebContents,
 } from 'electron'
+import { CdpPage, findCdpNodeByRef, toCdpKeyEvents, toCdpMouseEvent, type CdpDomNode, type CdpRef, type KeyModifier, type PointerInput } from './browser-cdp'
 import type { BrowserSitePermissionDetails, BrowserSitePermissionManager } from './browser-site-permissions'
 import {
   assertProfileName,
@@ -274,28 +275,33 @@ export const PAGE_DOM_HELPERS = `
   }).filter(Boolean).join('\\n')
 `
 
-interface CdpDomNode {
-  nodeId: number
-  attributes?: string[]
-  children?: CdpDomNode[]
-  shadowRoots?: CdpDomNode[]
-  contentDocument?: CdpDomNode
+/** Wrap a ref action body as a CDP function whose `this` is the element. */
+function refFunction(body: string): string {
+  return `function() {
+    ${PAGE_DOM_HELPERS}
+    const el = this
+    ${body}
+  }`
 }
 
-/** Find the node carrying data-codey-ref=ref in a pierced CDP DOM tree. */
-export function findCdpNodeByRef(root: CdpDomNode, ref: string): number | null {
-  const stack: CdpDomNode[] = [root]
-  while (stack.length > 0) {
-    const node = stack.pop()!
-    const attributes = node.attributes ?? []
-    for (let index = 0; index + 1 < attributes.length; index += 2) {
-      if (attributes[index] === 'data-codey-ref' && attributes[index + 1] === ref) return node.nodeId
-    }
-    if (node.contentDocument) stack.push(node.contentDocument)
-    for (const child of node.shadowRoots ?? []) stack.push(child)
-    for (const child of node.children ?? []) stack.push(child)
+/** A first CDP pointer event that is not acknowledged this fast means the page is not taking input. */
+const INPUT_PROBE_MS = 500
+/** Longest wait for any later input event before the gesture is reported as failed. */
+const INPUT_ACK_MS = 5000
+
+/** Reject when `pending` has not settled within `ms`. */
+async function settleWithin<T>(pending: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  // The command may still settle after the caller moved on; never leave that unhandled.
+  pending.catch(() => undefined)
+  try {
+    return await Promise.race([
+      pending,
+      new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error(message)), ms) }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
   }
-  return null
 }
 
 const MUTATING_NAVIGATION = /(^|[\/_?&=.-])(logout|log-out|signout|sign-out|delete|remove|unsubscribe|subscribe|purchase|checkout|pay|confirm|like|follow|bookmark|favorite|vote|join|leave|create|update)([\/_?&=.-]|$)/i
@@ -352,6 +358,8 @@ export class BrowserController {
   private sitePermissionManager: BrowserSitePermissionManager | null = null
   /** Last synthesized cursor position, so each move starts where the last ended. */
   private pointer: { x: number; y: number } | null = null
+  /** Refs from the last accessibility snapshot, bound to the page they came from. */
+  private cdpRefs: { contents: WebContents; refs: Map<string, CdpRef> } | null = null
   private readonly random: () => number
   private readonly sleep: (ms: number) => Promise<void>
   private readonly getProfilesDir: () => string
@@ -677,8 +685,36 @@ export class BrowserController {
     }
   }
 
+  /**
+   * List the page's controls. Chromium's accessibility tree is the primary
+   * source: it reaches closed shadow roots and cross-site frames. When the
+   * debugger is unavailable (for example while DevTools is open on the page),
+   * fall back to the page-script walker.
+   */
   async snapshotInteractive(): Promise<BrowserInteractiveSnapshot> {
     const contents = this.requirePage()
+    try {
+      const found = await CdpPage.run(contents, true, page => page.snapshot())
+      const refs = new Map<string, CdpRef>()
+      const elements = found.map(({ ref, ...element }, index) => {
+        const name = 'e' + (index + 1)
+        refs.set(name, ref)
+        return { ref: name, ...element }
+      })
+      this.cdpRefs = { contents, refs }
+      return {
+        url: contents.getURL(),
+        title: contents.getTitle() || '',
+        elements,
+        viewport: await this.getViewport(),
+      }
+    } catch {
+      this.cdpRefs = null
+      return await this.snapshotWithPageScript(contents)
+    }
+  }
+
+  private async snapshotWithPageScript(contents: WebContents): Promise<BrowserInteractiveSnapshot> {
     return await contents.executeJavaScript(`(() => {
       ${PAGE_DOM_HELPERS}
       codeyQueryAll('[data-codey-ref]').forEach(el => el.removeAttribute('data-codey-ref'))
@@ -741,12 +777,12 @@ export class BrowserController {
   async follow(ref: string): Promise<BrowserActionResult | null> {
     this.assertRef(ref)
     const contents = this.requirePage()
-    const target = await contents.executeJavaScript(`(() => {
-      ${PAGE_DOM_HELPERS}
-      const el = codeyFind('${ref}')
-      if (!el) throw new Error('Element ${ref} is no longer available; take a new snapshot')
+    const target = await this.runOnRef<{ url: string; newTab: boolean } | null>(ref, `
       const anchor = el.closest('a[href]')
       if (codeyTag(anchor) !== 'a' || anchor.hasAttribute('download')) return null
+      // A link inside a frame navigates that frame, not the page; let a real click do it.
+      const view = anchor.ownerDocument.defaultView
+      if (!view || view !== view.top) return null
       let url
       try { url = new URL(anchor.href, location.href) } catch { return null }
       if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
@@ -756,7 +792,7 @@ export class BrowserController {
       const mutation = /(^|[\\/_?&=.-])(logout|log-out|signout|sign-out|delete|remove|unsubscribe|subscribe|purchase|checkout|pay|confirm|like|follow|bookmark|favorite|vote|join|leave|create|update)([\\/_?&=.-]|$)/i
       if (mutation.test(url.pathname + url.search)) return null
       return { url: url.href, newTab: anchor.target === '_blank' }
-    })()`, true) as { url: string; newTab: boolean } | null
+    `)
 
     if (!target?.url || !isSafeBrowserNavigationUrl(target.url)) return null
     if (target.newTab) {
@@ -794,18 +830,20 @@ export class BrowserController {
     const from = this.validatePoint(fromX, fromY)
     const to = this.validatePoint(toX, toY)
     const count = Math.max(1, Math.min(100, Math.round(steps) || 12))
-    contents.sendInputEvent({ type: 'mouseMove', ...from })
-    contents.sendInputEvent({ type: 'mouseDown', ...from, button: 'left', clickCount: 1 })
-    for (let index = 1; index <= count; index += 1) {
-      const ratio = index / count
-      contents.sendInputEvent({
-        type: 'mouseMove',
-        x: Math.round(from.x + (to.x - from.x) * ratio),
-        y: Math.round(from.y + (to.y - from.y) * ratio),
-        button: 'left',
-      })
-    }
-    contents.sendInputEvent({ type: 'mouseUp', ...to, button: 'left', clickCount: 1 })
+    await this.withPointer(contents, from, async send => {
+      await send({ type: 'mouseMove', ...from })
+      await send({ type: 'mouseDown', ...from, button: 'left', clickCount: 1 })
+      for (let index = 1; index <= count; index += 1) {
+        const ratio = index / count
+        await send({
+          type: 'mouseMove',
+          x: Math.round(from.x + (to.x - from.x) * ratio),
+          y: Math.round(from.y + (to.y - from.y) * ratio),
+          button: 'left',
+        })
+      }
+      await send({ type: 'mouseUp', ...to, button: 'left', clickCount: 1 })
+    })
     this.pointer = { x: to.x, y: to.y }
     return this.actionResult(`Dragged from ${from.x}, ${from.y} to ${to.x}, ${to.y}`)
   }
@@ -823,10 +861,7 @@ export class BrowserController {
     // Keep selection and replacement in one renderer task. Native editing
     // updates rich editors through input events without a foreground window,
     // while per-character key events can lose the selection during a blur.
-    await contents.executeJavaScript(`(() => {
-      ${PAGE_DOM_HELPERS}
-      const el = codeyFind('${ref}')
-      if (!el) throw new Error('Element ${ref} is no longer available; take a new snapshot')
+    await this.runOnRef(ref, `
       if (el.disabled || el.readOnly || el.getAttribute('aria-disabled') === 'true' || el.getAttribute('aria-readonly') === 'true') {
         throw new Error('Element ${ref} is disabled or read-only')
       }
@@ -860,11 +895,8 @@ export class BrowserController {
       if (!doc.execCommand(value ? 'insertText' : 'delete', false, value)) {
         throw new Error('Editor rejected replacement in ${ref}; inspect the field before retrying')
       }
-    })()`, true)
-    const matches = await contents.executeJavaScript(`(() => {
-      ${PAGE_DOM_HELPERS}
-      const el = codeyFind('${ref}')
-      if (!el) return false
+    `)
+    const matches = await this.runOnRef<boolean>(ref, `
       const field = codeyIsInput(el) || codeyIsTextArea(el)
       // Read editor text rather than innerText: CSS can collapse spaces, and
       // Chromium counts the BR caret placeholder on an empty line twice.
@@ -885,7 +917,7 @@ export class BrowserController {
       }
       const actual = field ? el.value : readText(el)
       return actual === ${JSON.stringify(value)}
-    })()`, true)
+    `).catch(() => false)
     if (!matches) throw new Error(`Text replacement could not be verified in ${ref}; take a new snapshot before retrying`)
     return this.actionResult(`Filled ${ref}`)
   }
@@ -893,9 +925,7 @@ export class BrowserController {
   async select(ref: string, value: string): Promise<BrowserActionResult> {
     this.assertRef(ref)
     const contents = this.requirePage()
-    await contents.executeJavaScript(`(() => {
-      ${PAGE_DOM_HELPERS}
-      const el = codeyFind('${ref}')
+    await this.runOnRef(ref, `
       if (!codeyIsSelect(el)) throw new Error('Element ${ref} is not a select field')
       const value = ${JSON.stringify(value)}
       const option = Array.from(el.options).find(item => item.value === value || item.text === value)
@@ -904,21 +934,19 @@ export class BrowserController {
       el.dispatchEvent(new Event('input', { bubbles: true }))
       el.dispatchEvent(new Event('change', { bubbles: true }))
       return true
-    })()`, true)
+    `)
     return this.actionResult(`Selected ${JSON.stringify(value)} in ${ref}`)
   }
 
   async check(ref: string, checked: boolean): Promise<BrowserActionResult> {
     this.assertRef(ref)
     const contents = this.requirePage()
-    const current = await contents.executeJavaScript(`(() => {
-      ${PAGE_DOM_HELPERS}
-      const el = codeyFind('${ref}')
+    const current = await this.runOnRef<boolean>(ref, `
       if (!codeyIsInput(el) || (el.type !== 'checkbox' && el.type !== 'radio')) {
         throw new Error('Element ${ref} is not a checkbox or radio button')
       }
       return el.checked
-    })()`, true) as boolean
+    `)
     if (current !== checked) await this.click(ref)
     return this.actionResult(`${checked ? 'Checked' : 'Unchecked'} ${ref}`)
   }
@@ -927,12 +955,7 @@ export class BrowserController {
     const contents = this.requirePage()
     if (ref) {
       this.assertRef(ref)
-      await contents.executeJavaScript(`(() => {
-        ${PAGE_DOM_HELPERS}
-        const el = codeyFind('${ref}')
-        if (!el) throw new Error('Element ${ref} is no longer available; take a new snapshot')
-        el.focus()
-      })()`, true)
+      await this.runOnRef(ref, 'el.focus()')
     }
     const parts = key.split('+').filter(Boolean)
     const requestedKey = parts.pop()
@@ -943,8 +966,12 @@ export class BrowserController {
       if (part === 'alt' || part === 'option') return 'alt'
       if (part === 'shift') return 'shift'
       throw new Error(`Unsupported key modifier: ${part}`)
-    }) as Array<'meta' | 'control' | 'alt' | 'shift'>
+    }) as KeyModifier[]
     const keyCode = [' ', 'space', 'spacebar'].includes(requestedKey.toLowerCase()) ? 'Space' : requestedKey
+    const cdpKeys = this.attachedTo ? toCdpKeyEvents(keyCode, modifiers) : null
+    if (cdpKeys && await this.sendKeysThroughCdp(contents, cdpKeys)) {
+      return this.actionResult(`Pressed ${key}${ref ? ` on ${ref}` : ''}`)
+    }
     contents.sendInputEvent({ type: 'keyDown', keyCode, modifiers })
     const printable = keyCode === 'Space' ? ' ' : keyCode.length === 1 && modifiers.length === 0 ? keyCode : undefined
     if (printable !== undefined) {
@@ -962,10 +989,8 @@ export class BrowserController {
     const contents = this.requirePage()
     const point = this.validatePoint(x, y)
     if (!Number.isFinite(deltaX) || !Number.isFinite(deltaY)) throw new Error('Scroll deltas must be finite numbers')
-    contents.sendInputEvent({
-      type: 'mouseWheel', ...point,
-      deltaX: Math.round(deltaX), deltaY: Math.round(deltaY),
-      canScroll: true,
+    await this.withPointer(contents, point, async send => {
+      await send({ type: 'mouseWheel', ...point, deltaX: Math.round(deltaX), deltaY: Math.round(deltaY) })
     })
     return this.actionResult(`Scrolled at ${point.x}, ${point.y} by ${Math.round(deltaX)}, ${Math.round(deltaY)}`)
   }
@@ -980,6 +1005,7 @@ export class BrowserController {
     if (!['visible', 'hidden', 'enabled'].includes(state)) throw new Error('Wait state must be visible, hidden, or enabled')
     const timeoutMs = Math.max(100, Math.min(60000, Math.round(request.timeoutMs ?? 10000)))
     const started = Date.now()
+    const poll = async (): Promise<BrowserActionResult> => {
     while (Date.now() - started <= timeoutMs) {
       try {
         const contents = this.requirePage()
@@ -987,24 +1013,23 @@ export class BrowserController {
         if (kind === 'url' || kind === 'title') {
           const present = (kind === 'url' ? contents.getURL() : contents.getTitle()).includes(value)
           matched = state === 'hidden' ? !present : present
-        } else {
+        } else if (kind === 'text') {
           matched = await contents.executeJavaScript(`(() => {
             ${PAGE_DOM_HELPERS}
-            const kind = ${JSON.stringify(kind)}
-            const value = ${JSON.stringify(value)}
-            const wantedState = ${JSON.stringify(state)}
-            if (kind === 'text') {
-              const present = codeyDeepText().includes(value)
-              return wantedState === 'hidden' ? !present : present
-            }
-            const el = codeyFind(value)
-            const visible = !!el && codeyVisible(el)
-            return wantedState === 'hidden'
-              ? !visible
-              : wantedState === 'enabled'
-                ? visible && !el.disabled && el.getAttribute('aria-disabled') !== 'true'
-                : visible
+            const present = codeyDeepText().includes(${JSON.stringify(value)})
+            return ${JSON.stringify(state)} === 'hidden' ? !present : present
           })()`, true) as boolean
+        } else {
+          // A ref whose node is gone counts as hidden, never as an error.
+          const status = await this.runOnRef<{ visible: boolean; enabled: boolean }>(value, `
+            return { visible: codeyVisible(el), enabled: !el.disabled && el.getAttribute('aria-disabled') !== 'true' }
+          `).catch(error => {
+            if (error instanceof Error && error.message.includes('no longer available')) return { visible: false, enabled: false }
+            throw error
+          })
+          matched = state === 'hidden' ? !status.visible
+            : state === 'enabled' ? status.visible && status.enabled
+            : status.visible
         }
         if (matched) return this.actionResult(`Wait condition matched after ${Date.now() - started}ms`)
       } catch {
@@ -1014,6 +1039,28 @@ export class BrowserController {
       await new Promise<void>(resolve => setTimeout(resolve, 100))
     }
     throw new Error(`Timed out waiting for ${kind}: ${value}`)
+    }
+
+    // Polling an accessibility ref would otherwise attach and detach the
+    // debugger ten times a second; hold one attachment for the whole wait.
+    let held: { contents: WebContents; withFrames: boolean } | null = null
+    if (kind === 'ref' && this.cdpRefs) {
+      try {
+        const contents = this.requirePage()
+        held = { contents, withFrames: this.cdpRefFor(value, contents)?.targetId != null }
+      } catch { /* an unknown ref simply polls as hidden */ }
+    }
+    if (!held) return await poll()
+    let holding = false
+    try {
+      return await CdpPage.run(held.contents, held.withFrames, async () => {
+        holding = true
+        return await poll()
+      })
+    } catch (error) {
+      if (holding) throw error
+      return await poll()
+    }
   }
 
   async upload(ref: string, filePaths: string[]): Promise<BrowserActionResult> {
@@ -1027,18 +1074,21 @@ export class BrowserController {
       return filePath
     })
 
-    const attachedHere = !contents.debugger.isAttached()
-    if (attachedHere) contents.debugger.attach('1.3')
-    try {
-      // DOM.querySelector stops at shadow and frame boundaries, so search the
-      // pierced tree for the ref the snapshot stamped.
-      const document = await contents.debugger.sendCommand('DOM.getDocument', { depth: -1, pierce: true }) as { root: CdpDomNode }
+    const cdpRef = this.cdpRefFor(ref, contents)
+    if (cdpRef) {
+      await CdpPage.run(contents, cdpRef.targetId !== null, page =>
+        page.send('DOM.setFileInputFiles', { backendNodeId: cdpRef.backendNodeId, files }, cdpRef.targetId))
+      return this.actionResult(`Attached ${files.length} file${files.length === 1 ? '' : 's'} to ${ref}`)
+    }
+
+    // Page-script refs are stamped attributes. DOM.querySelector stops at
+    // shadow and frame boundaries, so search the pierced tree instead.
+    await CdpPage.run(contents, false, async page => {
+      const document = await page.send<{ root: CdpDomNode }>('DOM.getDocument', { depth: -1, pierce: true })
       const nodeId = findCdpNodeByRef(document.root, ref)
       if (!nodeId) throw new Error(`Element ${ref} is no longer available; take a new snapshot`)
-      await contents.debugger.sendCommand('DOM.setFileInputFiles', { nodeId, files })
-    } finally {
-      if (attachedHere && contents.debugger.isAttached()) contents.debugger.detach()
-    }
+      await page.send('DOM.setFileInputFiles', { nodeId, files })
+    })
     return this.actionResult(`Attached ${files.length} file${files.length === 1 ? '' : 's'} to ${ref}`)
   }
 
@@ -1066,16 +1116,13 @@ export class BrowserController {
   async submit(ref: string): Promise<BrowserActionResult> {
     this.assertRef(ref)
     const contents = this.requirePage()
-    await contents.executeJavaScript(`(() => {
-      ${PAGE_DOM_HELPERS}
-      const el = codeyFind('${ref}')
-      if (!el) throw new Error('Element ${ref} is no longer available; take a new snapshot')
+    await this.runOnRef(ref, `
       const form = codeyIsForm(el) ? el : el.form || el.closest('form')
       if (!codeyIsForm(form)) throw new Error('No form found for ${ref}')
       const submitter = codeyIsButton(el) || (codeyIsInput(el) && ['submit', 'image'].includes(el.type)) ? el : undefined
       form.requestSubmit(submitter)
       return true
-    })()`, true)
+    `)
     return this.actionResult(`Submitted form for ${ref}`)
   }
 
@@ -1678,15 +1725,71 @@ export class BrowserController {
   private async elementPoint(ref: string): Promise<{ x: number; y: number }> {
     this.assertRef(ref)
     const contents = this.requirePage()
+    const prepare = `
+      if (el.disabled || el.getAttribute('aria-disabled') === 'true') throw new Error('Element ${ref} is disabled')
+      el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' })
+    `
+    const cdpRef = this.cdpRefFor(ref, contents)
+    if (!cdpRef) {
+      const point = await this.runOnRef<{ x: number; y: number }>(ref, `
+        ${prepare}
+        const rect = codeyRect(el)
+        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+      `)
+      return { x: Math.round(point.x), y: Math.round(point.y) }
+    }
+    // A function called on the node runs in the node's own frame, where the
+    // enclosing iframes cannot be seen. Chromium's quads are measured against
+    // the page, so the geometry comes from there.
+    return await CdpPage.run(contents, cdpRef.targetId !== null, async page => {
+      const objectId = await page.resolve(cdpRef, ref)
+      await page.callOn(objectId, refFunction(prepare), cdpRef.targetId)
+      const viewport = await this.getViewport()
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        const point = await page.centerOf(cdpRef, ref)
+        const onScreen = viewport.width <= 0 || viewport.height <= 0
+          || (point.x >= 0 && point.y >= 0 && point.x < viewport.width && point.y < viewport.height)
+        if (onScreen) return { x: Math.round(point.x), y: Math.round(point.y) }
+        // A scroll inside a cross-site frame reaches the embedding page a
+        // moment later; measure again once it has.
+        await this.sleep(50)
+      }
+      throw new Error(`Element ${ref} could not be scrolled into view`)
+    })
+  }
+
+  /** The CDP location of a ref from the current accessibility snapshot, if any. */
+  private cdpRefFor(ref: string, contents: WebContents): CdpRef | null {
+    if (!this.cdpRefs) return null
+    // A CDP snapshot owns the ref namespace: never fall back to a stale
+    // page-script stamp that happens to share the name.
+    const found = this.cdpRefs.contents === contents ? this.cdpRefs.refs.get(ref) : undefined
+    if (!found) throw new Error(`Element ${ref} is no longer available; take a new snapshot`)
+    return found
+  }
+
+  /**
+   * Run `body` with `el` bound to the ref's element and return its result.
+   * Accessibility-snapshot refs resolve through CDP, which reaches closed
+   * shadow roots and cross-site frames; page-script refs use the stamped
+   * attribute.
+   */
+  private async runOnRef<T = unknown>(ref: string, body: string): Promise<T> {
+    this.assertRef(ref)
+    const contents = this.requirePage()
+    const cdpRef = this.cdpRefFor(ref, contents)
+    if (cdpRef) {
+      return await CdpPage.run(contents, cdpRef.targetId !== null, async page => {
+        const objectId = await page.resolve(cdpRef, ref)
+        return await page.callOn<T>(objectId, refFunction(body), cdpRef.targetId)
+      })
+    }
     return await contents.executeJavaScript(`(() => {
       ${PAGE_DOM_HELPERS}
       const el = codeyFind('${ref}')
       if (!el) throw new Error('Element ${ref} is no longer available; take a new snapshot')
-      if (el.disabled || el.getAttribute('aria-disabled') === 'true') throw new Error('Element ${ref} is disabled')
-      el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' })
-      const rect = codeyRect(el)
-      return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) }
-    })()`, true) as { x: number; y: number }
+      ${body}
+    })()`, true) as T
   }
 
   /**
@@ -1700,10 +1803,12 @@ export class BrowserController {
       x: Math.max(0, target.x - 40 - Math.round(this.random() * 40)),
       y: Math.max(0, target.y - 30 - Math.round(this.random() * 30)),
     }
-    for (const point of this.buildPointerPath(from, target)) {
-      contents.sendInputEvent({ type: 'mouseMove', x: point.x, y: point.y })
-      await this.sleep(this.humanDelay(6, 10))
-    }
+    await this.withPointer(contents, from, async send => {
+      for (const point of this.buildPointerPath(from, target)) {
+        await send({ type: 'mouseMove', x: point.x, y: point.y })
+        await this.sleep(this.humanDelay(6, 10))
+      }
+    })
     this.pointer = { x: target.x, y: target.y }
   }
 
@@ -1716,11 +1821,77 @@ export class BrowserController {
     await this.humanMove(contents, target)
     await this.sleep(this.humanDelay(40, 90))
     const count = Math.max(1, Math.min(3, Math.round(clickCount) || 1))
-    for (let index = 1; index <= count; index += 1) {
-      contents.sendInputEvent({ type: 'mouseDown', x: target.x, y: target.y, button: 'left', clickCount: index })
-      await this.sleep(this.humanDelay(55, 70))
-      contents.sendInputEvent({ type: 'mouseUp', x: target.x, y: target.y, button: 'left', clickCount: index })
-      if (index < count) await this.sleep(this.humanDelay(70, 90))
+    await this.withPointer(contents, target, async send => {
+      for (let index = 1; index <= count; index += 1) {
+        await send({ type: 'mouseDown', x: target.x, y: target.y, button: 'left', clickCount: index })
+        await this.sleep(this.humanDelay(55, 70))
+        await send({ type: 'mouseUp', x: target.x, y: target.y, button: 'left', clickCount: index })
+        if (index < count) await this.sleep(this.humanDelay(70, 90))
+      }
+    })
+  }
+
+  /**
+   * Send a pointer gesture through CDP so it is hit-tested into cross-site
+   * frames, or through Electron's input path when CDP cannot take it.
+   *
+   * Chromium never acknowledges CDP pointer input for a page that is not on
+   * screen (panel closed, window hidden or minimized), so the command would
+   * wait forever. Electron's path still works there. A harmless pointer move
+   * to `at` is sent first: if it is not acknowledged quickly, the whole
+   * gesture uses the Electron path. Once the gesture itself has started it is
+   * never replayed, so a click cannot land twice.
+   */
+  private async withPointer(
+    contents: WebContents,
+    at: { x: number; y: number },
+    gesture: (send: (event: PointerInput) => Promise<void>) => Promise<void>,
+  ): Promise<void> {
+    const electronSend = async (event: PointerInput): Promise<void> => {
+      contents.sendInputEvent(event.type === 'mouseWheel' ? { ...event, canScroll: true } : event)
+    }
+    if (!this.attachedTo) return await gesture(electronSend)
+    let started = false
+    try {
+      await CdpPage.run(contents, false, async page => {
+        await settleWithin(
+          page.send('Input.dispatchMouseEvent', toCdpMouseEvent({ type: 'mouseMove', x: at.x, y: at.y })),
+          INPUT_PROBE_MS,
+          'The page is not taking pointer input',
+        )
+        started = true
+        await gesture(async event => {
+          await settleWithin(
+            page.send('Input.dispatchMouseEvent', toCdpMouseEvent(event)),
+            INPUT_ACK_MS,
+            'The page stopped responding to input; check that the Browser panel is open',
+          )
+        })
+      })
+    } catch (error) {
+      if (started) throw error
+      await gesture(electronSend)
+    }
+  }
+
+  /** Send one key press through CDP; false when the debugger is unavailable. */
+  private async sendKeysThroughCdp(contents: WebContents, events: Array<Record<string, unknown>>): Promise<boolean> {
+    let started = false
+    try {
+      await CdpPage.run(contents, false, async page => {
+        started = true
+        for (const event of events) {
+          await settleWithin(
+            page.send('Input.dispatchKeyEvent', event),
+            INPUT_ACK_MS,
+            'The page stopped responding to input; check that the Browser panel is open',
+          )
+        }
+      })
+      return true
+    } catch (error) {
+      if (started) throw error
+      return false
     }
   }
 

@@ -2,7 +2,7 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import { describe, expect, it, vi } from 'vitest'
-import { BROWSER_PARTITION, BrowserController, PAGE_DOM_HELPERS, findCdpNodeByRef, isSafeBrowserNavigationUrl, normalizeBrowserUrl, sanitizeBounds } from './browser-controller'
+import { BROWSER_PARTITION, BrowserController, PAGE_DOM_HELPERS, isSafeBrowserNavigationUrl, normalizeBrowserUrl, sanitizeBounds } from './browser-controller'
 import { BrowserProfileStore } from './browser-profiles'
 
 describe('normalizeBrowserUrl', () => {
@@ -45,21 +45,6 @@ describe('normalizeBrowserUrl', () => {
 })
 
 describe('page DOM helpers', () => {
-  it('finds a ref inside nested frames and shadow roots of a pierced CDP tree', () => {
-    const tree = {
-      nodeId: 1,
-      children: [
-        { nodeId: 2, attributes: ['data-codey-ref', 'e1'] },
-        { nodeId: 3, contentDocument: { nodeId: 4, children: [
-          { nodeId: 5, shadowRoots: [{ nodeId: 6, children: [{ nodeId: 7, attributes: ['data-codey-ref', 'e12'] }] }] },
-        ] } },
-      ],
-    }
-    expect(findCdpNodeByRef(tree, 'e12')).toBe(7)
-    expect(findCdpNodeByRef(tree, 'e1')).toBe(2)
-    expect(findCdpNodeByRef(tree, 'e2')).toBeNull()
-  })
-
   it('walks open shadow roots and same-origin frames in every lookup', async () => {
     expect(PAGE_DOM_HELPERS).toContain('node.shadowRoot')
     expect(PAGE_DOM_HELPERS).toContain('node.contentDocument')
@@ -82,6 +67,8 @@ describe('BrowserController agent controls', () => {
         isAttached: vi.fn(() => debuggerAttached),
         attach: vi.fn(() => { debuggerAttached = true }),
         detach: vi.fn(() => { debuggerAttached = false }),
+        on: vi.fn(),
+        removeListener: vi.fn(),
         sendCommand: vi.fn(async (command: string) => command === 'DOM.getDocument'
           // The file input sits inside a shadow root, which DOM.querySelector cannot reach.
           ? { root: { nodeId: 1, children: [{ nodeId: 3, attributes: ['id', 'host'], shadowRoots: [
@@ -318,10 +305,11 @@ describe('BrowserController agent controls', () => {
       const { controller, contents } = setup(true)
       await expect(controller.upload('e7', [file])).resolves.toMatchObject({ ok: true, message: 'Attached 1 file to e7' })
       expect(contents.debugger.attach).toHaveBeenCalledWith('1.3')
+      // The trailing undefined is the session: the node is in the page itself.
       expect(contents.debugger.sendCommand).toHaveBeenCalledWith('DOM.setFileInputFiles', {
         nodeId: 2,
         files: [file],
-      })
+      }, undefined)
       expect(contents.debugger.detach).toHaveBeenCalled()
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
