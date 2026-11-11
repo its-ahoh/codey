@@ -11,8 +11,25 @@ export const PluginLogo: React.FC<PluginLogoProps> = ({ id, size = 32 }) => {
   if (id === 'chrome-companion') return <ChromeCompanionLogo size={size} />
   if (id === 'browser') return <BrowserLogo size={size} />
   if (id === 'terminal') return <TerminalLogo size={size} />
+  if (id === 'computer') return <ComputerLogo size={size} />
   return <FallbackLogo size={size} />
 }
+
+const ComputerLogo: React.FC<{ size: number }> = ({ size }) => (
+  <svg
+    aria-hidden="true"
+    width={size}
+    height={size}
+    viewBox="0 0 32 32"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    <rect x="1" y="2" width="30" height="28" rx="8" fill="#0F766E" />
+    <rect x="6" y="8" width="20" height="13" rx="2.5" fill="#CCFBF1" />
+    <path d="M12 25h8M16 21v4" stroke="#CCFBF1" strokeWidth="2" strokeLinecap="round" />
+    <path d="m14 11 6.2 2.6-2.6 1 -1 2.6L14 11Z" fill="#0F766E" stroke="#0F766E" strokeWidth=".8" strokeLinejoin="round" />
+  </svg>
+)
 
 const TerminalLogo: React.FC<{ size: number }> = ({ size }) => (
   <svg

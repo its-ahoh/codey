@@ -6,6 +6,7 @@ import { PluginLogo } from './PluginLogos'
 import { matchesToolSearch } from './tools-search'
 import { BrowserProfiles } from './BrowserProfiles'
 import { ChromeCompanionSettings } from './ChromeCompanionSettings'
+import { COMPUTER_PLUGIN, ComputerTab, useComputerControl } from './ComputerTab'
 import type { PluginInfo, PluginInstallResult, PluginUpdateCheck } from '../codey-api'
 
 type Pending = { action: 'install' | 'uninstall'; dir: string; names?: string[] }
@@ -19,7 +20,7 @@ export function showsDetails(openId: string | null, id: string, hasPending: bool
   return hasPending || openId === id
 }
 
-export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '' }) => {
+export const PluginsTab: React.FC<{ searchQuery?: string; onOpenDesktop?: () => void }> = ({ searchQuery = '', onOpenDesktop }) => {
   const [plugins, setPlugins] = useState<PluginInfo[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -34,6 +35,18 @@ export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '
     [plugins, searchQuery],
   )
   const selected = plugins.find(plugin => plugin.id === selectedId) ?? null
+  // Computer is a capability like the others, but it is gated by macOS
+  // permissions and an app list rather than a skill file, so it brings its own
+  // state and detail page.
+  const computer = useComputerControl()
+  const showComputer = matchesToolSearch(searchQuery, COMPUTER_PLUGIN.name, COMPUTER_PLUGIN.tagline)
+  const openComputer = () => setSelectedId(COMPUTER_PLUGIN.id)
+  const toggleComputer = (next: boolean) => {
+    // Nothing to switch on until setup is done; take the user to the checklist.
+    if (next && !computer.ready) { openComputer(); return }
+    setError(null)
+    void computer.setEnabled(next).catch((caught: unknown) => setError(caught instanceof Error ? caught.message : String(caught)))
+  }
 
   const checkForUpdate = useCallback(async (plugin: PluginInfo) => {
     setUpdate(prev => {
@@ -120,6 +133,10 @@ export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '
     }
   }
 
+  if (selectedId === COMPUTER_PLUGIN.id) {
+    return <ComputerTab onBack={() => setSelectedId(null)} onOpenDesktop={onOpenDesktop} />
+  }
+
   if (loading && plugins.length === 0) return <div style={styles.note}>Loading plugins…</div>
 
   if (selected) {
@@ -189,8 +206,28 @@ export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '
             </div>
           )
         })}
+        {showComputer && (
+          <div style={{ ...styles.row, ...(filteredPlugins.length > 0 ? styles.rowBorder : null) }}>
+            <button type="button" aria-label={`Open ${COMPUTER_PLUGIN.name} details`} onClick={openComputer} style={styles.rowOpen}>
+              <span style={styles.rowIcon}><PluginLogo id={COMPUTER_PLUGIN.id} size={34} /></span>
+              <span style={styles.rowCopy}>
+                <span style={styles.rowTitleLine}>
+                  <span style={styles.rowName}>{COMPUTER_PLUGIN.name}</span>
+                  {!computer.state?.enabled && !computer.ready && <span style={styles.setupBadge}>Needs setup</span>}
+                </span>
+                <span style={styles.rowTagline}>{COMPUTER_PLUGIN.tagline}</span>
+              </span>
+            </button>
+            <div style={styles.rowToggle}>
+              <Toggle on={computer.state?.enabled ?? false} onChange={toggleComputer} label={`Enable ${COMPUTER_PLUGIN.name}`} />
+            </div>
+            <button type="button" aria-label={`Open ${COMPUTER_PLUGIN.name} details`} onClick={openComputer} style={styles.rowChevron}>
+              <UIIcon name="chevron" size={15} />
+            </button>
+          </div>
+        )}
       </div>
-      {plugins.length > 0 && filteredPlugins.length === 0 && (
+      {plugins.length > 0 && filteredPlugins.length === 0 && !showComputer && (
         <div style={styles.emptySearch}>No plugins match that name or description.</div>
       )}
     </div>
@@ -386,6 +423,10 @@ const styles: Record<string, React.CSSProperties> = {
   updateBadge: {
     padding: '1px 6px', borderRadius: 999, fontSize: 11, fontWeight: 600,
     background: C.accentDim, color: C.accent,
+  },
+  setupBadge: {
+    padding: '1px 6px', borderRadius: 999, fontSize: 11, fontWeight: 600,
+    background: C.warningBg, color: C.warningFg,
   },
   emptySearch: { color: C.fg3, fontSize: 12, textAlign: 'center', padding: '30px 16px' },
 

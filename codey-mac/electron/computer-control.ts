@@ -106,7 +106,7 @@ export class ComputerControl {
   async prepare(agent: string, request: AgentRequest): Promise<ComputerLease | undefined> {
     if (!this.enabled || this.closing || request.browserTools !== true ||
         !request.context?.workingDir || request.allowedTools) return undefined
-    if (!this.deps.ready()) throw new Error('Computer control permissions are unavailable; check Tools > Computer')
+    if (!this.deps.ready()) throw new Error('Computer control permissions are unavailable; check Tools > Plugins > Computer')
     const apps = this.apps.map(app => ({ ...app }))
     const controller = new AbortController()
     const cancel = () => controller.abort()

@@ -44,7 +44,7 @@ user resumes it or chooses Stop.
 
 ## Use
 
-1. Open Tools > Computer and grant Accessibility and Screen Recording to Codey.
+1. Open Tools > Plugins > Computer and grant Accessibility and Screen Recording to Codey.
 2. Select applications with the native picker and enable computer tools.
 3. To preview locally, choose View next to an application, select a window and
    choose Open desktop. Approve the native Codey access dialog, then select
