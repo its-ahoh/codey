@@ -1,12 +1,16 @@
 import type { CuaDriverLike } from '@trycua/cua-driver'
 import type { ComputerApp, ComputerCommand, ComputerReply } from './computer-control'
 
+// `element_token` addresses one control from the latest observation through
+// the accessibility API. It is the route that works on a window the user is not
+// looking at (another Space, hidden, minimized); pixel coordinates need the
+// window on screen and are for surfaces with no accessibility elements.
 const actionFields: Record<string, string[]> = {
-  click: ['x', 'y', 'button', 'count'],
-  type_text: ['text', 'x', 'y'],
-  press_key: ['key'],
-  hotkey: ['keys'],
-  scroll: ['direction', 'amount', 'x', 'y'],
+  click: ['element_token', 'action', 'x', 'y', 'button', 'count'],
+  type_text: ['text', 'element_token', 'x', 'y'],
+  press_key: ['key', 'element_token'],
+  hotkey: ['keys', 'element_token'],
+  scroll: ['direction', 'amount', 'element_token', 'x', 'y'],
   drag: ['from_x', 'from_y', 'to_x', 'to_y'],
   move_cursor: ['x', 'y'],
 }
@@ -66,6 +70,8 @@ export function computerCommands(client: CuaDriverLike, apps: ComputerApp[]) {
         if (key === 'tool') continue
         if (!actionFields[name].includes(key) && key !== 'delivery_mode') throw new Error(`Unsupported action field: ${key}`)
         if (key === 'delivery_mode' && value !== 'background' && value !== 'foreground') throw new Error('Invalid delivery mode')
+        if (key === 'element_token' && (typeof value !== 'string' || !/^s[0-9a-f]{8}:[0-9]+$/.test(value))) throw new Error('Invalid element_token; use one from the latest observe')
+        if (key === 'action' && !['press', 'show_menu', 'pick', 'confirm', 'cancel', 'open'].includes(String(value))) throw new Error('Invalid click action')
         input[key] = value
       }
       input.scope = 'window'

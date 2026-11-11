@@ -49,4 +49,19 @@ describe('Codey window commands', () => {
     expect(listWindows).toHaveBeenLastCalledWith({ pid: 42, onScreenOnly: false })
     await expect(execute({ action: 'human_input', window: '42:10', args: { tool: 'click' } })).rejects.toThrow('Unknown')
   })
+  it('lets an agent act on a control by its accessibility token instead of pixels', async () => {
+    const { execute, callTool } = setup()
+    await execute({ action: 'windows', bundleId: 'org.example.Canvas' })
+    await execute({ action: 'observe', window: '42:10' })
+    await execute({ action: 'act', window: '42:10', args: { tool: 'click', element_token: 's1a2b3c4d:12', action: 'press' } })
+    expect(JSON.parse(callTool.mock.calls[1][1])).toEqual({ pid: 42, window_id: 10, scope: 'window', delivery_mode: 'background', element_token: 's1a2b3c4d:12', action: 'press' })
+    await execute({ action: 'observe', window: '42:10' })
+    await execute({ action: 'act', window: '42:10', args: { tool: 'type_text', element_token: 's1a2b3c4d:7', text: 'hi' } })
+    expect(callTool.mock.calls[3][0]).toBe('type_text')
+    for (const args of [{ tool: 'click', element_token: '../forged' }, { tool: 'click', element_token: 12 }, { tool: 'click', action: 'delete' }, { tool: 'drag', element_token: 's1a2b3c4d:1' }]) {
+      await execute({ action: 'observe', window: '42:10' })
+      await expect(execute({ action: 'act', window: '42:10', args })).rejects.toThrow(/Invalid|Unsupported/)
+    }
+    expect(callTool.mock.calls.filter(call => call[0] !== 'get_window_state')).toHaveLength(2)
+  })
 })

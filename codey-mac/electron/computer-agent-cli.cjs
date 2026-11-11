@@ -5,13 +5,19 @@ const help = `Codey computer tools (all access passes through Codey):
   windows <bundleId>
   observe <windowId>
   act <windowId> '<JSON>'
-Examples of action JSON:
-  {"tool":"click","x":120,"y":80}
-  {"tool":"type_text","text":"Sample note"}
+Examples of action JSON (prefer element_token; it comes from observe, in data.elements[]):
+  {"tool":"click","element_token":"s1a2b3c4d:12"}
+  {"tool":"click","element_token":"s1a2b3c4d:12","action":"show_menu"}
+  {"tool":"type_text","element_token":"s1a2b3c4d:7","text":"Sample note"}
   {"tool":"press_key","key":"Return"}
   {"tool":"hotkey","keys":["cmd","s"]}
-  {"tool":"scroll","x":120,"y":80,"direction":"down","amount":3}
-Observe before input. Coordinates use the returned window screenshot pixels.
+  {"tool":"scroll","element_token":"s1a2b3c4d:3","direction":"down","amount":3}
+  {"tool":"click","x":120,"y":80}
+Observe before every input: each observe replaces the previous element tokens.
+Address controls by element_token. It works when the window is in the background,
+hidden, minimized or on another desktop, and does not move the user's pointer.
+Use x,y only for canvas, video or custom-drawn surfaces that have no element.
+Coordinates are pixels of the returned window screenshot and need the window on screen.
 Read screenshot image paths with your agent's image tool. They expire with the task.
 Input defaults to background. delivery_mode:"foreground" explicitly allows focus changes.
 After input observe again and verify. Do not guess a window ID or click blind.

@@ -23,6 +23,9 @@ an agent's element references. Agent image tools continue to use observations.
 The video is watch-only. Its purpose is the case where the agent works in a
 window on another desktop (Space) while the user stays on their own: window
 discovery includes off-screen windows, and input is delivered in the background.
+Agents address controls by the `element_token` of the latest observation
+(accessibility action path), which is the route that works off-screen; pixel
+coordinates need the window on screen and are for surfaces without elements.
 Clicking the video (or Go to window) activates the approved application, which
 makes macOS switch to the desktop holding it; the user then works in the real
 window. Codey never forwards mouse or keyboard input through the video.
