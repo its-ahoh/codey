@@ -109,7 +109,7 @@ export const ComputerTab: React.FC<{ onOpenDesktop?: () => void; onBack?: () => 
       <div style={styles.heroIcon}><PluginLogo id="computer" size={46} /></div>
       <div style={styles.heroCopy}>
         <div style={styles.heroName}>{COMPUTER_PLUGIN.name}</div>
-        <div style={styles.heroTagline}>Agents can see and operate the Mac apps you allow. Codey asks you the first time a task uses them, and the switch turns off when Codey quits.</div>
+        <div style={styles.heroTagline}>Agents can see and operate the Mac apps you allow. Codey asks you the first time a task uses them.</div>
       </div>
       <div style={styles.heroSwitch}>
         <span style={state?.enabled ? styles.statusOn : styles.statusMuted}>{state?.enabled ? 'On' : 'Off'}</span>
@@ -145,10 +145,10 @@ export const ComputerTab: React.FC<{ onOpenDesktop?: () => void; onBack?: () => 
         <button style={pillButton('ghost')} disabled={busy || apps.length >= 16} onClick={() => void run(async () => {
           const r = await window.codey.computer.pickApp()
           if (!r.ok) throw new Error(r.error)
-          if (r.data && !apps.some(a => a.bundleId === r.data?.bundleId)) await configure(false, [...apps, r.data])
+          if (r.data && !apps.some(a => a.bundleId === r.data?.bundleId)) await configure(!!state?.enabled, [...apps, r.data])
         })}>Add application</button>
       </div>
-      <div style={styles.sectionNote}>Agents can only touch apps on this list. Changing the list turns computer control off. Web pages still go through the Codey Browser.</div>
+      <div style={styles.sectionNote}>Agents can only touch apps on this list. Changing the list stops a computer task that is running. Web pages still go through the Codey Browser.</div>
       {apps.length === 0 && <div style={styles.empty}>No applications yet. Add one to get started.</div>}
       {apps.map((item, index) => <div key={item.bundleId}>
         <div style={{ ...styles.row, ...(index > 0 ? styles.rowBorder : null) }}>
@@ -160,7 +160,7 @@ export const ComputerTab: React.FC<{ onOpenDesktop?: () => void; onBack?: () => 
             title={!state?.enabled ? 'Turn computer control on first' : previewBusy ? 'An agent is using computer control' : `Show ${item.name} windows`}
             onClick={() => listWindows(item.bundleId)}>Show windows</button>
           <button style={styles.iconButton} disabled={busy} aria-label={`Remove ${item.name}`} title={`Remove ${item.name}`}
-            onClick={() => void run(() => configure(false, apps.filter(a => a.bundleId !== item.bundleId)))}><UIIcon name="trash" size={15} /></button>
+            onClick={() => void run(() => { const rest = apps.filter(a => a.bundleId !== item.bundleId); return configure(!!state?.enabled && rest.length > 0, rest) })}><UIIcon name="trash" size={15} /></button>
         </div>
         {windowsFor === item.bundleId && windows.length > 0 && <div style={styles.windowList}>
           {windows.map(w => <button key={w.id} style={{ ...styles.windowRow, ...(selected === w.id ? styles.windowRowActive : null) }}

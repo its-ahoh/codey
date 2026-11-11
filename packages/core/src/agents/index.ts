@@ -24,6 +24,7 @@ export * from './browser-skill';
 export * from './chrome-companion-skill';
 export * from './bundled-skill';
 export * from './terminal-skill';
+export * from './computer-skill';
 export * from './skill-pack';
 export * from './tool-policy';
 

@@ -46,10 +46,11 @@ user resumes it or chooses Stop.
 
 1. Open Tools > Plugins > Computer and grant Accessibility and Screen Recording to Codey.
 2. Select applications with the native picker and enable computer tools.
-3. To preview locally, choose View next to an application, select a window and
-   choose Open desktop. Approve the native Codey access dialog, then select
+3. To preview locally, choose Show windows next to an application and pick a
+   window. Approve the native Codey access dialog, then select
    Start live view in the panel beside the chat.
-4. Agent tasks receive the Codey CLI and a per-run credential. Ordinary coding
+4. Agent tasks receive the Codey CLI and a per-run credential; the bundled
+   `computer` skill teaches agents the CLI. Ordinary coding
    does not start a driver or ask for approval. Listing configured apps is local;
    the first window request starts approval and acquires exclusive computer use.
 5. Codey lists windows for exact approved bundle IDs. The agent observes a
@@ -58,7 +59,12 @@ user resumes it or chooses Stop.
 6. Stop computer control revokes active and queued desktop capabilities. A
    declined desktop request returns an error without cancelling normal coding.
 
-App selections persist, but enablement resets off at launch. Changing selection
+App selections persist. The switch is the bundled `computer` skill file
+(`~/.codey/skills/computer`), like the Terminal plugin, so it is remembered
+across launches and can also be flipped from the Skills tab. Computer control
+is on only while that file is enabled and setup is complete (driver, both
+permissions, at least one application); a switch left on with incomplete
+setup comes back by itself once setup is fixed. Changing selection
 stops existing sessions. A wider selection needs another task and approval.
 Agents take over a local preview by closing it and requesting their own grant.
 While an agent owns the desktop, the panel follows its selected window. A user

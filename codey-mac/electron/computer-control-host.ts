@@ -67,7 +67,15 @@ function createDriver(onExit: () => void): ComputerDriver {
   }
 }
 
-export function createComputerControlHost(changed: (state: ComputerControlState) => void, trustedRenderer: () => Electron.WebContents | undefined) {
+/** The Computer plugin's skill file: where the on/off switch is remembered,
+ *  and what teaches agents the CLI. */
+export interface ComputerSkillSwitch {
+  isActive(): boolean
+  setEnabled(enabled: boolean): Promise<unknown>
+}
+
+export function createComputerControlHost(changed: (state: ComputerControlState) => void,
+  trustedRenderer: () => Electron.WebContents | undefined, skill: ComputerSkillSwitch) {
   const file = join(app.getPath('userData'), 'computer-control.json')
   const state = (): ComputerControlState => ({
     enabled: control.enabled, apps: control.apps, available: process.platform === 'darwin' && existsSync(binaryPath()),
@@ -99,8 +107,20 @@ export function createComputerControlHost(changed: (state: ComputerControlState)
     inspect: bridge.inspectDesktop,
     sources: () => desktopCapturer.getSources({ types: ['window'], thumbnailSize: { width: 0, height: 0 }, fetchWindowIcons: false }),
   })
-  // Remember the app selection, but never enable desktop tools across restarts.
   try { control.apps = validateComputerApps(JSON.parse(readFileSync(file, 'utf8')).apps) } catch { /* first run */ }
+  // The skill file is the remembered switch, and the Skills tab can flip it
+  // too. Follow it: off when the file is off, on when the file is on and setup
+  // (permissions, driver, an app list) is complete. A switch left on with
+  // incomplete setup stays off until setup is fixed, then comes back by itself.
+  let reconciling: Promise<void> = Promise.resolve()
+  const reconcile = () => reconciling = reconciling.then(async () => {
+    let wanted = false
+    try { wanted = skill.isActive() } catch { /* unreadable home: off */ }
+    if (wanted === control.enabled) return
+    if (!wanted) { await bridge.stop(); await control.configure(false, control.apps) }
+    else if (control.apps.length > 0) await control.configure(true, control.apps)
+  }).catch(() => { /* setup incomplete or shutting down: stay off */ })
+  void reconcile()
   const wrap = (fn: (...args: any[]) => unknown) => async (event: Electron.IpcMainInvokeEvent, ...args: any[]) => {
     // Only Codey's local renderer may grant desktop access.
     if (event.sender !== trustedRenderer() || event.senderFrame !== event.sender.mainFrame) return { ok: false, error: 'Untrusted computer control request' }
@@ -111,12 +131,18 @@ export function createComputerControlHost(changed: (state: ComputerControlState)
     try { return { ok: true, data: await fn(...args) } }
     catch (error) { return { ok: false, error: error instanceof Error ? error.message : String(error) } }
   }
-  ipcMain.handle('computer:status', wrap(state))
+  ipcMain.handle('computer:status', wrap(async () => { await reconcile(); return state() }))
   ipcMain.handle('computer:configure', wrap(async (enabled: boolean, apps: unknown) => {
     if (typeof enabled !== 'boolean') throw new Error('Invalid computer control setting')
+    await reconciling
     await bridge.stop()
     await control.configure(enabled, apps)
     writeFileSync(file, JSON.stringify({ apps: control.apps }), { mode: 0o600 })
+    try { await skill.setEnabled(enabled) } catch (error) {
+      // Never run with a switch that was not remembered.
+      await control.configure(false, control.apps)
+      throw error
+    }
     return state()
   }))
   ipcMain.handle('computer:permissions', wrap(async () => {
@@ -189,7 +215,8 @@ export function createComputerControlHost(changed: (state: ComputerControlState)
     })().catch(() => {}).finally(() => { checking = false })
   }, 2000)
   monitor.unref()
-  return { control, state, prepare: bridge.prepare,
+  const prepare: typeof bridge.prepare = async (agent, request) => { await reconcile(); return bridge.prepare(agent, request) }
+  return { control, state, prepare, reconcile,
     attachRenderer(contents: Electron.WebContents) {
       contents.session.setDisplayMediaRequestHandler((request, callback) => {
         void capture.handle(request, callback)
