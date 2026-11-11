@@ -2920,7 +2920,7 @@ export class Codey {
 
     switch (command) {
       case 'start':
-        await this.cmdStart(chatId, channel);
+        await this.cmdStart(chatId, channel, message.userId);
         break;
       case 'help':
         await this.cmdHelp(chatId, channel);
@@ -3056,35 +3056,29 @@ export class Codey {
     }
   }
 
-  private async cmdStart(chatId: string, channel: ChannelType): Promise<void> {
-    const agents = this.getEnabledAgents().join(', ');
-    const workspace = this.workspaceManager.getCurrentWorkspace();
+  private async cmdStart(chatId: string, channel: ChannelType, userId: string): Promise<void> {
+    // Already on a Codey chat → show which one and its last exchange, so the
+    // user knows where their next message lands. Local text only, no LLM call.
+    const linkedId = this.resolveChatId(channel, userId);
+    const chat = linkedId ? this.chatManager.get(linkedId) : undefined;
+    let context: string;
+    if (chat) {
+      const agent = (chat.agent ?? this.getDefaultAgent()) as CodingAgent;
+      context = summarizePriorHistory(chat, {
+        defaultAgent: agent,
+        defaultModel: this.getDefaultModelConfig(agent)?.model ?? this.getEffectiveModel(agent),
+      });
+    } else {
+      context = `${this.getDefaultAgent()} · ${this.getEffectiveModel()} · ${this.workspaceManager.getCurrentWorkspace()}`;
+    }
     await this.sendResponse({
       chatId,
       channel,
       text: [
-        `Welcome to Codey!`,
+        `👋 Codey is connected.`,
+        context,
         ``,
-        `Codey routes your prompts to coding agents that can read, write, and refactor code in your projects.`,
-        ``,
-        `**Current Config**`,
-        `Agent: ${this.getDefaultAgent()}`,
-        `Model: ${this.getEffectiveModel()}`,
-        `Agents: ${agents}`,
-        `Workspace: ${workspace}`,
-        `Working dir: ${this.workingDir}`,
-        ``,
-        `**What I can do**`,
-        `- Send any message to get coding help from the active agent`,
-        `- /bot <name> <task> — run a specific bot`,
-        `- /teams — list teams for this workspace`,
-        `- /team <name> [--all] <task> — run a named team. With dispatch:auto the Advisor iteratively picks bots and may loop back for revisions; --all bypasses the Advisor and runs every member in declared order.`,
-        `- /parallel <prompt> — run all agents in parallel`,
-        `- /agent <name> — switch agent (${agents})`,
-        `- /workspace <name> — switch workspace`,
-        `- /model <name> — change model`,
-        `- /status — view gateway status`,
-        `- /help — full command list`,
+        `Just send a message to start. /help for commands.`,
       ].join('\n'),
     });
   }
