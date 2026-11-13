@@ -107,6 +107,7 @@ export class ChatManager {
       ...(message.bot ? { bot: message.bot } : {}),
       // Kept as a line so line N stays messages[N-1]; slices skip it.
       ...(message.failed ? { failed: true } : {}),
+      ...(message.authRequired ? { authRequired: message.authRequired } : {}),
       content: message.content,
     });
   }

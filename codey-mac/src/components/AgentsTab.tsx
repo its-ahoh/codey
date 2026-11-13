@@ -16,6 +16,7 @@ import {
 import { publishInstalledAgents, refreshInstalledAgents, useInstalledAgents } from './installedAgents'
 import { AgentUpdateFailureModal } from './AgentUpdateFailureModal'
 import { publishAgentUpdates, refreshAgentUpdates, useAgentUpdates, type Availability } from './agentUpdates'
+import { cardView, clearSignIn, refreshAuthStatus, startSignIn, useAgentSignIn, useAuthStatus } from './agentSignIn'
 import { UIIcon } from './UIIcons'
 import {
   AGENT_TEAMS_AGENT,
@@ -45,6 +46,7 @@ export const AgentsTab: React.FC<Props> = ({ isGatewayRunning }) => {
   // Shared with the Settings sidebar, which shows the dot; whichever mounts
   // first pays for the lookup and both read the same answer.
   const { updates } = useAgentUpdates(isGatewayRunning)
+  const authStatus = useAuthStatus(isGatewayRunning)
 
   // The updater runs in the user's login shell and can take minutes. Success
   // needs no words — the version on the row changes and the button goes away.
@@ -194,7 +196,7 @@ export const AgentsTab: React.FC<Props> = ({ isGatewayRunning }) => {
             </span>
           </button>
           <button
-            onClick={() => { void refreshInstalledAgents(true); void refreshAgentUpdates(true) }}
+            onClick={() => { void refreshInstalledAgents(true); void refreshAgentUpdates(true); void refreshAuthStatus() }}
             style={iconButtonStyle({ disabled: checkingInstalls })}
             disabled={checkingInstalls}
             aria-label="Recheck agents"
@@ -230,6 +232,7 @@ export const AgentsTab: React.FC<Props> = ({ isGatewayRunning }) => {
                     )}
                   </div>
                 )}
+                {status?.installed && <AgentAuthLine agent={a} status={authStatus?.[a]} />}
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
                 {status?.installed && offersUpdate(a) && (
@@ -302,6 +305,33 @@ export const AgentsTab: React.FC<Props> = ({ isGatewayRunning }) => {
           </div>
         )
       })}
+    </div>
+  )
+}
+
+const AUTH_TEXT = { 'signed-in': 'Signed in', 'signed-out': 'Signed out', 'api-key': 'Using API key' } as const
+
+/** Sign-in state for one agent, with a button when it is signed out. Agents
+ *  with no login of their own, or a state we could not read, show nothing. */
+const AgentAuthLine: React.FC<{ agent: string; status?: 'signed-in' | 'signed-out' | 'api-key' | 'unknown' }> = ({ agent, status }) => {
+  const view = cardView(useAgentSignIn(agent))
+  // The row must show the new state without a manual Recheck.
+  useEffect(() => { if (view === 'succeeded' || view === 'failed') void refreshAuthStatus() }, [view])
+  if (!status || status === 'unknown') return null
+  return (
+    <div style={{ ...rowHintStyle, display: 'flex', alignItems: 'center', gap: 8 }}>
+      <span style={status === 'signed-out' ? { color: C.warningFg } : undefined}>
+        {view === 'running' ? 'Waiting for sign-in in your browser...' : AUTH_TEXT[status]}
+      </span>
+      {status === 'signed-out' && view !== 'running' && (
+        <button
+          aria-label={`Sign in to ${agent}`}
+          onClick={() => { clearSignIn(agent); startSignIn(agent) }}
+          style={{ border: 'none', background: 'transparent', padding: 0, color: C.accent, cursor: 'pointer', font: 'inherit' }}
+        >
+          {view === 'failed' ? 'Try again' : 'Sign in'}
+        </button>
+      )}
     </div>
   )
 }

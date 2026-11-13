@@ -16,6 +16,8 @@ import { validateAutomationChatPatch, validateAutomationDraft, validateAutomatio
 import { applyEvent, clearAttention, summarize } from './tray-state'
 import { AGENT_BINARIES, createInstalledAgentsCache, detectInstalledAgents } from './agent-detect'
 import { runAgentUpdate, updatePlanFor } from './agent-update'
+import { AgentLoginRunner, loginCommandFor, readAuthStatus, type AuthStatus } from './agent-login'
+import { AGENT_AUTH } from '@codey/core'
 import { availability, createLatestVersionsCache, fetchAllLatestVersions } from './agent-latest'
 import { SKILL_FILE, markCodeyBundledSkills, markSkillManagedBy, removeLegacyManagedSkills, resolveUserPath, samePath, scanClaudePluginSkills, scanSkillsDir, setSkillEnabled, uniqueSkills } from './skills'
 import { isKnownPlugin, listPlugins } from './plugins'
@@ -843,6 +845,37 @@ async function agentUpdateStatus(force = false) {
   }
   return { status: probed.status, conclusive: probed.conclusive, updates }
 }
+
+/** Process env plus the agent's own env settings, as the gateway applies them. */
+function agentAuthEnv(agent: string): NodeJS.ProcessEnv {
+  const extra = (coreConfigManager?.get()?.agents as Record<string, { env?: Record<string, string> }> | undefined)?.[agent]?.env
+  return { ...process.env, ...(extra ?? {}) }
+}
+
+/** True when the agent's default model is bound to an API key. */
+function agentDefaultModelHasApiKey(agent: string): boolean {
+  const entry = coreConfigManager?.getFallback()?.order?.find(e => e.agent === agent)
+  const model = entry?.model ? coreConfigManager?.getModel(entry.model) : undefined
+  return !!model?.apiKeyRef
+}
+
+async function agentAuthStatus(agent: string): Promise<AuthStatus> {
+  return readAuthStatus(agent, {
+    spawn: (await import('child_process')).spawn,
+    shell: process.env.SHELL || '/bin/zsh',
+    env: agentAuthEnv(agent),
+    modelHasApiKey: agentDefaultModelHasApiKey(agent),
+  })
+}
+
+const agentLogin = new AgentLoginRunner({
+  spawn: (shell, args, options) => pty.spawn(shell, args, options),
+  shell: () => process.env.SHELL || '/bin/zsh',
+  env: agentAuthEnv,
+  cwd: () => app.getPath('home'),
+  checkSignedIn: async agent => (await agentAuthStatus(agent)) === 'signed-in',
+  emit: progress => sendToRenderer('agents:loginProgress', progress),
+})
 
 interface SlashCommand {
   name: string
@@ -4791,6 +4824,38 @@ app.whenReady().then(async () => {
     })
   )
 
+  // Sign-in state for every agent that has a login of its own.
+  ipcMain.handle('agents:authStatus', async () =>
+    wrap(async () => {
+      const agents = Object.keys(AGENT_AUTH)
+      const states = await Promise.all(agents.map(agentAuthStatus))
+      return Object.fromEntries(agents.map((a, i) => [a, states[i]])) as Record<string, AuthStatus>
+    })
+  )
+
+  // Resolves when the login ends; progress arrives on agents:loginProgress.
+  ipcMain.handle('agents:login', async (_e, agent: string) =>
+    wrap(async () => agentLogin.login(agent))
+  )
+
+  ipcMain.handle('agents:loginCancel', async (_e, agent: string) =>
+    wrap(async () => { agentLogin.cancel(agent) })
+  )
+
+  // Hand the login to the user: stop the hidden run and type the same command
+  // into a Terminal panel tab they can see and answer.
+  ipcMain.handle('agents:loginInTerminal', async (_e, input: { agent: string; chatId: string; cwd: string }) =>
+    wrap(async () => {
+      const command = loginCommandFor(input.agent)
+      if (!command) throw new Error(`${input.agent} has no sign-in command.`)
+      agentLogin.cancel(input.agent)
+      const opened = await terminalSessions.open(input.chatId, input.cwd, 100, 30)
+      terminalSessions.write(opened.sessionId, `${command}\n`)
+      sendToRenderer('terminal:agentOpen', { chatId: input.chatId, sessionId: opened.sessionId, cwd: input.cwd })
+      return { sessionId: opened.sessionId }
+    })
+  )
+
   // ── Skills IPC ────────────────────────────────────────────────────
   const skillPaths: Record<string, { userDirs: string[]; projectSubdirs: string[] }> = {
     // Codey's own skills live globally in ~/.codey/skills and, for skills that
@@ -5734,6 +5799,7 @@ app.on('before-quit', event => {
   terminalControlPermission?.dispose()
   void terminalAgentBridge?.stop()
   terminalSessions.closeAll()
+  agentLogin.cancelAll()
   // Detach the browser surface but let Electron own final WebContents teardown.
   // Closing child contents while the native window is already quitting can race
   // Chromium's view destruction and terminate the browser process with SIGTRAP.

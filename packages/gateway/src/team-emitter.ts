@@ -10,6 +10,8 @@ export interface BotRunResult {
   /** Set when a fallback agent produced this output, so per-bot bubbles can
    *  carry the same resolved identity and warning as a single-agent turn. */
   fallback?: AgentResponse['fallback'];
+  /** The bot failed because its agent is signed out. */
+  authRequired?: AgentResponse['authRequired'];
 }
 
 /** Surface-agnostic sink for team continuation output. */

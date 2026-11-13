@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { BotMessageEmitter } from './bot-message-emitter';
 import type { ChatStreamEvent } from './chat-runner';
 
@@ -222,4 +222,19 @@ it('retains a paused parallel Bot buffer while peers stream and after resume', (
   h.em.endBot('done', undefined, 'a');
   expect(h.patched.at(-1)).toMatchObject({ id: 'id-1', patch: { content: 'before after', botStatus: 'done' } });
   expect(h.events).toContainEqual(expect.objectContaining({ type: 'stream', messageId: 'id-2', token: 'peer progress' }));
+});
+
+describe('endBot with a signed-out agent', () => {
+  it('stores authRequired on the message and sends it on bot_end', () => {
+    const events: any[] = [];
+    const store = { appendMessage: vi.fn(), updateMessage: vi.fn() };
+    const emitter = new BotMessageEmitter(e => events.push(e), store, 'chat-1', { teamTurnId: 't1', teamName: 'Team', mode: 'sequential' }, () => 'm1');
+    emitter.beginBot({ step: 1, bot: 'coder', agent: 'claude-code' });
+    emitter.endBot('failed', { failureReason: 'Not logged in', authRequired: { agent: 'claude-code' } });
+
+    const patch = store.updateMessage.mock.calls.at(-1)![2];
+    expect(patch.authRequired).toEqual({ agent: 'claude-code' });
+    const end = events.find(e => e.type === 'bot_end');
+    expect(end.authRequired).toEqual({ agent: 'claude-code' });
+  });
 });

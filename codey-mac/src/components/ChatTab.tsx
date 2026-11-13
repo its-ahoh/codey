@@ -1,5 +1,6 @@
 import { TeamAvatar } from './TeamAvatar'
 import { BotInteractionCard } from './BotInteractionCard'
+import { AgentSignInCard } from './AgentSignInCard'
 import { ChatHeaderActions } from './ChatHeaderActions'
 import { NotificationCenter } from './NotificationCenter'
 import { BotMembers } from './BotMembers'
@@ -1761,6 +1762,11 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
     setFollowLatest(true)
     await sendMessage(chat.id, text, attachments, turnIdentity, { taskId: taskId ?? null })
   }
+  // After a sign-in: run the message that failed again, as a normal retry.
+  const rerunUserMessage = (userMessageId: string) => {
+    const original = chat.messages.find(m => m.id === userMessageId)
+    if (original) void resendMessage(original.content, original.attachments, original.taskId)
+  }
   const copyMessage = async (msg: ChatMessage) => {
     try {
       await navigator.clipboard.writeText(msg.content)
@@ -2158,7 +2164,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                 {!isUser && (isBotMessage ? memberActive && memberState === 'working' : !!flight && msg === lastMsg) && (
                   <LiveActivity toolCalls={msg.toolCalls} />
                 )}
-                {(msg.content || (!isUser && msg.userQuestion?.question)) && (() => {
+                {!msg.authRequired && (msg.content || (!isUser && msg.userQuestion?.question)) && (() => {
                   if (isUser) {
                     if (isEditing) return (
                       <div style={styles.msgEditBox}>
@@ -2248,6 +2254,17 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                 )}
               </div>
               {msg.botInteraction && <BotInteractionCard chatId={chat.id} message={msg} />}
+              {/* Signed out: the card stands in for the raw error, which stays one click away. */}
+              {msg.authRequired && (
+                <AgentSignInCard
+                  chatId={chat.id}
+                  cwd={workingDir}
+                  message={msg}
+                  messages={chat.messages}
+                  busy={!canResend}
+                  onRerun={rerunUserMessage}
+                />
+              )}
               {msg.role === 'assistant'
                 && isLatestChatMessage(msg, chat.messages)
                 && chat.messages[chat.messages.length - 1]?.role !== 'user'
