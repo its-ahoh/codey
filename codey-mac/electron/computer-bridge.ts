@@ -75,7 +75,7 @@ export function createComputerBridge(control: ComputerControl, cli: string, runt
       artifactPrefix: randomBytes(16).toString('hex'),
       async execute(command, wanted = () => true) {
         if (disposed || closed || stopping || !control.enabled) throw new Error('Computer access has ended')
-        if (command.action === 'apps') return { data: control.apps }
+        if (command.action === 'apps') return { data: await control.allowedApps() }
         if (!local) agentRequests++
         try {
           if (!local && viewer) {
