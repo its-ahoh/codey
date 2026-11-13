@@ -29,6 +29,8 @@ export interface EndBotMeta {
   /** Fallback metadata when a fallback agent answered this bot's turn. The
    *  resolved agent/model are derived from `to` and persisted alongside it. */
   fallback?: ChatMessage['fallback'];
+  /** This bot failed because its agent is signed out. */
+  authRequired?: ChatMessage['authRequired'];
 }
 
 /**
@@ -157,9 +159,10 @@ export class BotMessageEmitter {
       ...(extra?.tokens != null ? { tokens: extra.tokens } : {}),
       ...(extra?.durationSec != null ? { durationSec: extra.durationSec } : {}),
       ...(extra?.failureReason ? { botFailureReason: extra.failureReason } : {}),
+      ...(extra?.authRequired ? { authRequired: extra.authRequired } : {}),
       ...(extra?.nextUserAction ? { botNextUserAction: extra.nextUserAction } : {}),
     });
-    this.sink({ type: 'bot_end', chatId: this.chatId, messageId: buf.messageId, step: buf.step, status, ...(rewritten ? { content: buf.content } : {}), tokens: extra?.tokens, durationSec: extra?.durationSec, failureReason: extra?.failureReason, nextUserAction: extra?.nextUserAction, agent: identity.agent, model: identity.model, fallback: extra?.fallback });
+    this.sink({ type: 'bot_end', chatId: this.chatId, messageId: buf.messageId, step: buf.step, status, ...(rewritten ? { content: buf.content } : {}), tokens: extra?.tokens, durationSec: extra?.durationSec, failureReason: extra?.failureReason, nextUserAction: extra?.nextUserAction, agent: identity.agent, model: identity.model, fallback: extra?.fallback, authRequired: extra?.authRequired });
     if (buf === this.active) this.active = null;
     if (bot) this.byBot.delete(bot);
   }

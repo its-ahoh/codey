@@ -216,6 +216,15 @@ contextBridge.exposeInMainWorld('codey', {
     checkInstalled: (force?: boolean) => ipcRenderer.invoke('agents:checkInstalled', force),
     updateStatus: (force?: boolean) => ipcRenderer.invoke('agents:updateStatus', force),
     update: (agent: string) => ipcRenderer.invoke('agents:update', agent),
+    authStatus: () => ipcRenderer.invoke('agents:authStatus'),
+    login: (agent: string) => ipcRenderer.invoke('agents:login', agent),
+    loginCancel: (agent: string) => ipcRenderer.invoke('agents:loginCancel', agent),
+    loginInTerminal: (input: { agent: string; chatId: string; cwd: string }) => ipcRenderer.invoke('agents:loginInTerminal', input),
+    onLoginProgress: (cb: (progress: { agent: string; phase: string; command: string; url?: string; output?: string }) => void) => {
+      const listener = (_e: unknown, progress: any) => cb(progress)
+      ipcRenderer.on('agents:loginProgress', listener)
+      return () => ipcRenderer.removeListener('agents:loginProgress', listener)
+    },
     slashCommands: (agent: string) => ipcRenderer.invoke('agents:slashCommands', agent),
   },
   chats: {

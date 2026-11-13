@@ -19,6 +19,9 @@ export { PiAdapter } from './pi';
 export { CursorAdapter } from './cursor';
 export { GrokAdapter } from './grok';
 export { applyModelEnv, unwiredAllProtocols } from './env';
+export { AGENT_AUTH, authRequiredHint, buildAuthEnv, checkAgentAuth } from './agent-auth';
+export type { AgentAuthSpec, AgentAuthState } from './agent-auth';
+import { checkAgentAuth, type AgentAuthState } from './agent-auth';
 export * from './codey-skills';
 export * from './browser-skill';
 export * from './chrome-companion-skill';
@@ -205,6 +208,19 @@ export class AgentFactory {
     for (const adapter of this.agents.values()) {
       adapter.dispose?.();
     }
+  }
+
+  /**
+   * After a failed run: is the agent signed out? Applies the same per-agent
+   * env `run` applies, so the status command sees what the CLI saw.
+   */
+  async checkAuth(agent: CodingAgent, request: AgentRequest, response: AgentResponse): Promise<AgentAuthState> {
+    if (isCliDefaultModelConfig(request.model)) request = { ...request, model: undefined };
+    if (this.envProvider && !request.extraEnv) {
+      const fromCfg = this.envProvider(agent);
+      if (fromCfg && Object.keys(fromCfg).length > 0) request = { ...request, extraEnv: fromCfg };
+    }
+    return checkAgentAuth(agent, request, response);
   }
 
   async run(agent: CodingAgent, request: AgentRequest): Promise<AgentResponse> {
