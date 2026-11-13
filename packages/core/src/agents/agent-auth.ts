@@ -101,7 +101,7 @@ export type AgentAuthState = 'signed-out' | 'ok' | 'unknown';
 export async function checkAgentAuth(
   agent: CodingAgent,
   request: Pick<AgentRequest, 'model' | 'extraEnv' | 'context'>,
-  response: Pick<AgentResponse, 'error' | 'output'>,
+  response: Pick<AgentResponse, 'error'>,
   deps: { runStatus?: RunStatus; baseEnv?: NodeJS.ProcessEnv } = {},
 ): Promise<AgentAuthState> {
   const spec = AGENT_AUTH[agent];
@@ -120,7 +120,9 @@ export async function checkAgentAuth(
     signedIn = null;
   }
   if (signedIn === false) return 'signed-out';
-  if (spec.authErrorPattern.test(`${response.error ?? ''}\n${response.output ?? ''}`)) return 'signed-out';
+  // Only the CLI's failure text, never `output`: that is the agent's own prose,
+  // and a turn about a login bug in the user's code can say "not logged in".
+  if (spec.authErrorPattern.test(response.error ?? '')) return 'signed-out';
   return signedIn === true ? 'ok' : 'unknown';
 }
 

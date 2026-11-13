@@ -14,24 +14,32 @@ export type LoginProgress = {
   command: string
   url?: string
   output?: string
+  /** When the login ended (succeeded/failed), stamped by the reducer. */
+  endedAt?: number
 }
 
 export type SignInState = Record<string, LoginProgress>
 
-export function signInReducer(state: SignInState, progress: LoginProgress): SignInState {
+export function signInReducer(state: SignInState, progress: LoginProgress, now: number = Date.now()): SignInState {
   if (progress.phase === 'cancelled') {
     const { [progress.agent]: _gone, ...rest } = state
     return rest
   }
   // The page link arrives once; later events for the same run must not drop it.
   const url = progress.url ?? (progress.phase === 'waiting' ? state[progress.agent]?.url : undefined)
-  return { ...state, [progress.agent]: { ...progress, ...(url ? { url } : {}) } }
+  const ended = progress.phase === 'succeeded' || progress.phase === 'failed'
+  return { ...state, [progress.agent]: { ...progress, ...(url ? { url } : {}), ...(ended ? { endedAt: now } : {}) } }
 }
 
 export type CardView = 'idle' | 'running' | 'succeeded' | 'failed'
 
-export function cardView(progress: LoginProgress | undefined): CardView {
+/**
+ * `since`: a result that ended before this time belongs to an earlier failure.
+ * A card for a newer failure starts at idle instead of claiming "Signed in".
+ */
+export function cardView(progress: LoginProgress | undefined, since?: number): CardView {
   if (!progress) return 'idle'
+  if (since !== undefined && progress.endedAt !== undefined && progress.endedAt < since) return 'idle'
   if (progress.phase === 'starting' || progress.phase === 'waiting') return 'running'
   return progress.phase === 'succeeded' ? 'succeeded' : progress.phase === 'failed' ? 'failed' : 'idle'
 }

@@ -24,6 +24,18 @@ describe('signInReducer', () => {
 })
 
 describe('cardView', () => {
+  it('ignores a result that ended before this failure', () => {
+    const done = signInReducer(idle, { agent: 'codex', phase: 'succeeded', command: 'codex login' }, 1_000).codex
+    expect(done.endedAt).toBe(1_000)
+    expect(cardView(done, 2_000)).toBe('idle')
+    expect(cardView(done, 500)).toBe('succeeded')
+    const failed = signInReducer(idle, { agent: 'codex', phase: 'failed', command: 'codex login' }, 1_000).codex
+    expect(cardView(failed, 2_000)).toBe('idle')
+  })
+  it('still shows a login that is running, whenever it started', () => {
+    const running = signInReducer(idle, { agent: 'codex', phase: 'waiting', command: 'codex login' }, 1_000).codex
+    expect(cardView(running, 2_000)).toBe('running')
+  })
   it('is idle with no login in progress', () => {
     expect(cardView(undefined)).toBe('idle')
   })

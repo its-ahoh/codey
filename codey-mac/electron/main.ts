@@ -859,12 +859,14 @@ function agentDefaultModelHasApiKey(agent: string): boolean {
   return !!model?.apiKeyRef
 }
 
-async function agentAuthStatus(agent: string): Promise<AuthStatus> {
+/** `modelKey: false` asks about the CLI's own login only, ignoring an API
+ *  key on the default model: a chat on another model can still need it. */
+async function agentAuthStatus(agent: string, opts: { modelKey?: boolean } = {}): Promise<AuthStatus> {
   return readAuthStatus(agent, {
     spawn: (await import('child_process')).spawn,
     shell: process.env.SHELL || '/bin/zsh',
     env: agentAuthEnv(agent),
-    modelHasApiKey: agentDefaultModelHasApiKey(agent),
+    modelHasApiKey: opts.modelKey !== false && agentDefaultModelHasApiKey(agent),
   })
 }
 
@@ -873,7 +875,8 @@ const agentLogin = new AgentLoginRunner({
   shell: () => process.env.SHELL || '/bin/zsh',
   env: agentAuthEnv,
   cwd: () => app.getPath('home'),
-  checkSignedIn: async agent => (await agentAuthStatus(agent)) === 'signed-in',
+  // After the login: did it work? A key on the default model is beside the point.
+  checkSignedIn: async agent => (await agentAuthStatus(agent, { modelKey: false })) === 'signed-in',
   emit: progress => sendToRenderer('agents:loginProgress', progress),
 })
 
@@ -4828,7 +4831,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('agents:authStatus', async () =>
     wrap(async () => {
       const agents = Object.keys(AGENT_AUTH)
-      const states = await Promise.all(agents.map(agentAuthStatus))
+      const states = await Promise.all(agents.map(agent => agentAuthStatus(agent)))
       return Object.fromEntries(agents.map((a, i) => [a, states[i]])) as Record<string, AuthStatus>
     })
   )

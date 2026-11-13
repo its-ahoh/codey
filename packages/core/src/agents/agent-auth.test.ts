@@ -74,6 +74,11 @@ describe('checkAgentAuth', () => {
     expect(await checkAgentAuth('claude-code', req('claude-code'), failed('Rate limit reached'), { ...base, runStatus: status(CLAUDE_IN, 0) })).toBe('ok');
   });
 
+  it('does not read the agent\'s own prose as a sign-in failure', async () => {
+    const r = { success: false, output: 'The page shows "not logged in" because the session cookie is missing.', error: 'timeout' };
+    expect(await checkAgentAuth('claude-code', req('claude-code'), r, { ...base, runStatus: status(CLAUDE_IN, 0) })).toBe('ok');
+  });
+
   it('lets the text decide when the status command cannot be run', async () => {
     const broken = vi.fn(async () => { throw new Error('ENOENT'); });
     expect(await checkAgentAuth('codex', req('codex'), failed(CODEX_401), { ...base, runStatus: broken })).toBe('signed-out');

@@ -18,7 +18,7 @@ export const AgentSignInCard: React.FC<{
   const agent = message.authRequired!.agent
   const name = LABEL[agent] ?? agent
   const progress = useAgentSignIn(agent)
-  const view = cardView(progress)
+  const view = cardView(progress, message.timestamp)
   const [showError, setShowError] = useState(false)
   const [manual, setManual] = useState<RetryPlan | null>(null)
   // One re-run per card, even if the store publishes `succeeded` twice.
