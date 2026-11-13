@@ -45,10 +45,10 @@ user resumes it or chooses Stop.
 ## Use
 
 1. Open Tools > Plugins > Computer and grant Accessibility and Screen Recording to Codey.
-2. Select applications with the native picker and enable computer tools.
-3. To preview locally, choose Show windows next to an application and pick a
-   window. Approve the native Codey access dialog, then select
-   Start live view in the panel beside the chat.
+2. Enable computer tools. Every installed application is allowed until the
+   user picks specific ones with the native picker; then only those are.
+3. There is no manual preview in settings. The panel beside the chat appears
+   when an agent observes a window; select Start live view there.
 4. Agent tasks receive the Codey CLI and a per-run credential; the bundled
    `computer` skill teaches agents the CLI. Ordinary coding
    does not start a driver or ask for approval. Listing configured apps is local;
@@ -59,7 +59,14 @@ user resumes it or chooses Stop.
 6. Stop computer control revokes active and queued desktop capabilities. A
    declined desktop request returns an error without cancelling normal coding.
 
-App selections persist. The switch is the bundled `computer` skill file
+There is no scope setting: an empty application list means `all`, a list
+with entries means `selected`. The bounded driver has no wildcard, so `all` is
+expanded when a task asks for access: Codey scans the standard application
+folders (`/Applications` and one vendor folder deep, `/System/Applications`,
+their `Utilities`, `~/Applications`, plus Finder), reads each bundle ID and
+writes an exact manifest. Codey's own bundle ID is never included. The approval
+dialog names the scope instead of listing every app. A list picked earlier
+stays a list. Selections persist. The switch is the bundled `computer` skill file
 (`~/.codey/skills/computer`), like the Terminal plugin, so it is remembered
 across launches and can also be flipped from the Skills tab. Computer control
 is on only while that file is enabled and setup is complete (driver, both

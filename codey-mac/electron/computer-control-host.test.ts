@@ -97,6 +97,25 @@ describe('computer control IPC', () => {
       expect(skill.on).toBe(true)
     } finally { await host.shutdown(); rmSync(mock.directory, { recursive: true, force: true }) }
   })
+  it('allows every application until a list is picked, and remembers the list', async () => {
+    grantSetup()
+    const event = { sender: mock.trusted, senderFrame: mock.trusted.mainFrame }
+    const host = createComputerControlHost(vi.fn(), () => mock.trusted as any, skill)
+    try {
+      expect(host.state()).toMatchObject({ scope: 'all', apps: [] })
+      const configure = mock.handlers.get('computer:configure')!
+      // Nothing to pick: it can be switched on straight away.
+      await expect(configure(event, true, [])).resolves.toMatchObject({ ok: true, data: { enabled: true, scope: 'all' } })
+      const apps = [{ bundleId: 'org.example.Drawing', name: 'Drawing' }]
+      await expect(configure(event, true, apps)).resolves.toMatchObject({ ok: true, data: { enabled: true, scope: 'selected', apps } })
+      await host.shutdown()
+
+      // A picked list stays a list after a restart; it is never widened.
+      const restored = createComputerControlHost(vi.fn(), () => mock.trusted as any, skill)
+      await expect(mock.handlers.get('computer:status')!(event)).resolves.toMatchObject({ ok: true, data: { enabled: true, scope: 'selected', apps } })
+      await restored.shutdown()
+    } finally { await host.shutdown(); rmSync(mock.directory, { recursive: true, force: true }) }
+  })
   it('does not stay on when the switch cannot be remembered', async () => {
     grantSetup()
     const event = { sender: mock.trusted, senderFrame: mock.trusted.mainFrame }

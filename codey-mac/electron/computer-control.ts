@@ -1,8 +1,12 @@
 import type { AgentRequest, AgentRunLease } from '@codey/core'
 
 export interface ComputerApp { bundleId: string; name: string }
+/** `all`: every installed application except Codey. `selected`: only the user's list.
+ *  There is no setting for it: an empty list means all. */
+export type ComputerScope = 'all' | 'selected'
 export interface ComputerControlState {
   enabled: boolean
+  scope: ComputerScope
   apps: ComputerApp[]
   available: boolean
   accessibility: boolean
@@ -18,7 +22,9 @@ export interface ComputerDriver {
 }
 export interface ComputerControlDeps {
   ready(): boolean
-  approve(agent: string, apps: ComputerApp[], signal: AbortSignal, chatId?: string): Promise<boolean>
+  approve(agent: string, apps: ComputerApp[], signal: AbortSignal, chatId?: string, scope?: ComputerScope): Promise<boolean>
+  /** Every installed application; needed for the `all` scope. */
+  installed?(): Promise<ComputerApp[]>
   driver(onExit: () => void): ComputerDriver
   changed(): void
 }
@@ -37,15 +43,37 @@ export interface ComputerLease extends AgentRunLease {
   handoff(human: boolean): Promise<void>
 }
 
-export function validateComputerApps(value: unknown): ComputerApp[] {
-  if (!Array.isArray(value) || value.length > 16) throw new Error('Select up to 16 applications')
+const CODEY_BUNDLE_ID = 'com.codey.mac'
+const bundleIdPattern = /^[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)+$/
+const validName = (name: unknown): name is string =>
+  typeof name === 'string' && !!name.trim() && name.length <= 128 && !/[\x00-\x1f]/.test(name)
+
+/**
+ * Turn whatever is installed into a grant list: unreadable or oddly named
+ * bundles are dropped rather than failing the task, duplicates collapse, and
+ * Codey itself is never included.
+ */
+export function allComputerApps(found: { bundleId: string; name: string }[]): ComputerApp[] {
+  const seen = new Set<string>()
+  const apps: ComputerApp[] = []
+  for (const app of found) {
+    if (typeof app?.bundleId !== 'string' || !bundleIdPattern.test(app.bundleId) || !validName(app.name)) continue
+    const key = app.bundleId.toLowerCase()
+    if (key === CODEY_BUNDLE_ID || seen.has(key)) continue
+    seen.add(key)
+    apps.push({ bundleId: app.bundleId, name: app.name.trim() })
+  }
+  return apps.sort((a, b) => a.name.localeCompare(b.name))
+}
+
+export function validateComputerApps(value: unknown, limit = 16): ComputerApp[] {
+  if (!Array.isArray(value) || value.length > limit) throw new Error(`Select up to ${limit} applications`)
   const seen = new Set<string>()
   return value.map(app => {
-    if (!app || typeof app.bundleId !== 'string' || !/^[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)+$/.test(app.bundleId) ||
-        typeof app.name !== 'string' || !app.name.trim() || app.name.length > 128 || /[\x00-\x1f]/.test(app.name)) {
+    if (!app || typeof app.bundleId !== 'string' || !bundleIdPattern.test(app.bundleId) || !validName(app.name)) {
       throw new Error('Invalid application')
     }
-    if (app.bundleId.toLowerCase() === 'com.codey.mac') throw new Error('Codey cannot control its own authorization interface')
+    if (app.bundleId.toLowerCase() === CODEY_BUNDLE_ID) throw new Error('Codey cannot control its own authorization interface')
     if (seen.has(app.bundleId.toLowerCase())) throw new Error('Duplicate application')
     seen.add(app.bundleId.toLowerCase())
     return { bundleId: app.bundleId, name: app.name.trim() }
@@ -53,7 +81,8 @@ export function validateComputerApps(value: unknown): ComputerApp[] {
 }
 
 export function computerManifest(apps: ComputerApp[]) {
-  const checked = validateComputerApps(apps)
+  // The hand-picked list is short; an "all applications" grant is every installed app.
+  const checked = validateComputerApps(apps, 5000)
   if (!checked.length) throw new Error('Select an application first')
   return {
     version: 3, expires_after: '2h', idle_timeout: '15m',
@@ -69,6 +98,7 @@ export function computerManifest(apps: ComputerApp[]) {
 /** One desktop owner at a time. Each approved adapter run has its own bounded runtime. */
 export class ComputerControl {
   enabled = false
+  /** The hand-picked list. Empty means every installed application. */
   apps: ComputerApp[] = []
   active: ComputerControlState['active'] = null
   private tail: Promise<void> = Promise.resolve()
@@ -78,9 +108,18 @@ export class ComputerControl {
   constructor(private deps: ComputerControlDeps) {}
   get queued() { return Math.max(0, this.pending.size - (this.active ? 1 : 0)) }
 
+  get scope(): ComputerScope { return this.apps.length ? 'selected' : 'all' }
+
+  /** The applications a task started now would be offered. */
+  async allowedApps(): Promise<ComputerApp[]> {
+    if (this.scope === 'selected') return this.apps.map(app => ({ ...app }))
+    if (!this.deps.installed) throw new Error('Listing installed applications is unavailable')
+    return this.deps.installed()
+  }
+
   async configure(enabled: boolean, apps: unknown): Promise<void> {
     const checked = validateComputerApps(apps)
-    if (enabled && (!checked.length || !this.deps.ready())) throw new Error('Select apps and grant Accessibility and Screen Recording first')
+    if (enabled && !this.deps.ready()) throw new Error('Grant Accessibility and Screen Recording first')
     this.enabled = false
     this.deps.changed()
     await this.stop()
@@ -107,7 +146,9 @@ export class ComputerControl {
     if (!this.enabled || this.closing || request.browserTools !== true ||
         !request.context?.workingDir || request.allowedTools) return undefined
     if (!this.deps.ready()) throw new Error('Computer control permissions are unavailable; check Tools > Plugins > Computer')
-    const apps = this.apps.map(app => ({ ...app }))
+    // The grant is fixed when the task asks: later setting changes never widen it.
+    const scope = this.scope
+    const selected = this.apps.map(app => ({ ...app }))
     const controller = new AbortController()
     const cancel = () => controller.abort()
     if (request.signal?.aborted) cancel()
@@ -156,7 +197,10 @@ export class ComputerControl {
       this.active = { agent, chatId: request.browserChatId, phase: 'waiting' }
       this.currentStop = stopDriver
       this.deps.changed()
-      const accepted = await this.deps.approve(agent, apps, controller.signal, request.browserChatId)
+      const apps = scope === 'all' ? await this.allowedApps() : selected
+      controller.signal.throwIfAborted()
+      if (!apps.length) throw new Error('No applications were found on this Mac')
+      const accepted = await this.deps.approve(agent, apps, controller.signal, request.browserChatId, scope)
       controller.signal.throwIfAborted()
       if (!accepted) throw new Error('Computer control was declined. The coding task can continue without computer control.')
       if (!this.deps.ready()) throw new Error('Computer control permissions were revoked')

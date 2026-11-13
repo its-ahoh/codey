@@ -7,7 +7,7 @@ import { PluginLogo } from './PluginLogos'
 export const COMPUTER_PLUGIN = {
   id: 'computer',
   name: 'Computer',
-  tagline: 'Mac apps you allow — agents see the window and press its controls.',
+  tagline: 'The apps on your Mac — agents see the window and press its controls.',
 }
 
 /** Live computer-control state for surfaces that only need the switch. */
@@ -19,7 +19,7 @@ export function useComputerControl() {
     const off = window.codey.computer.onChanged(setState)
     return () => { alive = false; off() }
   }, [])
-  const ready = !!state?.available && state.accessibility && state.screenRecording && state.apps.length > 0
+  const ready = isReady(state)
   const setEnabled = async (enabled: boolean) => {
     const result = await window.codey.computer.configure(enabled, state?.apps ?? [])
     if (!result.ok) throw new Error(result.error)
@@ -27,36 +27,27 @@ export function useComputerControl() {
   }
   return { state, ready, setEnabled }
 }
-import type { ComputerControlState, ComputerPreview, ComputerReply } from '../../electron/computer-control'
+import type { ComputerApp, ComputerControlState } from '../../electron/computer-control'
 
-export const ComputerTab: React.FC<{ onOpenDesktop?: () => void; onBack?: () => void }> = ({ onOpenDesktop, onBack }) => {
+/** Setup is complete: the driver is there and both permissions are granted.
+ *  No app list is needed; an empty list means every application. */
+const isReady = (state?: ComputerControlState) =>
+  !!state?.available && state.accessibility && state.screenRecording
+
+export const ComputerTab: React.FC<{ onBack?: () => void }> = ({ onBack }) => {
   const [state, setState] = useState<ComputerControlState>()
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
-  const [preview, setPreview] = useState<ComputerPreview | null>(null)
-  const [windows, setWindows] = useState<NonNullable<ComputerReply['windows']>>([])
-  const [selected, setSelected] = useState('')
-  const [windowsFor, setWindowsFor] = useState('')
   const refresh = async () => {
     const result = await window.codey.computer.status()
     if (result.ok) setState(result.data); else setError(result.error)
   }
   useEffect(() => {
     void refresh()
-    let known: number | undefined
-    const off = window.codey.computer.onChanged(next => { setState(next); if (!next.active) { known = undefined; setWindows([]); setSelected(''); setWindowsFor(''); setPreview(null) } })
-    let alive = true
-    const updatePreview = async () => {
-      const result = await window.codey.computer.preview(known)
-      if (!alive || !result.ok || (result.data && 'unchanged' in result.data)) return
-      known = result.data?.updatedAt
-      setPreview(result.data)
-    }
-    void updatePreview()
-    const timer = setInterval(() => { void updatePreview() }, 1000)
+    const off = window.codey.computer.onChanged(setState)
     const focus = () => { void refresh() }
     window.addEventListener('focus', focus)
-    return () => { alive = false; clearInterval(timer); off(); window.removeEventListener('focus', focus) }
+    return () => { off(); window.removeEventListener('focus', focus) }
   }, [])
   const run = async (action: () => Promise<void>) => {
     setBusy(true); setError('')
@@ -68,31 +59,21 @@ export const ComputerTab: React.FC<{ onOpenDesktop?: () => void; onBack?: () => 
     if (!result.ok) throw new Error(result.error)
     setState(result.data)
   }
-  const ready = !!state?.available && state.accessibility && state.screenRecording && state.apps.length > 0
+  const ready = isReady(state)
   const apps = state?.apps ?? []
-  const previewBusy = !!state?.active && state.active.agent !== 'Codey preview'
   const requestPermissions = () => void run(async () => {
     const r = await window.codey.computer.permissions()
     if (!r.ok) throw new Error(r.error)
     setState(r.data)
   })
-  const listWindows = (bundleId: string) => void run(async () => {
-    const r = await window.codey.computer.view({ action: 'windows', bundleId })
+  const pickApp = async (): Promise<ComputerApp | null> => {
+    const r = await window.codey.computer.pickApp()
     if (!r.ok) throw new Error(r.error)
-    setWindows(r.data.windows ?? []); setSelected(''); setWindowsFor(bundleId)
-    if (!r.data.windows?.length) setError(r.data.text ?? 'No visible windows')
-  })
-  const openWindow = (id: string) => void run(async () => {
-    setSelected(id)
-    const r = await window.codey.computer.view({ action: 'observe', window: id })
-    if (!r.ok) throw new Error(r.error)
-    setPreview({ updatedAt: Date.now(), window: id, reply: r.data })
-    if (!r.data.isError) onOpenDesktop?.()
-  })
+    return r.data
+  }
   const blocker = !state ? 'Loading…'
     : !state.available ? 'This build does not include the driver.'
     : !state.accessibility || !state.screenRecording ? 'Grant both permissions below first.'
-    : !apps.length ? 'Add at least one application below first.'
     : ''
   const checks = [
     { key: 'driver', label: 'Driver', hint: 'Bundled with Codey.', ok: !!state?.available, fix: false },
@@ -143,46 +124,24 @@ export const ComputerTab: React.FC<{ onOpenDesktop?: () => void; onBack?: () => 
       <div style={styles.sectionTitle}>
         <span>Applications</span>
         <button style={pillButton('ghost')} disabled={busy || apps.length >= 16} onClick={() => void run(async () => {
-          const r = await window.codey.computer.pickApp()
-          if (!r.ok) throw new Error(r.error)
-          if (r.data && !apps.some(a => a.bundleId === r.data?.bundleId)) await configure(!!state?.enabled, [...apps, r.data])
-        })}>Add application</button>
+          const app = await pickApp()
+          if (app && !apps.some(a => a.bundleId === app.bundleId)) await configure(!!state?.enabled, [...apps, app])
+        })}>{apps.length ? 'Add application' : 'Limit to specific apps…'}</button>
       </div>
-      <div style={styles.sectionNote}>Agents can only touch apps on this list. Changing the list stops a computer task that is running. Web pages still go through the Codey Browser.</div>
-      {apps.length === 0 && <div style={styles.empty}>No applications yet. Add one to get started.</div>}
-      {apps.map((item, index) => <div key={item.bundleId}>
-        <div style={{ ...styles.row, ...(index > 0 ? styles.rowBorder : null) }}>
-          <span style={styles.rowCopy}>
-            <span style={styles.rowName}>{item.name}</span>
-            <span style={{ ...styles.rowTagline, ...styles.mono }}>{item.bundleId}</span>
-          </span>
-          <button style={pillButton('ghost')} disabled={busy || !state?.enabled || previewBusy}
-            title={!state?.enabled ? 'Turn computer control on first' : previewBusy ? 'An agent is using computer control' : `Show ${item.name} windows`}
-            onClick={() => listWindows(item.bundleId)}>Show windows</button>
-          <button style={styles.iconButton} disabled={busy} aria-label={`Remove ${item.name}`} title={`Remove ${item.name}`}
-            onClick={() => void run(() => { const rest = apps.filter(a => a.bundleId !== item.bundleId); return configure(!!state?.enabled && rest.length > 0, rest) })}><UIIcon name="trash" size={15} /></button>
-        </div>
-        {windowsFor === item.bundleId && windows.length > 0 && <div style={styles.windowList}>
-          {windows.map(w => <button key={w.id} style={{ ...styles.windowRow, ...(selected === w.id ? styles.windowRowActive : null) }}
-            disabled={busy || state?.active?.agent !== 'Codey preview'} onClick={() => openWindow(w.id)}>
-            <span style={styles.windowTitle}>{w.title || 'Untitled'}</span>
-            <span style={styles.windowOpen}>Open beside chat <UIIcon name="chevron" size={13} /></span>
-          </button>)}
-        </div>}
-      </div>)}
+      {apps.length === 0
+        ? <div style={styles.sectionNote}><b style={styles.strong}>All applications.</b> Agents can use any application on this Mac except Codey. Every task still asks you before it starts. Web pages go through the Codey Browser.</div>
+        : <>
+          <div style={styles.sectionNote}><b style={styles.strong}>Only these applications.</b> Remove them all to allow every application again. Changing the list stops a computer task that is running.</div>
+          {apps.map((item, index) => <div key={item.bundleId} style={{ ...styles.row, ...(index > 0 ? styles.rowBorder : null) }}>
+            <span style={styles.rowCopy}>
+              <span style={styles.rowName}>{item.name}</span>
+              <span style={{ ...styles.rowTagline, ...styles.mono }}>{item.bundleId}</span>
+            </span>
+            <button style={styles.iconButton} disabled={busy} aria-label={`Remove ${item.name}`} title={`Remove ${item.name}`}
+              onClick={() => void run(() => configure(!!state?.enabled, apps.filter(a => a.bundleId !== item.bundleId)))}><UIIcon name="trash" size={15} /></button>
+          </div>)}
+        </>}
     </div>
-
-    {preview && <div style={styles.section}>
-      <div style={styles.sectionTitle}>
-        <span>Last snapshot</span>
-        <span style={styles.statusMuted}>{new Date(preview.updatedAt).toLocaleTimeString()}</span>
-      </div>
-      {preview.reply.isError && <div role="alert" style={styles.errorBanner}>Could not read this window. Show its windows again and retry.</div>}
-      {preview.reply.images?.map((img, index) => <img key={index} alt="Observed application window"
-        src={`data:${img.mimeType};base64,${img.dataBase64}`} style={styles.snapshot} />)}
-      <details style={styles.details}><summary style={styles.summary}>What the agent reads</summary>
-        <pre style={styles.pre}>{preview.reply.text}</pre></details>
-    </div>}
   </section>
 }
 
@@ -228,26 +187,7 @@ const styles: Record<string, React.CSSProperties> = {
     width: 30, height: 30, display: 'grid', placeItems: 'center', flexShrink: 0, padding: 0,
     border: 'none', borderRadius: 8, background: 'transparent', color: C.fg3, cursor: 'pointer',
   },
-  empty: { color: C.fg3, fontSize: 12, textAlign: 'center', padding: '22px 16px' },
-  windowList: { display: 'grid', gap: 4, padding: '0 0 10px 12px' },
-  windowRow: {
-    display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', textAlign: 'left',
-    border: `1px solid ${C.border}`, borderRadius: 8, background: C.surface, color: C.fg,
-    cursor: 'pointer', fontFamily: 'inherit', fontSize: 12,
-  },
-  windowRowActive: { border: `1px solid ${C.accent}`, background: C.accentDim },
-  windowTitle: { flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
-  windowOpen: { display: 'inline-flex', alignItems: 'center', gap: 3, color: C.fg3, flexShrink: 0 },
-  snapshot: {
-    display: 'block', width: '100%', maxHeight: 520, objectFit: 'contain', marginTop: 4,
-    background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 8,
-  },
-  details: { marginTop: 10, fontSize: 12, color: C.fg2 },
-  summary: { cursor: 'pointer', color: C.fg3 },
-  pre: {
-    whiteSpace: 'pre-wrap', maxHeight: 240, overflow: 'auto', margin: '8px 0 0', padding: 10,
-    background: C.logBg, color: C.logFg, borderRadius: 8, fontSize: 11,
-  },
+  strong: { color: C.fg2, fontWeight: 600 },
   indicator: {
     position: 'fixed', bottom: 16, right: 16, zIndex: 10000, display: 'flex', alignItems: 'center', gap: 10,
     padding: '8px 8px 8px 12px', borderRadius: 10, border: `1px solid ${C.border2}`,

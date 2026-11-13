@@ -1,15 +1,20 @@
 import { createComputerCapture } from './computer-capture'
 import { createComputerBridge } from './computer-bridge'
 import { computerCommands } from './computer-commands'
+import { findInstalledApps } from './computer-apps'
 import { loadComputerDriverSdk } from './computer-driver-sdk'
 import { app, dialog, ipcMain, systemPreferences, desktopCapturer } from 'electron'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
-import { ComputerControl, computerManifest, validateComputerApps, type ComputerControlState, type ComputerDriver, type ComputerCommand } from './computer-control'
+import { homedir } from 'node:os'
+import { ComputerControl, computerManifest, validateComputerApps, type ComputerApp, type ComputerControlState, type ComputerDriver, type ComputerCommand } from './computer-control'
 
 const exec = promisify(execFile)
+const readBundleId = async (appPath: string) => (await exec('/usr/bin/plutil',
+  ['-extract', 'CFBundleIdentifier', 'raw', '-o', '-', join(appPath, 'Contents', 'Info.plist')],
+  { timeout: 5000, maxBuffer: 4096 })).stdout
 const binaryPath = () => app.isPackaged
   ? join(process.resourcesPath, 'cua-driver', 'cua-driver')
   : join(app.getAppPath(), 'build', 'cua-driver', 'cua-driver')
@@ -77,19 +82,41 @@ export interface ComputerSkillSwitch {
 export function createComputerControlHost(changed: (state: ComputerControlState) => void,
   trustedRenderer: () => Electron.WebContents | undefined, skill: ComputerSkillSwitch) {
   const file = join(app.getPath('userData'), 'computer-control.json')
+  // Scanning the application folders costs a few hundred milliseconds, and a
+  // task asks more than once (the app list, then the grant), so keep the
+  // answer briefly. A newly installed app is picked up by the next task.
+  let installed: { at: number; apps: Promise<ComputerApp[]> } | undefined
+  const installedApps = () => {
+    if (!installed || Date.now() - installed.at > 60000) {
+      const apps = findInstalledApps({
+        roots: ['/Applications', '/Applications/Utilities', '/System/Applications', '/System/Applications/Utilities', join(homedir(), 'Applications')],
+        nested: ['/Applications', join(homedir(), 'Applications')],
+        extra: ['/System/Library/CoreServices/Finder.app'],
+        bundleId: readBundleId,
+      })
+      installed = { at: Date.now(), apps }
+      apps.catch(() => { if (installed?.apps === apps) installed = undefined })
+    }
+    return installed.apps
+  }
   const state = (): ComputerControlState => ({
-    enabled: control.enabled, apps: control.apps, available: process.platform === 'darwin' && existsSync(binaryPath()),
+    enabled: control.enabled, scope: control.scope, apps: control.apps, available: process.platform === 'darwin' && existsSync(binaryPath()),
     ...permissions(), active: control.active, queued: control.queued, desktop: bridge.desktop(),
   })
   const control = new ComputerControl({
     ready: () => { const p = permissions(); return existsSync(binaryPath()) && p.accessibility && p.screenRecording },
     changed: () => changed(state()),
     driver: createDriver,
-    approve: async (agent, apps, signal, chatId) => {
+    installed: installedApps,
+    approve: async (agent, apps, signal, chatId, scope) => {
       const result = await dialog.showMessageBox({
         type: 'question', title: 'Allow computer control?',
-        message: `Allow ${agent} to read and control these apps for this task?`,
-        detail: apps.map(item => `${item.name} (${item.bundleId})`).join('\n') +
+        message: scope === 'all'
+          ? `Allow ${agent} to read and control any application on this Mac for this task?`
+          : `Allow ${agent} to read and control these apps for this task?`,
+        detail: (scope === 'all'
+          ? `All ${apps.length} installed applications, except Codey. Add applications in Tools > Plugins > Computer to limit this.`
+          : apps.map(item => `${item.name} (${item.bundleId})`).join('\n')) +
           `\n\n${chatId ? `Chat: ${chatId}\n` : ''}Window content and screenshots may be sent to your selected model. Access ends with this task.`,
         buttons: ['Deny', 'Allow this task'], defaultId: 0, cancelId: 0, noLink: true, signal,
       })
@@ -107,6 +134,8 @@ export function createComputerControlHost(changed: (state: ComputerControlState)
     inspect: bridge.inspectDesktop,
     sources: () => desktopCapturer.getSources({ types: ['window'], thumbnailSize: { width: 0, height: 0 }, fetchWindowIcons: false }),
   })
+  // No saved list means every application, so a list the user already picked
+  // stays a list.
   try { control.apps = validateComputerApps(JSON.parse(readFileSync(file, 'utf8')).apps) } catch { /* first run */ }
   // The skill file is the remembered switch, and the Skills tab can flip it
   // too. Follow it: off when the file is off, on when the file is on and setup
@@ -118,7 +147,7 @@ export function createComputerControlHost(changed: (state: ComputerControlState)
     try { wanted = skill.isActive() } catch { /* unreadable home: off */ }
     if (wanted === control.enabled) return
     if (!wanted) { await bridge.stop(); await control.configure(false, control.apps) }
-    else if (control.apps.length > 0) await control.configure(true, control.apps)
+    else await control.configure(true, control.apps)
   }).catch(() => { /* setup incomplete or shutting down: stay off */ })
   void reconcile()
   const wrap = (fn: (...args: any[]) => unknown) => async (event: Electron.IpcMainInvokeEvent, ...args: any[]) => {
@@ -171,7 +200,7 @@ export function createComputerControlHost(changed: (state: ComputerControlState)
   }))
   ipcMain.handle('computer:reveal', wrap(async (sessionId: string, window: string) => {
     const target = await bridge.inspectDesktop(sessionId, window)
-    const bundleId = control.apps.find(item => item.bundleId === target.bundleId)?.bundleId
+    const bundleId = (await control.allowedApps()).find(item => item.bundleId === target.bundleId)?.bundleId
     if (!bundleId) throw new Error('This window is outside the approved apps')
     // Activating the app makes macOS switch to the desktop that holds it.
     await exec('/usr/bin/open', ['-b', bundleId], { timeout: 5000 })
