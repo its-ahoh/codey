@@ -21,7 +21,7 @@ Coordinates are pixels of the returned window screenshot and need the window on 
 Read screenshot image paths with your agent's image tool. They expire with the task.
 Input defaults to background. delivery_mode:"foreground" explicitly allows focus changes.
 After input observe again and verify. Do not guess a window ID or click blind.
-Codey displays the same observation in Tools > Plugins > Computer. A user denial must be respected.`
+Codey shows the window you work in beside the user's chat. A user denial must be respected.`
 const [action, target, raw] = process.argv.slice(2)
 if (!action || action === 'help') { console.log(help); process.exit(0) }
 try {

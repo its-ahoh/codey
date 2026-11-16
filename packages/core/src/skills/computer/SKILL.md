@@ -5,7 +5,8 @@ description: See and operate native Mac apps through Codey - read a window's con
 
 # Codey Computer
 
-Codey lets you work in the Mac apps the user put on its allow list. You read a
+Codey lets you work in the Mac apps the user allows: every installed app by
+default, or only a list they picked. You read a
 window as a screenshot plus a list of its controls, and you act on those
 controls. Every command is one shell call:
 
@@ -29,7 +30,9 @@ another way to drive the desktop.
 
 ## Start here
 
-1. `apps` - the apps the user allowed. Anything else is out of reach.
+1. `apps` - the apps you may use, with their bundle IDs. It can be a long list;
+   look up the one you need. Anything not on it is out of reach, and Codey
+   itself never is.
 2. `windows <bundleId>` - that app's windows, with their IDs.
 3. `observe <windowId>` - a screenshot path and the window's controls in
    `data.elements[]`. Open the screenshot with your image tool.

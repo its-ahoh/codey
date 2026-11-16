@@ -4,9 +4,9 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ComputerTab } from './ComputerTab'
 
-// The Computer tab is a setup checklist: each missing permission offers its
-// own "Allow" action, the master switch stays locked until setup is complete,
-// and picking a window opens the desktop panel in one click.
+// The Computer page is a setup checklist: each missing permission offers its
+// own "Allow" action and the master switch stays locked until setup is
+// complete. Every application is allowed until the user picks specific ones.
 
 let host: HTMLDivElement
 let root: Root
@@ -15,10 +15,10 @@ let computer: any
 
 const ok = <T,>(data: T) => ({ ok: true, data })
 const base = {
-  enabled: false, apps: [], available: true, accessibility: false, screenRecording: false, active: null, queued: 0,
+  enabled: false, scope: 'all', apps: [], available: true, accessibility: false, screenRecording: false, active: null, queued: 0,
 }
-const mount = async (props: { onOpenDesktop?: () => void } = {}) => {
-  await act(async () => { root.render(React.createElement(ComputerTab, props)) })
+const mount = async () => {
+  await act(async () => { root.render(React.createElement(ComputerTab)) })
 }
 const button = (text: string) => [...host.querySelectorAll('button')].find(b => b.textContent?.includes(text))
 const toggle = () => host.querySelector('[role="switch"]') as HTMLElement
@@ -29,11 +29,9 @@ beforeEach(() => {
   computer = {
     status: vi.fn(async () => ok(state)),
     onChanged: vi.fn(() => () => {}),
-    preview: vi.fn(async () => ok(null)),
     permissions: vi.fn(async () => { state = { ...state, accessibility: true, screenRecording: true }; return ok(state) }),
-    configure: vi.fn(async (enabled: boolean, apps: any[]) => { state = { ...state, enabled, apps }; return ok(state) }),
+    configure: vi.fn(async (enabled: boolean, apps: any[]) => { state = { ...state, enabled, apps, scope: apps.length ? 'selected' : 'all' }; return ok(state) }),
     pickApp: vi.fn(async () => ok({ bundleId: 'com.example.notes', name: 'Sample Notes' })),
-    view: vi.fn(),
   }
   ;(window as any).codey = { computer }
   host = document.createElement('div')
@@ -48,7 +46,7 @@ afterEach(async () => {
 })
 
 describe('ComputerTab', () => {
-  it('locks the switch and says why until permissions and an app are set up', async () => {
+  it('locks the switch and says why until permissions are granted; no app list is needed', async () => {
     await mount()
     expect(toggle().getAttribute('aria-disabled')).toBe('true')
     expect(host.textContent).toContain('Grant both permissions below first.')
@@ -56,38 +54,27 @@ describe('ComputerTab', () => {
     await act(async () => { button('Allow')!.click() })
     expect(computer.permissions).toHaveBeenCalledTimes(1)
     expect(button('Allow')).toBeUndefined()
-    expect(host.textContent).toContain('Add at least one application below first.')
-
-    await act(async () => { button('Add application')!.click() })
-    expect(host.textContent).toContain('Sample Notes')
+    expect(host.textContent).toContain('All applications.')
     expect(toggle().getAttribute('aria-disabled')).toBeNull()
 
     await act(async () => { toggle().click() })
-    expect(computer.configure).toHaveBeenLastCalledWith(true, [{ bundleId: 'com.example.notes', name: 'Sample Notes' }])
+    expect(computer.configure).toHaveBeenLastCalledWith(true, [])
     expect(toggle().getAttribute('aria-checked')).toBe('true')
   })
 
-  it('opens the desktop panel when a window is picked', async () => {
-    state = { ...base, accessibility: true, screenRecording: true, enabled: true,
-      apps: [{ bundleId: 'com.example.notes', name: 'Sample Notes' }] }
-    computer.view = vi.fn(async (command: any) => {
-      if (command.action === 'windows') {
-        state = { ...state, active: { agent: 'Codey preview', phase: 'controlling' } }
-        return ok({ windows: [{ id: 'w1', app: 'Sample Notes', title: 'Shopping list' }] })
-      }
-      return ok({ text: 'button "Done"', images: [] })
-    })
-    computer.status = vi.fn(async () => ok(state))
-    const onOpenDesktop = vi.fn()
-    await mount({ onOpenDesktop })
+  it('narrows to a list when an app is picked and returns to all when the list is emptied', async () => {
+    state = { ...base, enabled: true, accessibility: true, screenRecording: true }
+    await mount()
+    await act(async () => { button('Limit to specific apps')!.click() })
+    expect(computer.configure).toHaveBeenLastCalledWith(true, [{ bundleId: 'com.example.notes', name: 'Sample Notes' }])
+    expect(host.textContent).toContain('Only these applications.')
+    expect(host.textContent).toContain('Sample Notes')
+    expect(button('Add application')).toBeDefined()
 
-    await act(async () => { button('Show windows')!.click() })
-    // The preview session is announced over onChanged in the app.
-    await act(async () => { computer.onChanged.mock.calls[0][0](state) })
-    await act(async () => { button('Shopping list')!.click() })
-
-    expect(computer.view).toHaveBeenLastCalledWith({ action: 'observe', window: 'w1' })
-    expect(onOpenDesktop).toHaveBeenCalledTimes(1)
+    await act(async () => { (host.querySelector('[aria-label="Remove Sample Notes"]') as HTMLElement).click() })
+    // Emptying the list keeps computer control on: it is "all applications" again.
+    expect(computer.configure).toHaveBeenLastCalledWith(true, [])
+    expect(host.textContent).toContain('All applications.')
   })
 
   it('shows a failed action as a banner', async () => {
@@ -104,10 +91,10 @@ describe('Computer in the Plugins list', () => {
       state: 'installed', dir: '/tmp/sample' }]),
     check: vi.fn(), install: vi.fn(), uninstall: vi.fn(), setEnabled: vi.fn(),
   }
-  const mountList = async (props: { onOpenDesktop?: () => void } = {}) => {
+  const mountList = async () => {
     const { PluginsTab } = await import('./PluginsTab')
     ;(window as any).codey.plugins = plugins
-    await act(async () => { root.render(React.createElement(PluginsTab, props)) })
+    await act(async () => { root.render(React.createElement(PluginsTab)) })
   }
   const computerSwitch = () => host.querySelector('[role="switch"][aria-label="Enable Computer"]') as HTMLElement
 

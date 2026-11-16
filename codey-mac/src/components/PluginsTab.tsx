@@ -20,7 +20,7 @@ export function showsDetails(openId: string | null, id: string, hasPending: bool
   return hasPending || openId === id
 }
 
-export const PluginsTab: React.FC<{ searchQuery?: string; onOpenDesktop?: () => void }> = ({ searchQuery = '', onOpenDesktop }) => {
+export const PluginsTab: React.FC<{ searchQuery?: string }> = ({ searchQuery = '' }) => {
   const [plugins, setPlugins] = useState<PluginInfo[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -134,7 +134,7 @@ export const PluginsTab: React.FC<{ searchQuery?: string; onOpenDesktop?: () => 
   }
 
   if (selectedId === COMPUTER_PLUGIN.id) {
-    return <ComputerTab onBack={() => setSelectedId(null)} onOpenDesktop={onOpenDesktop} />
+    return <ComputerTab onBack={() => setSelectedId(null)} />
   }
 
   if (loading && plugins.length === 0) return <div style={styles.note}>Loading plugins…</div>

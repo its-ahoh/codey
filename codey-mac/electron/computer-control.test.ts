@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import type { AgentRequest } from '@codey/core'
-import { ComputerControl, computerManifest, validateComputerApps } from './computer-control'
+import { ComputerControl, allComputerApps, computerManifest, validateComputerApps } from './computer-control'
 
 const apps = [{ bundleId: 'org.example.Editor', name: 'Example Editor' }]
 const request = (): AgentRequest => ({ agent: 'codex', prompt: 'Arrange a sample note', context: { workingDir: '/tmp/example' }, browserTools: true })
@@ -26,6 +26,59 @@ describe('bounded computer control', () => {
     expect(() => validateComputerApps([{ name: 'Workbench', bundleId: 'com.codey.mac' }])).toThrow('own authorization')
     expect(() => computerManifest([])).toThrow()
     expect(() => validateComputerApps([{ name: 'Invalid', bundleId: 'org.example\nallow: all' }])).toThrow()
+  })
+  it('builds an all-applications grant from what is installed, never including Codey', async () => {
+    const installed = [
+      { bundleId: 'org.example.Writer', name: 'Writer' },
+      { bundleId: 'com.codey.mac', name: 'Codey' },
+      { bundleId: 'ORG.example.writer', name: 'Writer Copy' },
+      { bundleId: 'not a bundle id', name: 'Broken' },
+      { bundleId: 'org.example.Atlas', name: ' Atlas ' },
+    ]
+    expect(allComputerApps(installed)).toEqual([
+      { bundleId: 'org.example.Atlas', name: 'Atlas' },
+      { bundleId: 'org.example.Writer', name: 'Writer' },
+    ])
+    // More than a hand-picked list may hold, and still an exact manifest.
+    const many = Array.from({ length: 300 }, (_, i) => ({ bundleId: `org.example.App${i}`, name: `App ${i}` }))
+    expect(computerManifest(many).resources.apps).toHaveLength(300)
+    expect(() => validateComputerApps(many)).toThrow('Select up to 16')
+  })
+  it('grants every installed application when no list was picked, and only the list once one is', async () => {
+    const start = vi.fn(async () => {})
+    const approve = vi.fn(async () => true)
+    const installed = vi.fn(async () => [{ bundleId: 'org.example.Atlas', name: 'Atlas' }, { bundleId: 'org.example.Writer', name: 'Writer' }])
+    const control = new ComputerControl({ ready: () => true, approve, installed, changed: vi.fn(),
+      driver: () => ({ start, stop: vi.fn(async () => {}), execute: vi.fn(async () => ({})) }) })
+    // No list is needed to switch on.
+    await control.configure(true, [])
+    expect(control).toMatchObject({ enabled: true, scope: 'all' })
+    const everything = [{ bundleId: 'org.example.Atlas', name: 'Atlas' }, { bundleId: 'org.example.Writer', name: 'Writer' }]
+    const lease = await control.prepare('codex', request())
+    expect(approve).toHaveBeenLastCalledWith('codex', everything, expect.anything(), undefined, 'all')
+    expect(start).toHaveBeenLastCalledWith(everything)
+    await lease!.dispose()
+
+    // Picking an app narrows the grant to the list.
+    const picked = [{ bundleId: 'org.example.Writer', name: 'Writer' }]
+    await control.configure(true, picked)
+    expect(control.scope).toBe('selected')
+    const narrowed = await control.prepare('codex', request())
+    expect(approve).toHaveBeenLastCalledWith('codex', picked, expect.anything(), undefined, 'selected')
+    expect(start).toHaveBeenLastCalledWith(picked)
+    await narrowed!.dispose()
+
+    // Removing the last app is "all" again.
+    await control.configure(true, [])
+    await expect(control.allowedApps()).resolves.toEqual(everything)
+  })
+  it('does not start a task when no application can be found', async () => {
+    const approve = vi.fn(async () => true)
+    const control = new ComputerControl({ ready: () => true, approve, installed: async () => [], changed: vi.fn(),
+      driver: () => ({ start: vi.fn(async () => {}), stop: vi.fn(async () => {}), execute: vi.fn(async () => ({})) }) })
+    await control.configure(true, [])
+    await expect(control.prepare('codex', request())).rejects.toThrow('No applications were found')
+    expect(approve).not.toHaveBeenCalled()
   })
   it('offers no tools to disabled, restricted, housekeeping or unsupported turns', async () => {
     const { control, approve } = setup()

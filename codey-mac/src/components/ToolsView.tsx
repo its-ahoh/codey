@@ -73,7 +73,7 @@ export const ToolsView: React.FC<Props> = ({ onClose }) => {
       <div style={{ ...styles.body, ...(tab === 'skills' ? styles.skillsBody : null) }}>
         {tab === 'skills' && <SkillsTab addRequest={addSkillRequest} searchQuery={searchQuery} />}
         {tab === 'playbooks' && <PlaybooksTab searchQuery={searchQuery} />}
-        {tab === 'plugins' && <PluginsTab searchQuery={searchQuery} onOpenDesktop={onClose} />}
+        {tab === 'plugins' && <PluginsTab searchQuery={searchQuery} />}
         {tab === 'mcp' && <McpTab searchQuery={searchQuery} />}
       </div>
     </OverlayWindow>
