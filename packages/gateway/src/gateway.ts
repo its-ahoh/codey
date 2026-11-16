@@ -6,7 +6,7 @@ import { inheritWorktreeMemory } from './worktree-memory';
 import { CoMemoClient, type AgentRunLeaseProvider } from '@codey/core';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { chatTaskForMessage } from './automatic-chat-task';
-import { chatTaskContext, chatSessionScope, revertCodexTurns, type ChatTaskRoute, type ChatTurnMessageIds } from '@codey/core';
+import { chatTaskContext, chatSessionScope, revertCodexTurns, forkOpenCodeSession, forkPiSession, type ChatTaskRoute, type ChatTurnMessageIds } from '@codey/core';
 import { publishTeamFinal, composeTeamFinal, planTeamFooter, isSoloRun, parseTeamResultLines, teamStepRecords, TeamStepRecord } from './team-finalizer';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -7512,9 +7512,10 @@ Example: /model gpt-4.1 write a Python script`;
   /**
    * Rewinds every agent session that ran an undone turn, so the agent's own
    * memory matches the files again. Claude resumes at its last message before
-   * the undone turns; Codex drops those turns through its app server; any
-   * other agent (or a failed rewind) starts a fresh session next turn, which
-   * reads the chat history with the undone turns left out.
+   * the undone turns; Codex drops those turns through its app server;
+   * OpenCode and Pi fork a new session that ends before them. Cursor, Grok
+   * (or a failed rewind) start a fresh session next turn, which reads the
+   * chat history with the undone turns left out.
    */
   private async applyPendingRewind(chat: Chat, workingDir: string): Promise<Chat> {
     const pending = chat.pendingRewind!;
@@ -7548,6 +7549,20 @@ Example: /model gpt-4.1 write a Python script`;
         } else if (anchor.agent === 'codex') {
           if (await revertCodexTurns(anchor.sessionId, ran, { cwd: workingDir })) {
             this.chatManager.setSessionAnchor(chat.id, { ...anchor, syncedThroughMessageId: syncedThrough });
+            kept = true;
+          }
+        } else if (anchor.agent === 'opencode' || anchor.agent === 'pi') {
+          // Both fork into a new session that ends before the undone turns.
+          const fork = anchor.agent === 'opencode' ? forkOpenCodeSession : forkPiSession;
+          const forkedId = await fork(anchor.sessionId, ran, { cwd: workingDir });
+          if (forkedId) {
+            this.chatManager.setSessionAnchor(chat.id, { ...anchor, sessionId: forkedId, syncedThroughMessageId: syncedThrough });
+            // Kept turns now live in the fork, so a later undo finds them there.
+            for (const m of chat.messages.slice(0, from)) {
+              if (m.role === 'user' && m.agentSession?.sessionId === anchor.sessionId) {
+                this.chatManager.updateMessage(chat.id, m.id, { agentSession: { ...m.agentSession, sessionId: forkedId } });
+              }
+            }
             kept = true;
           }
         }

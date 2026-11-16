@@ -122,7 +122,9 @@ undone turn:
 |---|---|---|
 | Claude Code | `--resume <id> --resume-session-at <endId of last kept turn>` (undocumented flag; the Agent SDK's `resumeSessionAt`). `endId` = uuid of the last `assistant` stream event. Later plain resumes stay rewound. | yes (claude 2.1.322) |
 | Codex | start `codex app-server`, `thread/resume`, `thread/turns/list`, `thread/revert { beforeTurnId }`, close (`core/agents/codex-revert.ts`). No model call. | yes (codex-cli 0.167.0) |
-| OpenCode, Pi, Cursor, Grok | drop the session; the next turn bootstraps a fresh one from history without the undone turns (one history read). | n/a |
+| OpenCode | start `opencode serve` (one-off password, killed as a process group: it ignores SIGTERM), `GET /session/:id/message`, `POST /session/:id/fork { messageID }` at the first dropped user message. The fork is a new session; the anchor and kept turns' `agentSession` switch to it. (`core/agents/session-fork.ts`) | fork mechanics yes (opencode 1.19.5); its model calls fail locally, so "agent forgot" not seen |
+| Pi | start `pi --mode rpc --session <id>`, `get_entries`, `fork { entryId }` at the first dropped user entry, `get_state` for the new session id; switch to it as above. | fork mechanics yes (pi 1.5.1); provider out of balance locally, so "agent forgot" not seen |
+| Cursor, Grok | drop the session; the next turn bootstraps a fresh one from history without the undone turns (one history read). T3 Code refuses Cursor and starts Grok empty. | n/a |
 
 A session that ran only undone turns, or a failed rewind, also falls back to a
 fresh session. The anchor's `syncedThroughMessageId` moves back to the end of

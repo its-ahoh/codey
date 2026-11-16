@@ -16,6 +16,7 @@ export { ClaudeCodeAdapter } from './claude-code';
 export { OpenCodeAdapter } from './opencode';
 export { CodexAdapter } from './codex';
 export { revertCodexTurns, type CodexRevertOptions } from './codex-revert';
+export { forkOpenCodeSession, forkPiSession, type SessionForkOptions } from './session-fork';
 export { PiAdapter } from './pi';
 export { CursorAdapter } from './cursor';
 export { GrokAdapter } from './grok';

@@ -3,13 +3,15 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { revertCodexTurns, type ChatMessage } from '@codey/core';
+import { forkOpenCodeSession, revertCodexTurns, type ChatMessage } from '@codey/core';
 import { Codey } from './gateway';
 import { captureCheckpoint, turnRef } from './turn-checkpoints';
 
 vi.mock('@codey/core', async (orig) => ({
   ...await orig<typeof import('@codey/core')>(),
   revertCodexTurns: vi.fn(async () => true),
+  forkOpenCodeSession: vi.fn(async () => 'oc-fork'),
+  forkPiSession: vi.fn(async () => null),
 }));
 
 const ENV = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
@@ -157,7 +159,7 @@ describe('applyPendingRewind', () => {
     expect(chat.sessionAnchors).toEqual([{ agent: 'codex', sessionId: 'codex-t', syncedThroughMessageId: 'u1-reply' }]);
   });
 
-  it('starts fresh when Codex cannot revert, when the whole session was undone, or for other agents', async () => {
+  it('starts fresh when Codex cannot revert or the whole session was undone; leaves untouched sessions alone', async () => {
     vi.mocked(revertCodexTurns).mockResolvedValueOnce(false);
     const { gateway, chat } = fixture();
     await turn(chat, 'u1', () => write(repo, 'a.txt', '1\n'), { agent: 'opencode', sessionId: 'oc' });
@@ -174,8 +176,28 @@ describe('applyPendingRewind', () => {
     await gateway.undoTurn('chat', 'u3');
 
     await (gateway as any).applyPendingRewind(chat, repo);
-    // opencode ran u4 (undone): dropped. codex revert failed: dropped.
-    // claude ran only undone turns: dropped. pi ran nothing undone: kept.
-    expect(chat.sessionAnchors).toEqual([{ agent: 'pi', sessionId: 'untouched' }]);
+    // codex revert failed: dropped. claude ran only undone turns: dropped.
+    // pi ran nothing undone: kept. opencode forked before u4.
+    expect(chat.sessionAnchors).toEqual([
+      { agent: 'pi', sessionId: 'untouched' },
+      { agent: 'opencode', sessionId: 'oc-fork', syncedThroughMessageId: 'u1-reply' },
+    ]);
+  });
+});
+
+describe('applyPendingRewind: OpenCode and Pi', () => {
+  it('switches OpenCode to its fork and moves kept turns onto it; a failed Pi fork starts fresh', async () => {
+    const { gateway, chat } = fixture();
+    await turn(chat, 'u1', () => write(repo, 'a.txt', '1\n'), { agent: 'opencode', sessionId: 'oc' });
+    await turn(chat, 'u2', () => write(repo, 'a.txt', '2\n'), { agent: 'pi', sessionId: 'pi-s' });
+    await turn(chat, 'u3', () => write(repo, 'a.txt', '3\n'), { agent: 'opencode', sessionId: 'oc' });
+    await turn(chat, 'u4', () => write(repo, 'a.txt', '4\n'), { agent: 'pi', sessionId: 'pi-s' });
+    chat.sessionAnchors = [{ agent: 'opencode', sessionId: 'oc' }, { agent: 'pi', sessionId: 'pi-s' }];
+    await gateway.undoTurn('chat', 'u3');
+
+    await (gateway as any).applyPendingRewind(chat, repo);
+    expect(vi.mocked(forkOpenCodeSession)).toHaveBeenCalledWith('oc', 1, { cwd: repo });
+    expect(chat.sessionAnchors).toEqual([{ agent: 'opencode', sessionId: 'oc-fork', syncedThroughMessageId: 'u1-reply' }]);
+    expect(chat.messages[0].agentSession.sessionId).toBe('oc-fork');
   });
 });
