@@ -14,7 +14,7 @@ const status = (over: Partial<BrowserSkillStatus> = {}): BrowserSkillStatus => (
 describe('plugin registry', () => {
   it('registers Browser, Chrome Companion and Terminal as independent plugins', () => {
     expect(PLUGINS.map(p => p.id)).toEqual(['browser', 'chrome-companion', 'terminal'])
-    expect(PLUGINS[0].name).toBe('Codey Browser')
+    expect(PLUGINS[0].name).toBe('Browser')
     expect(PLUGINS[1].name).toBe('Chrome')
     expect(PLUGINS[2].name).toBe('Terminal')
     expect(PLUGINS[0].description.length).toBeGreaterThan(10)

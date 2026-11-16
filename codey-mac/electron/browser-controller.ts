@@ -201,6 +201,103 @@ export function normalizeBrowserUrl(input: string): string {
   return parsed.href
 }
 
+/**
+ * Page-side helpers shared by every script that looks up controls. Modern
+ * apps (X's chat, for one) render inside open shadow roots or same-origin
+ * iframes, which a plain document.querySelectorAll never enters, so the agent
+ * saw an empty page. These walk the document, every open shadow root, and
+ * every reachable frame document. Closed shadow roots and cross-origin frames
+ * stay invisible by design.
+ */
+export const PAGE_DOM_HELPERS = `
+  const codeyRoots = () => {
+    const roots = []
+    const walk = root => {
+      roots.push(root)
+      root.querySelectorAll('*').forEach(node => {
+        if (node.shadowRoot) walk(node.shadowRoot)
+        if (node.tagName === 'IFRAME' || node.tagName === 'FRAME') {
+          let frameDoc = null
+          try { frameDoc = node.contentDocument } catch {}
+          if (frameDoc && frameDoc.documentElement) walk(frameDoc)
+        }
+      })
+    }
+    walk(document)
+    return roots
+  }
+  const codeyQueryAll = selector => codeyRoots().flatMap(root => Array.from(root.querySelectorAll(selector)))
+  const codeyFind = ref => {
+    for (const root of codeyRoots()) {
+      const found = root.querySelector('[data-codey-ref="' + ref + '"]')
+      if (found) return found
+    }
+    return null
+  }
+  const codeyStyle = el => (el.ownerDocument.defaultView || window).getComputedStyle(el)
+  const codeyVisible = el => {
+    const rect = el.getBoundingClientRect()
+    const style = codeyStyle(el)
+    return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none'
+  }
+  // Rect in top-level viewport coordinates, adding each enclosing frame's offset.
+  const codeyRect = el => {
+    const rect = el.getBoundingClientRect()
+    let left = rect.left
+    let top = rect.top
+    let win = el.ownerDocument.defaultView
+    while (win && win !== window && win.frameElement) {
+      const frame = win.frameElement
+      const frameRect = frame.getBoundingClientRect()
+      left += frameRect.left + frame.clientLeft
+      top += frameRect.top + frame.clientTop
+      win = win.parent
+    }
+    return { left, top, width: rect.width, height: rect.height }
+  }
+  // Elements from a frame belong to another realm, so instanceof checks fail.
+  const codeyTag = el => (el && el.tagName ? el.tagName.toLowerCase() : '')
+  const codeyIsInput = el => codeyTag(el) === 'input'
+  const codeyIsTextArea = el => codeyTag(el) === 'textarea'
+  const codeyIsSelect = el => codeyTag(el) === 'select'
+  const codeyIsForm = el => codeyTag(el) === 'form'
+  const codeyIsButton = el => codeyTag(el) === 'button'
+  // Visible text of shadow trees and frames, which body.innerText leaves out.
+  const codeyDeepText = () => codeyRoots().map(root => {
+    if (root === document) return document.body?.innerText || ''
+    if (root.nodeType === 9) return root.body?.innerText || ''
+    // A hidden element's innerText falls back to its raw textContent, which
+    // would dump stylesheet and script source; keep rendered children only.
+    return Array.from(root.children)
+      .filter(child => !['style', 'script', 'template', 'link'].includes(codeyTag(child)) && codeyStyle(child).display !== 'none')
+      .map(child => child.innerText || '').join('\\n')
+  }).filter(Boolean).join('\\n')
+`
+
+interface CdpDomNode {
+  nodeId: number
+  attributes?: string[]
+  children?: CdpDomNode[]
+  shadowRoots?: CdpDomNode[]
+  contentDocument?: CdpDomNode
+}
+
+/** Find the node carrying data-codey-ref=ref in a pierced CDP DOM tree. */
+export function findCdpNodeByRef(root: CdpDomNode, ref: string): number | null {
+  const stack: CdpDomNode[] = [root]
+  while (stack.length > 0) {
+    const node = stack.pop()!
+    const attributes = node.attributes ?? []
+    for (let index = 0; index + 1 < attributes.length; index += 2) {
+      if (attributes[index] === 'data-codey-ref' && attributes[index + 1] === ref) return node.nodeId
+    }
+    if (node.contentDocument) stack.push(node.contentDocument)
+    for (const child of node.shadowRoots ?? []) stack.push(child)
+    for (const child of node.children ?? []) stack.push(child)
+  }
+  return null
+}
+
 const MUTATING_NAVIGATION = /(^|[\/_?&=.-])(logout|log-out|signout|sign-out|delete|remove|unsubscribe|subscribe|purchase|checkout|pay|confirm|like|follow|bookmark|favorite|vote|join|leave|create|update)([\/_?&=.-]|$)/i
 
 /** True only for direct page loads that are safe to perform in view-only mode. */
@@ -451,8 +548,9 @@ export class BrowserController {
     // Bounding visible text avoids accidentally feeding an entire application
     // shell or a huge document into an agent prompt.
     const result = await contents.executeJavaScript(`(() => {
+      ${PAGE_DOM_HELPERS}
       const nav = performance.getEntriesByType('navigation')[0]
-      const text = (document.body?.innerText || '')
+      const text = codeyDeepText()
         .replace(/\\r/g, '')
         .replace(/[ \\t]+\\n/g, '\\n')
         .replace(/\\n{3,}/g, '\\n\\n')
@@ -582,36 +680,33 @@ export class BrowserController {
   async snapshotInteractive(): Promise<BrowserInteractiveSnapshot> {
     const contents = this.requirePage()
     return await contents.executeJavaScript(`(() => {
-      document.querySelectorAll('[data-codey-ref]').forEach(el => el.removeAttribute('data-codey-ref'))
+      ${PAGE_DOM_HELPERS}
+      codeyQueryAll('[data-codey-ref]').forEach(el => el.removeAttribute('data-codey-ref'))
       const selector = [
         'a[href]', 'button', 'input:not([type="hidden"])', 'textarea', 'select', 'form',
         '[role="button"]', '[role="link"]', '[role="checkbox"]', '[role="radio"]',
         '[role="tab"]', '[role="menuitem"]', '[contenteditable="true"]', '[tabindex]'
       ].join(',')
-      const visible = el => {
-        const rect = el.getBoundingClientRect()
-        const style = getComputedStyle(el)
-        return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none'
-      }
       const labelFor = el => {
         const labelledBy = el.getAttribute('aria-labelledby')
+        const scope = el.getRootNode()
         const labelledText = labelledBy
-          ? labelledBy.split(/\\s+/).map(id => document.getElementById(id)?.textContent || '').join(' ')
+          ? labelledBy.split(/\\s+/).map(id => scope.getElementById?.(id)?.textContent || '').join(' ')
           : ''
         const nativeLabels = el.labels ? Array.from(el.labels).map(label => label.innerText).join(' ') : ''
         return (el.getAttribute('aria-label') || labelledText || nativeLabels || el.getAttribute('placeholder')
           || el.getAttribute('title') || el.innerText || el.getAttribute('name') || '').replace(/\\s+/g, ' ').trim().slice(0, 300)
       }
-      const nodes = Array.from(document.querySelectorAll(selector)).filter(visible).slice(0, 500)
+      const nodes = codeyQueryAll(selector).filter(codeyVisible).slice(0, 500)
       const elements = nodes.map((el, index) => {
         const ref = 'e' + (index + 1)
         el.setAttribute('data-codey-ref', ref)
-        const input = el instanceof HTMLInputElement
-        const select = el instanceof HTMLSelectElement
+        const input = codeyIsInput(el)
+        const select = codeyIsSelect(el)
         const editable = el.getAttribute('contenteditable') === 'true'
         const isPassword = input && el.type === 'password'
         const value = isPassword ? undefined
-          : input || el instanceof HTMLTextAreaElement || select ? el.value.slice(0, 300)
+          : input || codeyIsTextArea(el) || select ? el.value.slice(0, 300)
           : editable ? (el.innerText || '').slice(0, 300)
           : undefined
         return {
@@ -647,10 +742,11 @@ export class BrowserController {
     this.assertRef(ref)
     const contents = this.requirePage()
     const target = await contents.executeJavaScript(`(() => {
-      const el = document.querySelector('[data-codey-ref="${ref}"]')
+      ${PAGE_DOM_HELPERS}
+      const el = codeyFind('${ref}')
       if (!el) throw new Error('Element ${ref} is no longer available; take a new snapshot')
       const anchor = el.closest('a[href]')
-      if (!(anchor instanceof HTMLAnchorElement) || anchor.hasAttribute('download')) return null
+      if (codeyTag(anchor) !== 'a' || anchor.hasAttribute('download')) return null
       let url
       try { url = new URL(anchor.href, location.href) } catch { return null }
       if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
@@ -728,24 +824,28 @@ export class BrowserController {
     // updates rich editors through input events without a foreground window,
     // while per-character key events can lose the selection during a blur.
     await contents.executeJavaScript(`(() => {
-      const el = document.querySelector('[data-codey-ref="${ref}"]')
+      ${PAGE_DOM_HELPERS}
+      const el = codeyFind('${ref}')
       if (!el) throw new Error('Element ${ref} is no longer available; take a new snapshot')
       if (el.disabled || el.readOnly || el.getAttribute('aria-disabled') === 'true' || el.getAttribute('aria-readonly') === 'true') {
         throw new Error('Element ${ref} is disabled or read-only')
       }
-      const field = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement
+      const field = codeyIsInput(el) || codeyIsTextArea(el)
       if (!field && !el.isContentEditable) throw new Error('Element ${ref} is not a text field')
       const value = ${JSON.stringify(value)}
+      // Shadow roots and frame documents track their own focus and selection.
+      const doc = el.ownerDocument
+      const scope = el.getRootNode()
       el.focus({ preventScroll: true })
-      if (document.activeElement !== el) throw new Error('Could not focus element ${ref}; take a new snapshot')
+      if (scope.activeElement !== el) throw new Error('Could not focus element ${ref}; take a new snapshot')
       if (field) {
         el.select()
         if (el.selectionStart !== 0 || el.selectionEnd !== el.value.length) {
           throw new Error('Could not select all text in ${ref}; field was not changed')
         }
       } else {
-        const selection = window.getSelection()
-        const range = document.createRange()
+        const selection = (typeof scope.getSelection === 'function' ? scope.getSelection() : null) || doc.defaultView.getSelection()
+        const range = doc.createRange()
         range.selectNodeContents(el)
         selection?.removeAllRanges()
         selection?.addRange(range)
@@ -757,14 +857,15 @@ export class BrowserController {
       }
       // Chromium's editing command preserves the editor model and undo stack.
       // Do not fall back to appending keystrokes if the editor rejects it.
-      if (!document.execCommand(value ? 'insertText' : 'delete', false, value)) {
+      if (!doc.execCommand(value ? 'insertText' : 'delete', false, value)) {
         throw new Error('Editor rejected replacement in ${ref}; inspect the field before retrying')
       }
     })()`, true)
     const matches = await contents.executeJavaScript(`(() => {
-      const el = document.querySelector('[data-codey-ref="${ref}"]')
+      ${PAGE_DOM_HELPERS}
+      const el = codeyFind('${ref}')
       if (!el) return false
-      const field = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement
+      const field = codeyIsInput(el) || codeyIsTextArea(el)
       // Read editor text rather than innerText: CSS can collapse spaces, and
       // Chromium counts the BR caret placeholder on an empty line twice.
       const readText = node => {
@@ -773,7 +874,7 @@ export class BrowserController {
         const children = Array.from(node.childNodes)
         if (children.length === 1 && children[0].nodeName === 'BR') return ''
         const block = child => child.nodeType === Node.ELEMENT_NODE &&
-          ['block', 'list-item', 'flex', 'grid', 'table-row'].includes(getComputedStyle(child).display)
+          ['block', 'list-item', 'flex', 'grid', 'table-row'].includes(codeyStyle(child).display)
         let text = ''
         children.forEach((child, index) => {
           const previous = children[index - 1]
@@ -793,8 +894,9 @@ export class BrowserController {
     this.assertRef(ref)
     const contents = this.requirePage()
     await contents.executeJavaScript(`(() => {
-      const el = document.querySelector('[data-codey-ref="${ref}"]')
-      if (!(el instanceof HTMLSelectElement)) throw new Error('Element ${ref} is not a select field')
+      ${PAGE_DOM_HELPERS}
+      const el = codeyFind('${ref}')
+      if (!codeyIsSelect(el)) throw new Error('Element ${ref} is not a select field')
       const value = ${JSON.stringify(value)}
       const option = Array.from(el.options).find(item => item.value === value || item.text === value)
       if (!option) throw new Error('Option not found: ' + value)
@@ -810,8 +912,9 @@ export class BrowserController {
     this.assertRef(ref)
     const contents = this.requirePage()
     const current = await contents.executeJavaScript(`(() => {
-      const el = document.querySelector('[data-codey-ref="${ref}"]')
-      if (!(el instanceof HTMLInputElement) || (el.type !== 'checkbox' && el.type !== 'radio')) {
+      ${PAGE_DOM_HELPERS}
+      const el = codeyFind('${ref}')
+      if (!codeyIsInput(el) || (el.type !== 'checkbox' && el.type !== 'radio')) {
         throw new Error('Element ${ref} is not a checkbox or radio button')
       }
       return el.checked
@@ -825,7 +928,8 @@ export class BrowserController {
     if (ref) {
       this.assertRef(ref)
       await contents.executeJavaScript(`(() => {
-        const el = document.querySelector('[data-codey-ref="${ref}"]')
+        ${PAGE_DOM_HELPERS}
+        const el = codeyFind('${ref}')
         if (!el) throw new Error('Element ${ref} is no longer available; take a new snapshot')
         el.focus()
       })()`, true)
@@ -885,19 +989,16 @@ export class BrowserController {
           matched = state === 'hidden' ? !present : present
         } else {
           matched = await contents.executeJavaScript(`(() => {
+            ${PAGE_DOM_HELPERS}
             const kind = ${JSON.stringify(kind)}
             const value = ${JSON.stringify(value)}
             const wantedState = ${JSON.stringify(state)}
             if (kind === 'text') {
-              const present = (document.body?.innerText || '').includes(value)
+              const present = codeyDeepText().includes(value)
               return wantedState === 'hidden' ? !present : present
             }
-            const el = document.querySelector('[data-codey-ref="' + value + '"]')
-            const visible = !!el && (() => {
-              const rect = el.getBoundingClientRect()
-              const style = getComputedStyle(el)
-              return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none'
-            })()
+            const el = codeyFind(value)
+            const visible = !!el && codeyVisible(el)
             return wantedState === 'hidden'
               ? !visible
               : wantedState === 'enabled'
@@ -929,13 +1030,12 @@ export class BrowserController {
     const attachedHere = !contents.debugger.isAttached()
     if (attachedHere) contents.debugger.attach('1.3')
     try {
-      const document = await contents.debugger.sendCommand('DOM.getDocument', { depth: -1, pierce: true }) as { root: { nodeId: number } }
-      const selected = await contents.debugger.sendCommand('DOM.querySelector', {
-        nodeId: document.root.nodeId,
-        selector: `[data-codey-ref="${ref}"]`,
-      }) as { nodeId: number }
-      if (!selected.nodeId) throw new Error(`Element ${ref} is no longer available; take a new snapshot`)
-      await contents.debugger.sendCommand('DOM.setFileInputFiles', { nodeId: selected.nodeId, files })
+      // DOM.querySelector stops at shadow and frame boundaries, so search the
+      // pierced tree for the ref the snapshot stamped.
+      const document = await contents.debugger.sendCommand('DOM.getDocument', { depth: -1, pierce: true }) as { root: CdpDomNode }
+      const nodeId = findCdpNodeByRef(document.root, ref)
+      if (!nodeId) throw new Error(`Element ${ref} is no longer available; take a new snapshot`)
+      await contents.debugger.sendCommand('DOM.setFileInputFiles', { nodeId, files })
     } finally {
       if (attachedHere && contents.debugger.isAttached()) contents.debugger.detach()
     }
@@ -967,11 +1067,12 @@ export class BrowserController {
     this.assertRef(ref)
     const contents = this.requirePage()
     await contents.executeJavaScript(`(() => {
-      const el = document.querySelector('[data-codey-ref="${ref}"]')
+      ${PAGE_DOM_HELPERS}
+      const el = codeyFind('${ref}')
       if (!el) throw new Error('Element ${ref} is no longer available; take a new snapshot')
-      const form = el instanceof HTMLFormElement ? el : el.form || el.closest('form')
-      if (!(form instanceof HTMLFormElement)) throw new Error('No form found for ${ref}')
-      const submitter = el instanceof HTMLButtonElement || (el instanceof HTMLInputElement && ['submit', 'image'].includes(el.type)) ? el : undefined
+      const form = codeyIsForm(el) ? el : el.form || el.closest('form')
+      if (!codeyIsForm(form)) throw new Error('No form found for ${ref}')
+      const submitter = codeyIsButton(el) || (codeyIsInput(el) && ['submit', 'image'].includes(el.type)) ? el : undefined
       form.requestSubmit(submitter)
       return true
     })()`, true)
@@ -1578,11 +1679,12 @@ export class BrowserController {
     this.assertRef(ref)
     const contents = this.requirePage()
     return await contents.executeJavaScript(`(() => {
-      const el = document.querySelector('[data-codey-ref="${ref}"]')
+      ${PAGE_DOM_HELPERS}
+      const el = codeyFind('${ref}')
       if (!el) throw new Error('Element ${ref} is no longer available; take a new snapshot')
       if (el.disabled || el.getAttribute('aria-disabled') === 'true') throw new Error('Element ${ref} is disabled')
       el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' })
-      const rect = el.getBoundingClientRect()
+      const rect = codeyRect(el)
       return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) }
     })()`, true) as { x: number; y: number }
   }

@@ -1,3 +1,5 @@
+import { ComputerDesktopPanel } from './components/ComputerDesktopPanel'
+import { ComputerControlIndicator } from './components/ComputerTab'
 import React, { useEffect, useState } from 'react'
 import { ChatTab } from './components/ChatTab'
 import { BotListPanel } from './components/BotListPanel'
@@ -370,6 +372,7 @@ const Shell: React.FC = () => {
             </div>
           )}
         </div>
+        <ComputerDesktopPanel />
         {/* Keep this after the content: Electron applies drag regions in page
             order, so the chat header's drag region would otherwise cover the
             button and swallow the click that shows the sidebar again. */}
@@ -432,6 +435,7 @@ const Shell: React.FC = () => {
 
 const App: React.FC = () => (
   <ChatsProvider>
+    <ComputerControlIndicator />
     <QuickQuestionProvider>
       {/* Above the chat-keyed subtree: a spoken turn outlives the chat view it
           started in, so switching chats can't cut off its reply. */}

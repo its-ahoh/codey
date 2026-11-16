@@ -1,3 +1,4 @@
+import { createComputerControlHost } from './computer-control-host'
 import { app, BrowserWindow, Menu, ipcMain, Tray, nativeImage, shell, dialog, protocol, net, globalShortcut, clipboard, Notification, systemPreferences, screen, session, powerMonitor } from 'electron'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
@@ -16,6 +17,8 @@ import { validateAutomationChatPatch, validateAutomationDraft, validateAutomatio
 import { applyEvent, clearAttention, summarize } from './tray-state'
 import { AGENT_BINARIES, createInstalledAgentsCache, detectInstalledAgents } from './agent-detect'
 import { runAgentUpdate, updatePlanFor } from './agent-update'
+import { AgentLoginRunner, loginCommandFor, readAuthStatus, type AuthStatus } from './agent-login'
+import { AGENT_AUTH } from '@codey/core'
 import { availability, createLatestVersionsCache, fetchAllLatestVersions } from './agent-latest'
 import { SKILL_FILE, markCodeyBundledSkills, markSkillManagedBy, removeLegacyManagedSkills, resolveUserPath, samePath, scanClaudePluginSkills, scanSkillsDir, setSkillEnabled, uniqueSkills } from './skills'
 import { isKnownPlugin, listPlugins } from './plugins'
@@ -50,7 +53,7 @@ import * as pty from 'node-pty'
 protocol.registerSchemesAsPrivileged([
   { scheme: 'codey-asset', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
 ])
-import { browserSkillStatus, checkBrowserSkillUpdate, checkSkillPackUpdate, chromeCompanionSkillStatus, checkChromeCompanionSkillUpdate, terminalSkillStatus, checkTerminalSkillUpdate, installTerminalSkill, uninstallTerminalSkill, setTerminalSkillEnabled, installSkillPack, listSkillPacks, migrateLegacyPstack, setSkillPackEnabled, uninstallSkillPack, CODEY_GLOBAL_SKILLS_SUBDIR, CODEY_SKILL_DISCOVERY_SUBDIRS, CODEY_SKILLS_SUBDIR, installBrowserSkill, installChromeCompanionSkill, setChromeCompanionSkillEnabled, syncCodeyGlobalSkills, syncCodeyProjectSkills, uninstallBrowserSkill, absorbPlaybookEdit, reconcilePlaybookSkills, removePlaybookSkill, writePlaybookSkill, uninstallChromeCompanionSkill, renameBotInTeams, BotManager, WorkspaceManager } from '@codey/core'
+import { browserSkillStatus, checkBrowserSkillUpdate, checkSkillPackUpdate, chromeCompanionSkillStatus, checkChromeCompanionSkillUpdate, terminalSkillStatus, computerSkillStatus, isComputerSkillActive, setComputerSkillEnabled, checkTerminalSkillUpdate, installTerminalSkill, uninstallTerminalSkill, setTerminalSkillEnabled, installSkillPack, listSkillPacks, migrateLegacyPstack, setSkillPackEnabled, uninstallSkillPack, CODEY_GLOBAL_SKILLS_SUBDIR, CODEY_SKILL_DISCOVERY_SUBDIRS, CODEY_SKILLS_SUBDIR, installBrowserSkill, installChromeCompanionSkill, setChromeCompanionSkillEnabled, syncCodeyGlobalSkills, syncCodeyProjectSkills, uninstallBrowserSkill, absorbPlaybookEdit, reconcilePlaybookSkills, removePlaybookSkill, writePlaybookSkill, uninstallChromeCompanionSkill, renameBotInTeams, BotManager, WorkspaceManager } from '@codey/core'
 import { listPlaybooks, playbookDetail, playbookHistory, archivePlaybook, deletePlaybook, restorePlaybook, rollbackPlaybook } from './playbooks'
 import type { PlaybookHome } from '@codey/core'
 import { balanceKindFor, catalogModels, listCatalogProviders, fetchProviderBalance, fetchProviderModels, loadModelsDevCatalog, readUsage, summarizeUsage } from '@codey/core'
@@ -74,6 +77,7 @@ let trayState: import('./tray-state').TrayStateMap = {}
 let trayRebuildTimer: NodeJS.Timeout | null = null
 let isQuitting = false
 let inProcessGateway: Codey | null = null
+let computerControlHost: ReturnType<typeof createComputerControlHost> | undefined
 const coreStateStore = createCoreStateStore((s) => sendToRenderer('core:state', s))
 const turnTracker = createTurnTracker()
 // Separate tracker so the chime dedupes per turn independently of banners.
@@ -283,6 +287,8 @@ function createWindow(options: { deferLoad?: boolean } = {}) {
       plugins: true,
     }
   })
+
+  computerControlHost?.attachRenderer(mainWindow.webContents)
 
   if (!options.deferLoad) loadMainWindow()
 
@@ -862,6 +868,40 @@ async function agentUpdateStatus(force = false) {
   return { status: probed.status, conclusive: probed.conclusive, updates }
 }
 
+/** Process env plus the agent's own env settings, as the gateway applies them. */
+function agentAuthEnv(agent: string): NodeJS.ProcessEnv {
+  const extra = (coreConfigManager?.get()?.agents as Record<string, { env?: Record<string, string> }> | undefined)?.[agent]?.env
+  return { ...process.env, ...(extra ?? {}) }
+}
+
+/** True when the agent's default model is bound to an API key. */
+function agentDefaultModelHasApiKey(agent: string): boolean {
+  const entry = coreConfigManager?.getFallback()?.order?.find(e => e.agent === agent)
+  const model = entry?.model ? coreConfigManager?.getModel(entry.model) : undefined
+  return !!model?.apiKeyRef
+}
+
+/** `modelKey: false` asks about the CLI's own login only, ignoring an API
+ *  key on the default model: a chat on another model can still need it. */
+async function agentAuthStatus(agent: string, opts: { modelKey?: boolean } = {}): Promise<AuthStatus> {
+  return readAuthStatus(agent, {
+    spawn: (await import('child_process')).spawn,
+    shell: process.env.SHELL || '/bin/zsh',
+    env: agentAuthEnv(agent),
+    modelHasApiKey: opts.modelKey !== false && agentDefaultModelHasApiKey(agent),
+  })
+}
+
+const agentLogin = new AgentLoginRunner({
+  spawn: (shell, args, options) => pty.spawn(shell, args, options),
+  shell: () => process.env.SHELL || '/bin/zsh',
+  env: agentAuthEnv,
+  cwd: () => app.getPath('home'),
+  // After the login: did it work? A key on the default model is beside the point.
+  checkSignedIn: async agent => (await agentAuthStatus(agent, { modelKey: false })) === 'signed-in',
+  emit: progress => sendToRenderer('agents:loginProgress', progress),
+})
+
 interface SlashCommand {
   name: string
   description: string
@@ -1124,6 +1164,7 @@ async function bootInProcessCore() {
     }
     const runtimeCfg = buildRuntimeConfig(coreConfigManager.get())
     inProcessGateway = new Codey(runtimeCfg, undefined, join(root, 'workspaces'), coreConfigManager, botManager)
+    inProcessGateway.setAgentRunLeaseProvider((agent, request) => computerControlHost?.prepare(agent, request) ?? Promise.resolve(undefined))
     // Apply config changes to the running gateway when the renderer edits them.
     // applyConfig is async so a missing await would swallow channel-start errors.
     coreConfigManager.on('change', (updated: any) => {
@@ -2072,6 +2113,10 @@ async function pickBrowserPasskey(request: BrowserPasskeyPickerRequest): Promise
 }
 
 app.whenReady().then(async () => {
+  computerControlHost = createComputerControlHost(state => sendToRenderer('computer:changed', state), () => mainWindow?.webContents, {
+    isActive: () => isComputerSkillActive(),
+    setEnabled: async enabled => { await setComputerSkillEnabled(enabled); await syncCodeyGlobalSkills() },
+  })
   powerMonitor.on('resume', () => sendToRenderer('chats:resume'))
   if (isDistributionSmokeTest) {
     console.log('CODEY_DIST_SMOKE_OK')
@@ -4813,6 +4858,38 @@ app.whenReady().then(async () => {
     })
   )
 
+  // Sign-in state for every agent that has a login of its own.
+  ipcMain.handle('agents:authStatus', async () =>
+    wrap(async () => {
+      const agents = Object.keys(AGENT_AUTH)
+      const states = await Promise.all(agents.map(agent => agentAuthStatus(agent)))
+      return Object.fromEntries(agents.map((a, i) => [a, states[i]])) as Record<string, AuthStatus>
+    })
+  )
+
+  // Resolves when the login ends; progress arrives on agents:loginProgress.
+  ipcMain.handle('agents:login', async (_e, agent: string) =>
+    wrap(async () => agentLogin.login(agent))
+  )
+
+  ipcMain.handle('agents:loginCancel', async (_e, agent: string) =>
+    wrap(async () => { agentLogin.cancel(agent) })
+  )
+
+  // Hand the login to the user: stop the hidden run and type the same command
+  // into a Terminal panel tab they can see and answer.
+  ipcMain.handle('agents:loginInTerminal', async (_e, input: { agent: string; chatId: string; cwd: string }) =>
+    wrap(async () => {
+      const command = loginCommandFor(input.agent)
+      if (!command) throw new Error(`${input.agent} has no sign-in command.`)
+      agentLogin.cancel(input.agent)
+      const opened = await terminalSessions.open(input.chatId, input.cwd, 100, 30)
+      terminalSessions.write(opened.sessionId, `${command}\n`)
+      sendToRenderer('terminal:agentOpen', { chatId: input.chatId, sessionId: opened.sessionId, cwd: input.cwd })
+      return { sessionId: opened.sessionId }
+    })
+  )
+
   // ── Skills IPC ────────────────────────────────────────────────────
   const skillPaths: Record<string, { userDirs: string[]; projectSubdirs: string[] }> = {
     // Codey's own skills live globally in ~/.codey/skills and, for skills that
@@ -4901,7 +4978,7 @@ app.whenReady().then(async () => {
     }
 
     let listed = uniqueSkills(fsMod, pathMod, skills)
-    listed = markCodeyBundledSkills(fsMod, pathMod, listed, [browserSkillStatus(home), chromeCompanionSkillStatus(home), terminalSkillStatus(home)])
+    listed = markCodeyBundledSkills(fsMod, pathMod, listed, [browserSkillStatus(home), chromeCompanionSkillStatus(home), terminalSkillStatus(home), computerSkillStatus(home)])
     for (const pack of listSkillPacks(home)) {
       for (const name of pack.skills) {
         listed = markSkillManagedBy(fsMod, pathMod, listed, pathMod.join(pack.dir, name), 'codey')
@@ -5735,11 +5812,28 @@ app.on('window-all-closed', () => {
   }
 })
 
-app.on('before-quit', () => {
+let computerShutdownComplete = false
+app.on('before-quit', event => {
+  // Only hold the quit open while a native driver may be running. Preventing
+  // it unconditionally makes macOS report that Codey cancelled a logout or
+  // restart, and an unbounded wait would leave Cmd+Q doing nothing.
+  if (computerControlHost?.needsShutdown() && !computerShutdownComplete) {
+    event.preventDefault()
+    const finish = () => {
+      if (computerShutdownComplete) return
+      computerShutdownComplete = true
+      app.quit()
+    }
+    const timer = setTimeout(finish, 3000)
+    void computerControlHost.shutdown().catch(() => {}).finally(() => { clearTimeout(timer); finish() })
+    return
+  }
   isQuitting = true
+  if (!computerShutdownComplete) computerControlHost?.discard()
   terminalControlPermission?.dispose()
   void terminalAgentBridge?.stop()
   terminalSessions.closeAll()
+  agentLogin.cancelAll()
   // Detach the browser surface but let Electron own final WebContents teardown.
   // Closing child contents while the native window is already quitting can race
   // Chromium's view destruction and terminate the browser process with SIGTRAP.

@@ -143,7 +143,12 @@ export interface ChatMessage {
    * `from`/`to` are display labels like "claude-code(opus)"; `reason` is the
    * primary's failure text, shown on demand.
    */
-  fallback?: { from: string; to: string; reason?: string };
+  fallback?: { from: string; to: string; reason?: string; authRequired?: { agent: CodingAgent } };
+  /**
+   * The turn failed because this agent is signed out. The Mac app shows a
+   * Sign in card on the message instead of the raw error.
+   */
+  authRequired?: { agent: CodingAgent };
   /**
    * The turn failed; `content` is what the user sees (partial reply and/or the
    * error). Kept out of agent context: resume checkpoint, history, catch-up.

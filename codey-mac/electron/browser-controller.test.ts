@@ -2,7 +2,7 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import { describe, expect, it, vi } from 'vitest'
-import { BROWSER_PARTITION, BrowserController, isSafeBrowserNavigationUrl, normalizeBrowserUrl, sanitizeBounds } from './browser-controller'
+import { BROWSER_PARTITION, BrowserController, PAGE_DOM_HELPERS, findCdpNodeByRef, isSafeBrowserNavigationUrl, normalizeBrowserUrl, sanitizeBounds } from './browser-controller'
 import { BrowserProfileStore } from './browser-profiles'
 
 describe('normalizeBrowserUrl', () => {
@@ -44,6 +44,30 @@ describe('normalizeBrowserUrl', () => {
   })
 })
 
+describe('page DOM helpers', () => {
+  it('finds a ref inside nested frames and shadow roots of a pierced CDP tree', () => {
+    const tree = {
+      nodeId: 1,
+      children: [
+        { nodeId: 2, attributes: ['data-codey-ref', 'e1'] },
+        { nodeId: 3, contentDocument: { nodeId: 4, children: [
+          { nodeId: 5, shadowRoots: [{ nodeId: 6, children: [{ nodeId: 7, attributes: ['data-codey-ref', 'e12'] }] }] },
+        ] } },
+      ],
+    }
+    expect(findCdpNodeByRef(tree, 'e12')).toBe(7)
+    expect(findCdpNodeByRef(tree, 'e1')).toBe(2)
+    expect(findCdpNodeByRef(tree, 'e2')).toBeNull()
+  })
+
+  it('walks open shadow roots and same-origin frames in every lookup', async () => {
+    expect(PAGE_DOM_HELPERS).toContain('node.shadowRoot')
+    expect(PAGE_DOM_HELPERS).toContain('node.contentDocument')
+    // Each helper must be valid page script on its own.
+    expect(() => new Function(PAGE_DOM_HELPERS)).not.toThrow()
+  })
+})
+
 describe('BrowserController agent controls', () => {
   function setup(executeResult: unknown = true) {
     let debuggerAttached = false
@@ -59,8 +83,11 @@ describe('BrowserController agent controls', () => {
         attach: vi.fn(() => { debuggerAttached = true }),
         detach: vi.fn(() => { debuggerAttached = false }),
         sendCommand: vi.fn(async (command: string) => command === 'DOM.getDocument'
-          ? { root: { nodeId: 1 } }
-          : command === 'DOM.querySelector' ? { nodeId: 2 } : {}),
+          // The file input sits inside a shadow root, which DOM.querySelector cannot reach.
+          ? { root: { nodeId: 1, children: [{ nodeId: 3, attributes: ['id', 'host'], shadowRoots: [
+              { nodeId: 4, children: [{ nodeId: 2, attributes: ['type', 'file', 'data-codey-ref', 'e7'] }] },
+            ] }] } }
+          : {}),
       },
     }
     const controller = new BrowserController(
@@ -203,7 +230,8 @@ describe('BrowserController agent controls', () => {
     const script = contents.executeJavaScript.mock.calls[0][0]
     expect(script).toContain('range.selectNodeContents(el)')
     expect(script).toContain('el.select()')
-    expect(script).toContain("document.execCommand(value ? 'insertText' : 'delete'")
+    expect(script).toContain("doc.execCommand(value ? 'insertText' : 'delete'")
+    expect(script).toContain("const el = codeyFind('e4')")
     expect(contents.sendInputEvent).not.toHaveBeenCalled()
     expect(contents.insertText).not.toHaveBeenCalled()
   })

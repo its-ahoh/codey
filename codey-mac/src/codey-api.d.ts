@@ -1,3 +1,4 @@
+import type { ComputerApp, ComputerControlState, ComputerCommand, ComputerReply, ComputerPreview, ComputerDesktop } from '../electron/computer-control'
 import type { CoMemoConflictView, CoMemoDetails } from '@codey/core'
 export type { CoMemoConflictView, CoMemoDetails }
 import type { Chat, ChatSelection } from '../../packages/core/src/types/chat'
@@ -20,6 +21,14 @@ import type { AutomationDraft } from '../../packages/core/src/aide-automation'
 import type { ChatStep } from '../../packages/gateway/src/automations/chat'
 
 type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
+
+interface AgentLoginProgress {
+  agent: string
+  phase: 'starting' | 'waiting' | 'succeeded' | 'failed' | 'cancelled'
+  command: string
+  url?: string
+  output?: string
+}
 
 export type { LinkPreview }
 export type SkillEntry = ScannedSkill
@@ -357,6 +366,21 @@ export interface ChromePageSnapshot {
 declare global {
   interface Window {
     codey: {
+      computer: {
+        status(): Promise<IpcResult<ComputerControlState>>
+        armStream(sessionId: string, window: string): Promise<IpcResult<string>>
+        streamStopped(streamId: string): Promise<IpcResult<void>>
+        handoff(sessionId: string, window: string, human: boolean): Promise<IpcResult<ComputerDesktop>>
+        reveal(sessionId: string, window: string): Promise<IpcResult<void>>
+        preview(known?: number): Promise<IpcResult<ComputerPreview | { unchanged: true } | null>>
+        view(command: ComputerCommand): Promise<IpcResult<ComputerReply>>
+        configure(enabled: boolean, apps: ComputerApp[]): Promise<IpcResult<ComputerControlState>>
+        permissions(): Promise<IpcResult<ComputerControlState>>
+        pickApp(): Promise<IpcResult<ComputerApp | null>>
+        stop(): Promise<IpcResult<ComputerControlState>>
+        onChanged(handler: (state: ComputerControlState) => void): () => void
+      }
+
       bots: {
         list: () => Promise<IpcResult<any[]>>
         get: (name: string) => Promise<IpcResult<any>>
@@ -573,6 +597,14 @@ declare global {
           status: Record<string, { installed: boolean; path?: string; version?: string }>
           updates: Record<string, { current?: string; latest?: string; updateAvailable: boolean; unknown: boolean }>
         }>>
+        /** Sign-in state of each agent that has its own login. Never includes account details. */
+        authStatus: () => Promise<IpcResult<Record<string, 'signed-in' | 'signed-out' | 'api-key' | 'unknown'>>>
+        /** Runs the CLI's own login command. Resolves when it ends. */
+        login: (agent: string) => Promise<IpcResult<AgentLoginProgress>>
+        loginCancel: (agent: string) => Promise<IpcResult<void>>
+        /** Stops the hidden login and types the command into a Terminal panel tab. */
+        loginInTerminal: (input: { agent: string; chatId: string; cwd: string }) => Promise<IpcResult<{ sessionId: string }>>
+        onLoginProgress: (cb: (progress: AgentLoginProgress) => void) => () => void
         slashCommands: (agent: string) => Promise<IpcResult<Array<{ name: string; description: string; source: 'agent' | 'gateway' | 'skill' }>>>
       }
       chats: {

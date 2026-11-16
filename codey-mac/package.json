@@ -1,6 +1,6 @@
 {
   "name": "codey-mac",
-  "version": "0.14.4",
+  "version": "0.14.5",
   "description": "Codey - macOS menu bar application for coding agents",
   "main": "dist-electron/main.js",
   "author": "its-ahoh",
@@ -12,13 +12,13 @@
   "scripts": {
     "postinstall": "node scripts/ensure-node-pty.cjs",
     "build:dependencies": "npm run build -w @codey/core && npm run build -w @codey/gateway",
-    "predev": "npm run build:dependencies",
+    "predev": "npm run build:dependencies && npm run prepare:cua",
     "dev": "vite",
     "build:helper": "cd ../voice && make helper",
-    "prebuild": "npm run build:dependencies && npm run build:helper",
-    "prebuild:mac": "npm run build:dependencies && npm run build:helper",
-    "prebuild:mac:local": "npm run build:dependencies && npm run build:helper",
-    "prebuild:mac:signed": "npm run build:dependencies && npm run build:helper",
+    "prebuild": "npm run build:dependencies && npm run build:helper && npm run prepare:cua",
+    "prebuild:mac": "npm run build:dependencies && npm run build:helper && npm run prepare:cua",
+    "prebuild:mac:local": "npm run build:dependencies && npm run build:helper && npm run prepare:cua",
+    "prebuild:mac:signed": "npm run build:dependencies && npm run build:helper && npm run prepare:cua",
     "build": "vite build && electron-builder",
     "build:mac": "vite build && electron-builder --mac",
     "build:mac:local": "vite build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dir --publish never --config.directories.output=release-local --config.mac.identity=null && codesign --force --deep --sign - --options runtime --entitlements build/entitlements.mac.local.plist release-local/mac-arm64/Codey.app",
@@ -29,11 +29,14 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "npm run build:dependencies && vite build && playwright test",
-    "check:browser-fill": "electron scripts/check-browser-fill.cjs"
+    "check:browser-fill": "electron scripts/check-browser-fill.cjs",
+    "prepare:cua": "node scripts/prepare-cua-driver.mjs",
+    "check:cua-package": "node scripts/check-cua-package.mjs"
   },
   "dependencies": {
     "@codey/core": "*",
     "@codey/gateway": "*",
+    "@trycua/cua-driver": "0.34.0",
     "@types/qrcode": "^1.5.6",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
@@ -68,7 +71,9 @@
     "appId": "com.codey.mac",
     "productName": "Codey",
     "asarUnpack": [
-      "node_modules/node-pty/**/*"
+      "node_modules/node-pty/**/*",
+      "node_modules/@trycua/**/*",
+      "node_modules/@ubjs/**/*"
     ],
     "directories": {
       "output": "release"
@@ -100,7 +105,10 @@
         "NSCameraUsageDescription": "Codey lets websites use your camera only after you approve the site permission.",
         "NSLocationUsageDescription": "Codey lets websites use your location only after you approve the site permission.",
         "NSAppleEventsUsageDescription": "Codey pastes transcribed voice text into the focused app via System Events."
-      }
+      },
+      "binaries": [
+        "Contents/Resources/cua-driver/cua-driver"
+      ]
     },
     "files": [
       "dist/**/*",
@@ -148,6 +156,22 @@
       {
         "from": "../chrome-extension",
         "to": "chrome-extension"
+      },
+      {
+        "from": "build/cua-driver",
+        "to": "cua-driver",
+        "filter": [
+          "cua-driver",
+          "version.json"
+        ]
+      },
+      {
+        "from": "build/cua-driver-LICENSE.txt",
+        "to": "cua-driver/LICENSE.txt"
+      },
+      {
+        "from": "electron/computer-agent-cli.cjs",
+        "to": "computer-agent-cli.cjs"
       }
     ]
   }

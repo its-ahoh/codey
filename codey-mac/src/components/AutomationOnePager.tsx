@@ -291,7 +291,6 @@ export const AutomationOnePager: React.FC<Props> = ({ id, onEditInChat, onOpenRu
       <header style={heroStyle}>
         <AutomationIconPicker icon={a.icon} saving={savingIcon} onSave={icon => void saveIcon(icon)} />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={eyebrow}>AUTOMATION</div>
           <div style={titleRow}>
             <h2 style={titleStyle}>{a.name}</h2>
             <span style={healthBadge(health.color)}><span style={healthDot(health.color)} />{health.label}</span>
@@ -601,7 +600,6 @@ function formatDuration(ms: number): string {
 
 const pageStyle: React.CSSProperties = { padding: '18px 22px 28px', flex: 1, overflowY: 'auto', background: C.bg }
 const heroStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 18 }
-const eyebrow: React.CSSProperties = { color: C.accent, fontSize: 11, fontWeight: 600, letterSpacing: 1.1, marginBottom: 4 }
 const titleRow: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 9, minWidth: 0 }
 const titleStyle: React.CSSProperties = { color: C.fg, fontSize: 18, lineHeight: 1.2, fontWeight: 600, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
 const subtitleStyle: React.CSSProperties = { color: C.fg3, fontSize: 12, marginTop: 4 }

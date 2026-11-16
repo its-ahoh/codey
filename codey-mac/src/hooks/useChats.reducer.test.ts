@@ -220,6 +220,14 @@ describe('startSend seeds the turn header', () => {
     expect(stub.model).toBeUndefined()
   })
 
+  it('keeps the signed-out mark on a failed turn', () => {
+    let s = reducer(sendState(), { type: 'startSend', chatId: 'c1', userMessage, assistantMessageId: 'a1' })
+    s = reducer(s, { type: 'completeSend', chatId: 'c1', assistantMessageId: 'a1', content: 'Error: Not logged in', authRequired: { agent: 'claude-code' } })
+    const message = s.chats.c1.messages.find(m => m.id === 'a1')!
+    expect(message.authRequired).toEqual({ agent: 'claude-code' })
+    expect(message.failed).toBe(true)
+  })
+
   it('completeSend overwrites the provisional identity with what actually ran', () => {
     let s = reducer(sendState(), { type: 'startSend', chatId: 'c1', userMessage, assistantMessageId: 'a1', agent: 'claude-code', model: 'claude-opus-5' })
     s = reducer(s, { type: 'completeSend', chatId: 'c1', assistantMessageId: 'a1', content: 'done', agent: 'codex', model: 'gpt-5', tokens: 2100, durationSec: 60 })
