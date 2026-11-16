@@ -34,3 +34,25 @@ describe('failed turns stay out of agent context', () => {
     expect(prompt).not.toContain('Authentication required');
   });
 });
+
+describe('undone turns stay out of agent context', () => {
+  const undoneChat = {
+    id: 'c', messages: [
+      msg('u1', 'user', 'Plan the release'),
+      msg('a1', 'assistant', 'KEPT ANSWER'),
+      msg('u2', 'user', 'UNDONE REQUEST', { undone: true }),
+      msg('a2', 'assistant', 'UNDONE ANSWER', { undone: true }),
+    ],
+  } as unknown as Chat;
+
+  it('drops undone turns from history, catch-up and the resume checkpoint', () => {
+    for (const prompt of [
+      buildChatPrompt(undoneChat, 'next'),
+      buildChatCatchupPrompt(undoneChat, 'a1', 'next'),
+      buildChatResumePrompt(undoneChat, 'next'),
+    ]) {
+      expect(prompt).not.toContain('UNDONE');
+    }
+    expect(buildChatPrompt(undoneChat, 'next')).toContain('KEPT ANSWER');
+  });
+});

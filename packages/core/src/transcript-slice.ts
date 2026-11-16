@@ -51,13 +51,16 @@ interface TranscriptRow {
   agent?: string;
   /** A failed turn's visible error: shown to the user, never agent context. */
   failed?: boolean;
+  /** Part of a turn the user undid: also never agent context. */
+  undone?: boolean;
 }
 
 /** A failed turn's line. Kept in the sidecar so line N stays message N, but
  *  never handed to an agent. */
 function isFailedRow(line: string): boolean {
   try {
-    return (JSON.parse(line) as TranscriptRow).failed === true;
+    const row = JSON.parse(line) as TranscriptRow;
+    return row.failed === true || row.undone === true;
   } catch {
     return false;
   }

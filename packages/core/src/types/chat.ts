@@ -44,6 +44,20 @@ export interface ToolCallEntry {
   writeDiffs?: WriteDiff[];
 }
 
+/** Undo point for one turn. Commit ids are hidden snapshots, not branch commits. */
+export interface TurnCheckpoint {
+  /** Snapshot of the folder right before the agent started. */
+  before: string;
+  /** Snapshot right after the turn ended. Missing if that capture failed. */
+  after?: string;
+  /** HEAD when the turn started ('' when the repo had no commit). Undo is
+   *  refused once HEAD has moved, so commits are never rewritten. */
+  head: string;
+  /** Set while this turn is undone. `safety` is the snapshot taken just
+   *  before the undo; restoring it is Redo. */
+  undone?: { at: number; safety: string };
+}
+
 /** One file's change from a single tool call. */
 export interface WriteDiff {
   /** Absolute path. */
@@ -154,6 +168,13 @@ export interface ChatMessage {
    * error). Kept out of agent context: resume checkpoint, history, catch-up.
    */
   failed?: boolean;
+  /** Part of a turn the user undid. Shown dimmed, never agent context —
+   *  like `failed` — and cleared again by Redo. */
+  undone?: boolean;
+  /** Set on the user message once its turn ends: which CLI session ran it,
+   *  and (Claude) the id of that session's last message after the turn.
+   *  Undo uses it to rewind the agent's own conversation. */
+  agentSession?: { agent: CodingAgent; sessionId: string; endId?: string };
   /** Extended-thinking for a single-agent assistant message (collapsed in UI). */
   thinking?: string;
   /** Per-team-step extended-thinking, keyed by step number. */
@@ -190,6 +211,12 @@ export interface ChatMessage {
   teamBlackboard?: BlackboardSnapshot;
   /** Option labels when this assistant message ended in [ASK_USER:choice]. */
   choices?: string[];
+  /**
+   * Set on the user message that started a turn in an isolated-worktree chat:
+   * hidden git snapshots of the chat's folder taken before and after the turn
+   * (see gateway `turn-checkpoints.ts`), so the turn can be undone.
+   */
+  checkpoint?: TurnCheckpoint;
   /** Structured question from AskUserQuestion tool call, with option descriptions. */
   userQuestion?: {
     question: string;
@@ -260,6 +287,10 @@ export interface Chat {
   /** Checkout currently used by this chat. Missing on legacy chats means the
    *  shared project checkout. */
   executionMode?: 'shared-checkout' | 'isolated-worktree';
+  /** Set by an undo: before the next turn, rewind every agent session that
+   *  ran an undone turn (from this user message on). Cleared by Redo, or
+   *  once applied. Waiting until the next turn keeps Redo free. */
+  pendingRewind?: { fromMessageId: string };
   /** Stable filesystem environment owned by an isolated chat. The branch is
    *  deliberately not persisted: it is live Git state managed by the agent. */
   chatWorkspace?: {
@@ -315,6 +346,9 @@ export interface Chat {
     scopeKey?: string;
     /** Last Codey transcript message already visible inside this CLI session. */
     syncedThroughMessageId?: string;
+    /** Claude: resume the session at this message id on the next turn,
+     *  dropping what came after it (set by a rewind). */
+    resumeAt?: string;
   }>;
   /** Legacy single-anchor field. Read for migration, never written by new code. */
   sessionAnchor?: {
@@ -324,6 +358,7 @@ export interface Chat {
     /** Task, Bot profile, and execution directory identity. */
     scopeKey?: string;
     syncedThroughMessageId?: string;
+    resumeAt?: string;
   };
   /**
    * Rolling LLM-generated summary of older messages. When set, the bootstrap

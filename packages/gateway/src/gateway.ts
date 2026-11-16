@@ -6,7 +6,7 @@ import { inheritWorktreeMemory } from './worktree-memory';
 import { CoMemoClient, type AgentRunLeaseProvider } from '@codey/core';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { chatTaskForMessage } from './automatic-chat-task';
-import { chatTaskContext, chatSessionScope, type ChatTaskRoute, type ChatTurnMessageIds } from '@codey/core';
+import { chatTaskContext, chatSessionScope, revertCodexTurns, type ChatTaskRoute, type ChatTurnMessageIds } from '@codey/core';
 import { publishTeamFinal, composeTeamFinal, planTeamFooter, isSoloRun, parseTeamResultLines, teamStepRecords, TeamStepRecord } from './team-finalizer';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -48,6 +48,7 @@ import { resolveChoiceDigit } from './digit-mapping';
 import { ParallelTeamRunner, ParallelFinalEvent } from './parallel-team';
 import { ChannelEmitter, ChatEmitter, TeamEmitter, BotRunResult } from './team-emitter';
 import { BotMessageEmitter } from './bot-message-emitter';
+import { captureCheckpoint, commitExists, countChangedFiles, currentHead, deleteChatRefs, MAX_TURNS_PER_CHAT, restoreCheckpoint, turnRef, undoRef } from './turn-checkpoints';
 import { extractOutputImages, labelOutputImages, mediaOutputInstruction, type FileAttachment } from '@codey/core';
 import { channelMessageLimit, deliverMediaExtras } from './channel-delivery';
 
@@ -744,7 +745,7 @@ export class Codey {
     const cutoff = chat.messages.length - KEEP_TAIL;
     if (cutoff <= already) return null;
     // A failed turn's error is for the user, not for the summary agents read.
-    const toFold = chat.messages.slice(already, cutoff).filter(m => !m.failed);
+    const toFold = chat.messages.slice(already, cutoff).filter(m => !m.failed && !m.undone);
     if (toFold.length === 0) return null;
 
     const opts = this.getAideOptions();
@@ -1006,6 +1007,8 @@ export class Codey {
   public async deleteChat(chatId: string): Promise<void> {
     const chat = await this.getChat(chatId);
     if (this.chatAborts.has(chatId)) throw new Error('Wait for the current agent turn to finish before deleting this chat');
+    // Undo refs live in the shared repository, not the worktree: drop them first.
+    if (chat.chatWorkspace) await deleteChatRefs(chat.chatWorkspace.repositoryRoot, chatId).catch(() => 0);
     if (chat.chatWorkspace) await removeCleanChatWorktree(chat.chatWorkspace);
     this.chatManager.delete(chatId);
   }
@@ -6779,6 +6782,8 @@ Example: /model gpt-4.1 write a Python script`;
     // resume) because team dispatch builds bot prompts internally.
     // Snapshot before appending the new user message; retry bootstraps use the same view.
     const memoryEpoch = this.memoryEpoch ?? 0;
+    // Anchors are re-read below, so the rewound sessions are picked up.
+    if (chat.pendingRewind) await this.applyPendingRewind(chat, workingDir);
     const contextChat = chatTaskContext(chat, taskId);
     const task = chat.tasks?.find(t => t.id === taskId);
     const scopeKey = chat.tasks?.length || chat.botChat ? chatSessionScope(chat, taskId, workingDir, selectedBot) : undefined;
@@ -6853,7 +6858,18 @@ Example: /model gpt-4.1 write a Python script`;
       isComplete: true,
       attachments: attachments && attachments.length > 0 ? attachments : undefined,
     };
-    const afterUser = this.chatManager.appendMessage(chatId, userMessage);
+    let afterUser = this.chatManager.appendMessage(chatId, userMessage);
+
+    // Undo point: snapshot the chat's own worktree before the agent touches
+    // it. Shared checkouts are skipped: other chats write there too.
+    const checkpointDir = chat.executionMode === 'isolated-worktree' ? workingDir : undefined;
+    if (checkpointDir) {
+      const before = await captureCheckpoint(checkpointDir, turnRef(chatId, userMessage.id, 'before'));
+      if (before) {
+        afterUser = this.chatManager.updateMessage(chatId, userMessage.id, { checkpoint: { before: before.commit, head: before.head } });
+        void this.pruneTurnCheckpoints(chatId, checkpointDir);
+      }
+    }
 
     // On the very first message, derive a real title via the Aide instead of
     // blindly truncating the prompt. Kick it off now so it runs concurrently
@@ -7083,6 +7099,7 @@ Example: /model gpt-4.1 write a Python script`;
           onStatus,
           signal: abortController.signal,
           resumeSessionId,
+          ...(resumeSessionId && warmAnchor?.resumeAt ? { resumeSessionAt: warmAnchor.resumeAt } : {}),
           newSessionId,
         });
         // If the CLI explicitly reports a stale session id, drop the anchor
@@ -7296,6 +7313,14 @@ Example: /model gpt-4.1 write a Python script`;
               scopeKey,
               syncedThroughMessageId: assistantMessage.id,
             });
+            // Lets a later undo rewind exactly this session to this point.
+            this.chatManager.updateMessage(chatId, userMessage.id, {
+              agentSession: {
+                agent: responseAgent as CodingAgent,
+                sessionId: anchorId,
+                ...(singleAgentResponse.sessionEndId ? { endId: singleAgentResponse.sessionEndId } : {}),
+              },
+            });
           }
         }
 
@@ -7470,11 +7495,184 @@ Example: /model gpt-4.1 write a Python script`;
       sink({ type: 'error', chatId, message });
       throw err;
     } finally {
+      // Close the undo point whether the turn finished, failed or stopped.
+      // Holding the turn lock until it lands keeps an undo from racing it.
+      if (checkpointDir && this.chatManager.get(chatId)?.messages.find(m => m.id === userMessage.id)?.checkpoint) {
+        const after = await captureCheckpoint(checkpointDir, turnRef(chatId, userMessage.id, 'after'));
+        const current = this.chatManager.get(chatId)?.messages.find(m => m.id === userMessage.id)?.checkpoint;
+        if (after && current) this.chatManager.updateMessage(chatId, userMessage.id, { checkpoint: { ...current, after: after.commit } });
+      }
       this.chatSemaphore.release();
       if (this.chatAborts.get(chatId) === abortController) {
         this.chatAborts.delete(chatId);
       }
     }
+  }
+
+  /**
+   * Rewinds every agent session that ran an undone turn, so the agent's own
+   * memory matches the files again. Claude resumes at its last message before
+   * the undone turns; Codex drops those turns through its app server; any
+   * other agent (or a failed rewind) starts a fresh session next turn, which
+   * reads the chat history with the undone turns left out.
+   */
+  private async applyPendingRewind(chat: Chat, workingDir: string): Promise<Chat> {
+    const pending = chat.pendingRewind!;
+    const from = chat.messages.findIndex(m => m.id === pending.fromMessageId);
+    this.chatManager.setPendingRewind(chat.id, null);
+    if (from < 0) return this.chatManager.get(chat.id) ?? chat;
+    const undoneTurns = chat.messages.slice(from).filter(m => m.role === 'user' && m.undone);
+    const anchors = [...(chat.sessionAnchors ?? []), ...(chat.sessionAnchor ? [chat.sessionAnchor] : [])];
+    for (const anchor of anchors) {
+      const ran = undoneTurns.filter(m => m.agentSession?.sessionId === anchor.sessionId).length;
+      if (ran === 0) continue;
+      // The last kept turn this session ran, and the message that ended it.
+      let keptIdx = -1;
+      for (let i = from - 1; i >= 0; i--) {
+        const m = chat.messages[i];
+        if (m.role === 'user' && !m.undone && m.agentSession?.sessionId === anchor.sessionId) { keptIdx = i; break; }
+      }
+      let syncedThrough: string | undefined;
+      if (keptIdx >= 0) {
+        const nextUser = chat.messages.findIndex((m, i) => i > keptIdx && m.role === 'user');
+        syncedThrough = chat.messages[(nextUser < 0 ? chat.messages.length : nextUser) - 1]?.id;
+      }
+      let kept = false;
+      if (keptIdx >= 0 && syncedThrough) {
+        if (anchor.agent === 'claude-code') {
+          const endId = chat.messages[keptIdx].agentSession?.endId;
+          if (endId) {
+            this.chatManager.setSessionAnchor(chat.id, { ...anchor, resumeAt: endId, syncedThroughMessageId: syncedThrough });
+            kept = true;
+          }
+        } else if (anchor.agent === 'codex') {
+          if (await revertCodexTurns(anchor.sessionId, ran, { cwd: workingDir })) {
+            this.chatManager.setSessionAnchor(chat.id, { ...anchor, syncedThroughMessageId: syncedThrough });
+            kept = true;
+          }
+        }
+      }
+      if (!kept) this.chatManager.clearSessionAnchor(chat.id, anchor.agent, anchor.scopeKey);
+      this.logger.info(`[checkpoints] rewound ${anchor.agent} session ${anchor.sessionId} by ${ran} turn(s): ${kept ? 'in place' : 'fresh session'}`);
+    }
+    return this.chatManager.get(chat.id) ?? chat;
+  }
+
+  /** Deletes undo refs of all but the newest MAX_TURNS_PER_CHAT turns and
+   *  drops those turns' checkpoint records. Best effort. */
+  private async pruneTurnCheckpoints(chatId: string, dir: string): Promise<void> {
+    try {
+      const chat = this.chatManager.get(chatId);
+      if (!chat) return;
+      const withCheckpoint = chat.messages.filter(m => m.role === 'user' && m.checkpoint);
+      if (withCheckpoint.length <= MAX_TURNS_PER_CHAT) return;
+      const kept = withCheckpoint.slice(-MAX_TURNS_PER_CHAT);
+      for (const m of withCheckpoint.slice(0, -MAX_TURNS_PER_CHAT)) {
+        this.chatManager.updateMessage(chatId, m.id, { checkpoint: undefined });
+      }
+      await deleteChatRefs(dir, chatId, { keepMessageIds: kept.map(m => m.id) });
+    } catch (err) {
+      this.logger.warn(`[checkpoints] prune failed for ${chatId}: ${(err as Error).message}`);
+    }
+  }
+
+  /** User messages from `messageId` on that still have a live undo point. */
+  private turnsFrom(chat: Chat, messageId: string): ChatMessage[] {
+    const start = chat.messages.findIndex(m => m.id === messageId);
+    if (start < 0) return [];
+    return chat.messages.slice(start).filter(m => m.role === 'user' && m.checkpoint && !m.checkpoint.undone);
+  }
+
+  /** Why `messageId` cannot be undone right now, or null when it can. */
+  private async undoBlocker(chat: Chat, messageId: string): Promise<string | null> {
+    if (chat.executionMode !== 'isolated-worktree') return 'Undo only works in chats that run in their own worktree.';
+    if (this.chatAborts.has(chat.id)) return 'Wait for the current turn to finish, or stop it first.';
+    const target = chat.messages.find(m => m.id === messageId);
+    if (!target?.checkpoint) return 'This turn has no undo point.';
+    if (target.checkpoint.undone) return 'This turn is already undone.';
+    const dir = this.resolveChatWorkingDir(chat);
+    if (!(await commitExists(dir, target.checkpoint.before))) return 'The undo point for this turn is gone.';
+    const head = await currentHead(dir);
+    if (head !== target.checkpoint.head) {
+      return 'A commit was made since this turn started. Undo only restores files and never rewrites commits, so it is turned off here.';
+    }
+    return null;
+  }
+
+  /** What undoing `messageId` would do, for the confirm dialog. */
+  async previewUndoTurn(chatId: string, messageId: string): Promise<{ ok: boolean; reason?: string; turns: number; files: number }> {
+    const chat = this.chatManager.get(chatId);
+    if (!chat) return { ok: false, reason: 'Chat not found.', turns: 0, files: 0 };
+    const reason = await this.undoBlocker(chat, messageId);
+    if (reason) return { ok: false, reason, turns: 0, files: 0 };
+    const target = chat.messages.find(m => m.id === messageId)!;
+    const files = await countChangedFiles(this.resolveChatWorkingDir(chat), target.checkpoint!.before);
+    return { ok: true, turns: this.turnsFrom(chat, messageId).length, files };
+  }
+
+  /**
+   * Puts the chat's worktree back to how it was before `messageId`'s turn.
+   * Later turns are undone with it. Takes a safety snapshot first, so
+   * `redoTurn` can bring the files back.
+   */
+  async undoTurn(chatId: string, messageId: string): Promise<Chat> {
+    const chat = this.chatManager.get(chatId);
+    if (!chat) throw new Error('Chat not found.');
+    const reason = await this.undoBlocker(chat, messageId);
+    if (reason) throw new Error(reason);
+    const dir = this.resolveChatWorkingDir(chat);
+    const target = chat.messages.find(m => m.id === messageId)!;
+    const undone = this.turnsFrom(chat, messageId);
+    const at = Date.now();
+    const result = await restoreCheckpoint(dir, target.checkpoint!.before, undoRef(chatId, at));
+    for (const m of undone) {
+      this.chatManager.updateMessage(chatId, m.id, { checkpoint: { ...m.checkpoint!, undone: { at, safety: result.safetyCommit } } });
+    }
+    // Every message from here on leaves the agent's context.
+    const start = chat.messages.findIndex(m => m.id === messageId);
+    for (const m of chat.messages.slice(start)) {
+      if (!m.undone) this.chatManager.updateMessage(chatId, m.id, { undone: true });
+    }
+    // The agents' own sessions are rewound when the next turn starts.
+    this.chatManager.setPendingRewind(chatId, { fromMessageId: messageId });
+    this.logger.info(`[checkpoints] undid ${undone.length} turn(s) in ${chatId}; ${result.changed.length} file(s) restored`);
+    return this.chatManager.get(chatId)!;
+  }
+
+  /** Brings back the files an undo of `messageId` removed. */
+  async redoTurn(chatId: string, messageId: string): Promise<Chat> {
+    const chat = this.chatManager.get(chatId);
+    if (!chat) throw new Error('Chat not found.');
+    if (this.chatAborts.has(chatId)) throw new Error('Wait for the current turn to finish, or stop it first.');
+    const target = chat.messages.find(m => m.id === messageId);
+    const undone = target?.checkpoint?.undone;
+    if (!undone) throw new Error('This turn is not undone.');
+    const dir = this.resolveChatWorkingDir(chat);
+    const start = chat.messages.findIndex(m => m.id === messageId);
+    const laterLive = chat.messages.slice(start + 1).some(m => m.role === 'user' && !m.checkpoint?.undone);
+    if (laterLive) throw new Error('New turns ran after this undo, so it can no longer be redone.');
+    if (!(await commitExists(dir, undone.safety))) throw new Error('The redo point is gone.');
+    await restoreCheckpoint(dir, undone.safety, undoRef(chatId, Date.now()));
+    // This undo's messages run from `start` to the next turn undone by
+    // another (later) undo, or to the end.
+    let end = chat.messages.length;
+    for (let i = start + 1; i < chat.messages.length; i++) {
+      const m = chat.messages[i];
+      if (m.role === 'user' && m.checkpoint?.undone && m.checkpoint.undone.at !== undone.at) { end = i; break; }
+    }
+    for (const m of chat.messages.slice(start, end)) {
+      const patch: Partial<ChatMessage> = { undone: undefined };
+      if (m.role === 'user' && m.checkpoint?.undone?.at === undone.at) {
+        const { undone: _drop, ...rest } = m.checkpoint;
+        patch.checkpoint = rest;
+      }
+      this.chatManager.updateMessage(chatId, m.id, patch);
+    }
+    // Nothing was rewound yet (a new turn would have blocked redo), so the
+    // pending rewind now starts at the next turn still undone, if any.
+    const next = chat.messages.slice(end).find(m => m.role === 'user' && m.checkpoint?.undone);
+    this.chatManager.setPendingRewind(chatId, next ? { fromMessageId: next.id } : null);
+    return this.chatManager.get(chatId)!;
   }
 
   /**

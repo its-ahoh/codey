@@ -259,6 +259,12 @@ export interface AgentRequest {
    */
   resumeSessionId?: string;
   /**
+   * With `resumeSessionId`: continue the session from this message id
+   * instead of its latest one, dropping everything after it. Used to rewind
+   * the conversation after the user undid turns. Only claude-code honours it.
+   */
+  resumeSessionAt?: string;
+  /**
    * Pre-allocated UUID for a fresh CLI session. The adapter passes this to
    * the CLI's session-id flag so the gateway can resume on later turns
    * without waiting for the CLI to emit one. Mutually exclusive with
@@ -363,6 +369,9 @@ export interface AgentResponse {
    * the gateway can safely resume work without reusing `--session-id`.
    */
   startedSessionId?: string;
+  /** Id of the session's last message after this run (claude-code only).
+   *  A later rewind resumes the session at this point. */
+  sessionEndId?: string;
   /** Tools that were denied due to permission settings (only when skipPermissions is false). */
   permissionDenials?: Array<{ toolName: string; toolInput?: Record<string, unknown> }>;
   /**

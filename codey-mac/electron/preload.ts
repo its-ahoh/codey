@@ -259,6 +259,12 @@ contextBridge.exposeInMainWorld('codey', {
     createWorktree: (id: string, name: string) => ipcRenderer.invoke('chats:createWorktree', id, name),
     setPullRequest: (id: string, pullRequest: any) =>
       ipcRenderer.invoke('chats:setPullRequest', id, pullRequest),
+    previewUndoTurn: (id: string, messageId: string) =>
+      ipcRenderer.invoke('chats:previewUndoTurn', id, messageId),
+    undoTurn: (id: string, messageId: string) =>
+      ipcRenderer.invoke('chats:undoTurn', id, messageId),
+    redoTurn: (id: string, messageId: string) =>
+      ipcRenderer.invoke('chats:redoTurn', id, messageId),
     openBot: (name: string) => ipcRenderer.invoke('chats:open-bot', name),
     updateBotGroup: (chatId: string, members: string[]) => ipcRenderer.invoke('chats:update-bot-group', chatId, members),
     inviteBots: (chatId: string, title: string, members: string[], context: string) => ipcRenderer.invoke('chats:invite-bots', chatId, title, members, context),

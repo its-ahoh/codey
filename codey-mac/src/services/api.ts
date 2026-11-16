@@ -156,6 +156,12 @@ export const apiService = {
       unwrap(await window.codey.chats.createWorktree(id, name)),
     setPullRequest: async (id: string, pullRequest: NonNullable<Chat['pullRequest']>): Promise<Chat> =>
       unwrap(await window.codey.chats.setPullRequest(id, pullRequest)),
+    previewUndoTurn: async (id: string, messageId: string): Promise<{ ok: boolean; reason?: string; turns: number; files: number }> =>
+      unwrap(await window.codey.chats.previewUndoTurn(id, messageId)),
+    undoTurn: async (id: string, messageId: string): Promise<Chat> =>
+      unwrap(await window.codey.chats.undoTurn(id, messageId)),
+    redoTurn: async (id: string, messageId: string): Promise<Chat> =>
+      unwrap(await window.codey.chats.redoTurn(id, messageId)),
     upload: async (chatId: string, fileName: string, mimeType: string, data: ArrayBuffer): Promise<{ id: string; name: string; path: string; mimeType: string; size: number }> =>
       unwrap(await window.codey.chats.upload(chatId, fileName, mimeType, data)),
     openBot: async (name: string): Promise<Chat> => unwrap(await window.codey.chats.openBot(name)),

@@ -107,6 +107,7 @@ export class ChatManager {
       ...(message.bot ? { bot: message.bot } : {}),
       // Kept as a line so line N stays messages[N-1]; slices skip it.
       ...(message.failed ? { failed: true } : {}),
+      ...(message.undone ? { undone: true } : {}),
       ...(message.authRequired ? { authRequired: message.authRequired } : {}),
       content: message.content,
     });
@@ -661,6 +662,14 @@ export class ChatManager {
     this.persist(chat);
   }
 
+  setPendingRewind(chatId: string, rewind: NonNullable<Chat['pendingRewind']> | null): void {
+    const chat = this.cache.get(chatId);
+    if (!chat) return;
+    if (rewind) chat.pendingRewind = rewind;
+    else delete chat.pendingRewind;
+    this.persist(chat);
+  }
+
   /** Drop the list so a new turn starts without inheriting the last one. */
   clearChecklist(chatId: string): void {
     const chat = this.cache.get(chatId);
@@ -767,7 +776,7 @@ export class ChatManager {
     this.persist(chat);
     // Team stubs are appended empty and filled here, so the sidecar's copy of
     // this line is stale whenever the patch carries new content or identity.
-    if (patch.content !== undefined || patch.agent !== undefined || patch.model !== undefined) {
+    if (patch.content !== undefined || patch.agent !== undefined || patch.model !== undefined || 'undone' in patch) {
       this.rewriteTranscript(chat);
     }
     return chat;
