@@ -1,6 +1,7 @@
 import React from 'react'
 import { C } from '../theme'
-import { fallbackErrorText, turnHeaderMeta } from './turnHeaderModel'
+import { fallbackErrorText, turnHeaderMeta, type FallbackInfo } from './turnHeaderModel'
+import { cardView, clearSignIn, startSignIn, useAgentSignIn } from './agentSignIn'
 import type { ChatMessage } from '../types'
 import { UIIcon } from './UIIcons'
 
@@ -156,7 +157,7 @@ export const TurnHeader: React.FC<Props> = ({ msg, hasThinking, expanded, onTogg
  *  (popover included), and the 6px gap under the icon is padding *inside* the
  *  layer rather than empty space that would close it mid-travel. */
 const FallbackWarning: React.FC<{
-  fallback: { from: string; to: string; reason?: string }
+  fallback: FallbackInfo
   onAskAgent?: (detail: string, fallback: { from: string; to: string }) => void
   /** Same reveal-on-hover gate as the identity label beside it, so the two
    *  read as one piece of on-demand metadata instead of the triangle
@@ -232,11 +233,29 @@ const FallbackWarning: React.FC<{
                   Ask Agent
                 </button>
               )}
+              {fallback.authRequired && <FallbackSignIn agent={fallback.authRequired.agent} />}
             </div>
           </div>
         </div>
       )}
     </span>
+  )
+}
+
+/** The primary agent was signed out and a fallback answered. Nothing is
+ *  re-run: the question has its answer. This only fixes the next turn. */
+const FallbackSignIn: React.FC<{ agent: string }> = ({ agent }) => {
+  const view = cardView(useAgentSignIn(agent))
+  if (view === 'succeeded') return <span style={styles.fallbackAction}>Signed in</span>
+  return (
+    <button
+      type="button"
+      style={styles.fallbackAction}
+      disabled={view === 'running'}
+      onClick={() => { clearSignIn(agent); startSignIn(agent) }}
+    >
+      {view === 'running' ? 'Waiting for sign-in...' : view === 'failed' ? 'Try sign-in again' : 'Sign in'}
+    </button>
   )
 }
 

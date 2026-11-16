@@ -27,7 +27,7 @@ import { ConfigManager, ResolvedVoiceTtsSettings } from './config';
 import { TelegramHandler, DiscordHandler, IMessageHandler, TuiHandler, VoiceChannelHandler, ChannelHandler } from './channels';
 import { synthesizeSpeech } from './voice-tts';
 import { runTextCompletion, streamTextCompletion, canRunDirectly } from './text-completion';
-import { AgentFactory, isThinkingEffort } from '@codey/core';
+import { AgentFactory, authRequiredHint, isThinkingEffort } from '@codey/core';
 import { pruneCodeyTmp, appendUsage, pruneUsage, usageRecordFrom } from '@codey/core';
 import { Logger } from './logger';
 import { ContextManager, ContextWindow } from '@codey/core';
@@ -208,6 +208,11 @@ export function turnModelLabel(agent: CodingAgent, model?: Pick<ModelConfig, 'mo
   const want = AGENT_API_TYPE[agent];
   if (DEDICATED_API_TYPES.has(want) && model.apiType && model.apiType !== want) return 'default';
   return model.model;
+}
+
+/** A channel cannot drive a login, so it gets one line instead of the error. */
+export function channelTextFor(output: string, authRequired: AgentResponse['authRequired']): string {
+  return authRequired ? authRequiredHint(authRequired.agent) : output;
 }
 
 /** What a failed chat turn shows: whatever the agent already wrote (streamed,
@@ -2893,6 +2898,7 @@ export class Codey {
 
   private formatAgentResponse(response: AgentResponse): string {
     if (!response.success) {
+      if (response.authRequired) return authRequiredHint(response.authRequired.agent);
       return `❌ Error: ${response.error}`;
     }
 
@@ -4091,7 +4097,7 @@ Example: /model gpt-4.1 write a Python script`;
       | { kind: 'blackboard'; step: number; bot: string; summary: string; blackboard: BlackboardSnapshot }
     ) => void | Promise<void>,
     runBot: (bot: string, prompt: string, codingAgent: CodingAgent, modelConfig: ModelConfig | undefined, blackboard: TeamBlackboard) => Promise<BotRunResult>,
-    onStepDone?: (d: { step: number; bot: string; failed: boolean; error?: string; fallback?: BotRunResult['fallback'] }) => void,
+    onStepDone?: (d: { step: number; bot: string; failed: boolean; error?: string; fallback?: BotRunResult['fallback']; authRequired?: AgentResponse['authRequired'] }) => void,
     coordinator?: { agent: CodingAgent; model?: ModelConfig },
     /** The user's own words, without composed chat context; gates the Aide first route. */
     firstRouteTask?: string,
@@ -4253,7 +4259,7 @@ Example: /model gpt-4.1 write a Python script`;
 
       const response = await runBot(turnNext, prompt, codingAgent, modelConfig, blackboard);
       if (!response.success) {
-        onStepDone?.({ step, bot: turnNext, failed: true, error: response.error });
+        onStepDone?.({ step, bot: turnNext, failed: true, error: response.error, authRequired: response.authRequired });
         fallbackMidRun = { reason: `bot ${turnNext} failed: ${response.error ?? 'unknown'}` };
         break;
       }
@@ -4444,7 +4450,7 @@ Example: /model gpt-4.1 write a Python script`;
       });
       return response.success
         ? { success: true, output: response.output, thinking: response.thinking || undefined, fallback: response.fallback }
-        : { success: false, output: '', error: response.error };
+        : { success: false, output: '', error: response.error, authRequired: response.authRequired };
     };
 
     const useAdvisor = dispatch === 'auto' && !opts.forceAll;
@@ -4662,7 +4668,7 @@ Example: /model gpt-4.1 write a Python script`;
       });
       return response.success
         ? { success: true, output: response.output, thinking: response.thinking || undefined, fallback: response.fallback }
-        : { success: false, output: '', error: response.error };
+        : { success: false, output: '', error: response.error, authRequired: response.authRequired };
     };
 
     if (pending.mode === 'sequential') {
@@ -4687,7 +4693,7 @@ Example: /model gpt-4.1 write a Python script`;
       emitter.beginBot?.({ step: nextResumeStep, bot: memberName, agent: codingAgent, model: modelConfig?.model });
       const response = await runOneBot(memberName, reprompt, codingAgent, modelConfig, blackboard);
       if (!response.success) {
-        emitter.endBot?.('failed', { failureReason: response.error ?? 'Bot failed without an error message' });
+        emitter.endBot?.('failed', { failureReason: response.error ?? 'Bot failed without an error message', authRequired: response.authRequired });
         await emitter.notify(`❌ Bot **${memberName}** failed on resume: ${response.error}`);
         return emitter.transcript;
       }
@@ -4799,7 +4805,7 @@ Example: /model gpt-4.1 write a Python script`;
     emitter.beginBot?.({ step: nextResumeStep, bot: turn.next, reason: turn.reason, agent: codingAgent, model: modelConfig?.model });
     const response = await runOneBot(turn.next, stepPrompt, codingAgent, modelConfig, resumeBoardForPrompt);
     if (!response.success) {
-      emitter.endBot?.('failed', { failureReason: response.error ?? 'Bot failed without an error message' });
+      emitter.endBot?.('failed', { failureReason: response.error ?? 'Bot failed without an error message', authRequired: response.authRequired });
       await emitter.notify(`❌ Bot **${turn.next}** failed on resume: ${response.error}`);
       return emitter.transcript;
     }
@@ -4897,7 +4903,7 @@ Example: /model gpt-4.1 write a Python script`;
       const response = await runOneBot(memberName, prompt, codingAgent, modelConfig, blackboard, (t) => emitter.onThinking(t, executionStep));
       if (!response.success) {
         results.push(`**${bot.name}**: ❌ Failed - ${response.error}`);
-        emitter.endBot?.('failed', { failureReason: response.error ?? 'Bot failed without an error message' });
+        emitter.endBot?.('failed', { failureReason: response.error ?? 'Bot failed without an error message', authRequired: response.authRequired });
         break;
       }
       if (response.thinking) thinkingByStep[i + 1] = response.thinking;
@@ -5121,7 +5127,7 @@ Example: /model gpt-4.1 write a Python script`;
       );
       resumeInfo = undefined;
       const resp = await runOneBot(botName, prompt, codingAgent, modelConfig, blackboard);
-      if (!resp.success) { results.push(`**${bot.name}**: ❌ Failed - ${resp.error}`); emitter.endBot?.('failed', { failureReason: resp.error ?? 'Bot failed without an error message' }); break; }
+      if (!resp.success) { results.push(`**${bot.name}**: ❌ Failed - ${resp.error}`); emitter.endBot?.('failed', { failureReason: resp.error ?? 'Bot failed without an error message', authRequired: resp.authRequired }); break; }
 
       const ingested = blackboard.ingest(botName, stepIndex, resp.output);
       if (blackboard.summarizeDelta(ingested.added)) {
@@ -5346,7 +5352,7 @@ Example: /model gpt-4.1 write a Python script`;
       await teamStatusChain;
       return response?.success
         ? { success: true, output: this.formatAgentResponse(response), thinking: response.thinking || undefined, fallback: response.fallback }
-        : { success: false, output: '', error: response?.error };
+        : { success: false, output: '', error: response?.error, authRequired: response?.authRequired };
     };
 
     const useAdvisor = team.dispatch === 'auto' && !opts.forceAll;
@@ -5408,6 +5414,8 @@ Example: /model gpt-4.1 write a Python script`;
       const botStep = new Map<string, number>(team.members.map((w, i) => [w, i + 1]));
       // Last fallback per bot, so its bubble shows who actually answered.
       const botFallback = new Map<string, NonNullable<AgentResponse['fallback']>>();
+      // Why a bot failed, when the reason is a signed-out agent.
+      const botAuth = new Map<string, NonNullable<AgentResponse['authRequired']>>();
 
       const runner = new ParallelTeamRunner({
         workspacesRoot,
@@ -5452,6 +5460,8 @@ Example: /model gpt-4.1 write a Python script`;
           // A later round on the primary agent must not keep an earlier fallback.
           if (response.fallback) botFallback.set(botName, response.fallback);
           else botFallback.delete(botName);
+          if (!response.success && response.authRequired) botAuth.set(botName, response.authRequired);
+          else botAuth.delete(botName);
           return response;
         },
         advisorRunner: async req => {
@@ -5513,7 +5523,7 @@ Example: /model gpt-4.1 write a Python script`;
           for (const bot of team.members) {
             botMsgs.endBot(
               completedNormally ? 'done' : 'failed',
-              completedNormally ? { fallback: botFallback.get(bot) } : { failureReason: `Parallel discussion ended: ${ev.reason}` },
+              completedNormally ? { fallback: botFallback.get(bot) } : { failureReason: `Parallel discussion ended: ${ev.reason}`, authRequired: botAuth.get(bot) },
               bot,
             );
           }
@@ -5526,7 +5536,7 @@ Example: /model gpt-4.1 write a Python script`;
         },
         onBotDone: (bot, ok, error) => botMsgs.endBot(
           ok ? 'done' : 'failed',
-          ok ? { fallback: botFallback.get(bot) } : { failureReason: error ?? 'Bot failed without an error message' },
+          ok ? { fallback: botFallback.get(bot) } : { failureReason: error ?? 'Bot failed without an error message', authRequired: botAuth.get(bot) },
           bot,
         ),
       });
@@ -5582,7 +5592,7 @@ Example: /model gpt-4.1 write a Python script`;
           }
         },
         runOneBot,
-        (d) => botMsgs.endBot(d.failed ? 'failed' : 'done', d.failed ? { failureReason: d.error ?? 'Bot failed without an error message' } : { fallback: d.fallback }),
+        (d) => botMsgs.endBot(d.failed ? 'failed' : 'done', d.failed ? { failureReason: d.error ?? 'Bot failed without an error message', authRequired: d.authRequired } : { fallback: d.fallback }),
         this.getAdvisorAgentAndModel(),
         opts.routingTask,
       );
@@ -5859,6 +5869,17 @@ Example: /model gpt-4.1 write a Python script`;
 
     this.logger.error(`Agent ${agent} failed: ${response.error || response.output}`);
 
+    // Asked only now, after a failure: a signed-in user never pays for it.
+    let authRequired: AgentResponse['authRequired'];
+    try {
+      if (await this.agentFactory.checkAuth(agent, request, response) === 'signed-out') {
+        authRequired = { agent };
+        response.authRequired = authRequired;
+      }
+    } catch (err) {
+      this.logger.warn(`Sign-in check for ${agent} failed: ${(err as Error).message}`);
+    }
+
     // Fallback is opt-in. When disabled, surface the original failure.
     // Prefer the live configManager so a recent edit doesn't get masked by
     // the snapshot in `this.config`.
@@ -5916,7 +5937,12 @@ Example: /model gpt-4.1 write a Python script`;
         // banner to the output text. The Aide reuses this same fallback-routed
         // runner for housekeeping (title/summary/JSON), and a text banner would
         // leak into those — e.g. a chat title becoming "[Fallback: …]".
-        fallbackResponse.fallback = { from: fromLabel, to: label, reason: summarizeFailure(response) };
+        fallbackResponse.fallback = {
+          from: fromLabel,
+          to: label,
+          reason: summarizeFailure(response),
+          ...(authRequired ? { authRequired } : {}),
+        };
         return fallbackResponse;
       }
       this.logger.error(`Fallback ${label} also failed: ${fallbackResponse.error || fallbackResponse.output}`);
@@ -7236,6 +7262,7 @@ Example: /model gpt-4.1 write a Python script`;
         ...(singleAgentResponse?.fallback ? { fallback: singleAgentResponse.fallback } : {}),
         ...(terminalTeamSummary ? { teamSummary: terminalTeamSummary } : {}),
         ...(turnError ? { failed: true } : {}),
+        ...(turnError && singleAgentResponse?.authRequired ? { authRequired: singleAgentResponse.authRequired } : {}),
       };
       // For per-bot team runs the transcript was already persisted as
       // individual bot messages by the BotMessageEmitter. Persist only a
@@ -7324,7 +7351,7 @@ Example: /model gpt-4.1 write a Python script`;
       // The Mac app turns a non-empty team response into a footer bubble, so
       // it only travels when a footer was actually persisted.
       const doneResponse = teamTurnId && footerPlan !== 'append' ? '' : output;
-      sink({ type: 'done', chatId, response: doneResponse, channelText: output, ...(outputImages.length ? { attachments: outputImages } : {}), memoryUsed: assistantMessage.memoryUsed, bot: assistantMessage.bot, botStatus: assistantMessage.botStatus, thinking: singleAgentResponse?.thinking, tokens, durationSec, agent: responseAgent, ...(responseModel ? { model: responseModel } : {}), title: finalTitle, choices: surfacedChoices, userQuestion: agentUserQuestion, fallback: singleAgentResponse?.fallback, ...(teamTurnId ? { teamTurnId } : {}) });
+      sink({ type: 'done', chatId, response: doneResponse, channelText: channelTextFor(output, assistantMessage.authRequired), ...(outputImages.length ? { attachments: outputImages } : {}), memoryUsed: assistantMessage.memoryUsed, bot: assistantMessage.bot, botStatus: assistantMessage.botStatus, thinking: singleAgentResponse?.thinking, tokens, durationSec, agent: responseAgent, ...(responseModel ? { model: responseModel } : {}), title: finalTitle, choices: surfacedChoices, userQuestion: agentUserQuestion, fallback: singleAgentResponse?.fallback, ...(teamTurnId ? { teamTurnId } : {}), ...(assistantMessage.authRequired ? { authRequired: assistantMessage.authRequired } : {}) });
 
       // ── Skills: post-run pass (fire-and-forget, response already delivered) ──
       // Skip the whole pass when this turn ended PAUSED — i.e. the team run

@@ -22,6 +22,14 @@ import type { ChatStep } from '../../packages/gateway/src/automations/chat'
 
 type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string }
 
+interface AgentLoginProgress {
+  agent: string
+  phase: 'starting' | 'waiting' | 'succeeded' | 'failed' | 'cancelled'
+  command: string
+  url?: string
+  output?: string
+}
+
 export type { LinkPreview }
 export type SkillEntry = ScannedSkill
 export type { SkillUsage, SkillUsageMap }
@@ -589,6 +597,14 @@ declare global {
           status: Record<string, { installed: boolean; path?: string; version?: string }>
           updates: Record<string, { current?: string; latest?: string; updateAvailable: boolean; unknown: boolean }>
         }>>
+        /** Sign-in state of each agent that has its own login. Never includes account details. */
+        authStatus: () => Promise<IpcResult<Record<string, 'signed-in' | 'signed-out' | 'api-key' | 'unknown'>>>
+        /** Runs the CLI's own login command. Resolves when it ends. */
+        login: (agent: string) => Promise<IpcResult<AgentLoginProgress>>
+        loginCancel: (agent: string) => Promise<IpcResult<void>>
+        /** Stops the hidden login and types the command into a Terminal panel tab. */
+        loginInTerminal: (input: { agent: string; chatId: string; cwd: string }) => Promise<IpcResult<{ sessionId: string }>>
+        onLoginProgress: (cb: (progress: AgentLoginProgress) => void) => () => void
         slashCommands: (agent: string) => Promise<IpcResult<Array<{ name: string; description: string; source: 'agent' | 'gateway' | 'skill' }>>>
       }
       chats: {

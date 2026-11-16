@@ -377,12 +377,20 @@ export interface AgentResponse {
     /** Why the primary failed, taken from its error/output. Truncated for
      *  display; the full text stays in the gateway log. */
     reason?: string;
+    /** The primary failed because it is signed out. The fallback answered, so
+     *  nothing is re-run; the badge only offers Sign in. */
+    authRequired?: { agent: CodingAgent };
   };
   /**
    * Set when the primary and every fallback failed: why each fallback failed,
    * so a failed turn can say which agent would need fixing.
    */
   fallbackFailures?: Array<{ agent: string; reason?: string }>;
+  /**
+   * The run failed because this agent's own login is missing or expired.
+   * Never set for an agent running on an API key.
+   */
+  authRequired?: { agent: CodingAgent };
   /** Structured question extracted from an AskUserQuestion tool call. */
   userQuestion?: {
     question: string;
