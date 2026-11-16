@@ -90,9 +90,10 @@ export type RunStatus = (
 const runStatusCommand: RunStatus = (bin, args, opts) => new Promise((resolve, reject) => {
   execFile(bin, args, { env: opts.env, cwd: opts.cwd, timeout: opts.timeoutMs, encoding: 'utf8' }, (err, stdout, stderr) => {
     // A non-zero exit is an answer ("not logged in" exits 1), not a failure to ask.
-    if (err && typeof (err as any).code !== 'number') return reject(err);
+    const code = err ? err.code : 0;
+    if (typeof code !== 'number') return reject(err);
     // codex prints its status line on stderr; claude prints JSON on stdout.
-    resolve({ stdout: stdout?.trim() ? stdout : (stderr ?? ''), code: err ? (err as any).code : 0 });
+    resolve({ stdout: stdout?.trim() ? stdout : (stderr ?? ''), code });
   });
 });
 

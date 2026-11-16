@@ -221,7 +221,7 @@ contextBridge.exposeInMainWorld('codey', {
     loginCancel: (agent: string) => ipcRenderer.invoke('agents:loginCancel', agent),
     loginInTerminal: (input: { agent: string; chatId: string; cwd: string }) => ipcRenderer.invoke('agents:loginInTerminal', input),
     onLoginProgress: (cb: (progress: { agent: string; phase: string; command: string; url?: string; output?: string }) => void) => {
-      const listener = (_e: unknown, progress: any) => cb(progress)
+      const listener = (_e: unknown, progress: Parameters<typeof cb>[0]) => cb(progress)
       ipcRenderer.on('agents:loginProgress', listener)
       return () => ipcRenderer.removeListener('agents:loginProgress', listener)
     },
