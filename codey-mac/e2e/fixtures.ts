@@ -3,21 +3,14 @@ import { execFileSync } from 'child_process'
 import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join, resolve } from 'path'
-
-// Settings that would point a test copy at the user's real chat bots, port or
-// data folder. HOME is swapped too, so every ~/... path stays in the temp home.
-const LIVE_SETTINGS = ['PORT', 'TELEGRAM_BOT_TOKEN', 'DISCORD_BOT_TOKEN', 'CODEY_HOME']
+import { isolatedTestEnvironment } from '../electron/test-mode'
 
 /** Starts an isolated Codey (own HOME, data and lock) beside the user's copy. */
 export async function launchCodey(): Promise<{ app: ElectronApplication; home: string }> {
   const home = mkdtempSync(join(tmpdir(), 'codey-e2e-'))
-  const env: Record<string, string> = {}
-  for (const [name, value] of Object.entries(process.env)) {
-    if (value !== undefined && !LIVE_SETTINGS.includes(name)) env[name] = value
-  }
   const app = await electron.launch({
     args: [resolve(__dirname, '..')],
-    env: { ...env, HOME: home, CODEY_TEST_HOME: home },
+    env: { ...isolatedTestEnvironment(process.env), HOME: home, CODEY_TEST_HOME: home },
   })
   return { app, home }
 }

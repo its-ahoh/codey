@@ -7,8 +7,9 @@ and drives it. Each test gets a fresh copy that runs beside the user's own Codey
   configs, skills and Electron user data are never shared.
 - The copy has its own single-instance lock and loads the built renderer.
 - No global hotkeys, login item, auto-update, voice helper or permission dialogs.
-- `TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`, `PORT` and `CODEY_HOME` are dropped,
-  so no chat channel connects.
+- Live Codey bridge credentials, agent config overrides, API keys, chat bot
+  tokens and `PORT` are dropped, so the copy cannot reuse the parent process's
+  data or connect a chat channel.
 - The window is shown without taking focus.
 
 ```bash
