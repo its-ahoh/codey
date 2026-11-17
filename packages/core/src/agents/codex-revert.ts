@@ -7,7 +7,7 @@
 //
 // The app server speaks newline-delimited JSON-RPC over stdio.
 
-import { spawn, type ChildProcess } from 'child_process';
+import { onJsonLines, sendJsonLine, withHelper } from './helper-process';
 
 export interface CodexRevertOptions {
   /** Executable to run; tests point this at a fake server. */
@@ -24,85 +24,46 @@ export interface CodexRevertOptions {
  * thread with no older turn left to keep); the caller then falls back to a
  * fresh session.
  */
-export function revertCodexTurns(threadId: string, numTurns: number, opts: CodexRevertOptions = {}): Promise<boolean> {
-  if (numTurns <= 0) return Promise.resolve(true);
-  return new Promise((resolve) => {
-    let env = opts.env;
-    if (!env) {
-      const { withCommonBinPaths } = require('./env') as typeof import('./env');
-      env = withCommonBinPaths({ ...process.env });
-    }
-    let child: ChildProcess;
-    try {
-      child = spawn(opts.command ?? 'codex', opts.args ?? ['app-server'], {
-        cwd: opts.cwd, env, stdio: ['pipe', 'pipe', 'ignore'],
-      });
-    } catch {
-      resolve(false);
-      return;
-    }
-    let done = false;
-    const finish = (ok: boolean) => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      try { child.stdin?.end(); } catch { /* already closed */ }
-      try { child.kill(); } catch { /* already gone */ }
-      resolve(ok);
-    };
-    const timer = setTimeout(() => finish(false), opts.timeoutMs ?? 20_000);
-    child.on('error', () => finish(false));
-    child.on('exit', () => finish(false));
-
+export async function revertCodexTurns(threadId: string, numTurns: number, opts: CodexRevertOptions = {}): Promise<boolean> {
+  if (numTurns <= 0) return true;
+  const ok = await withHelper(opts.command ?? 'codex', opts.args ?? ['app-server'], opts, async (child) => {
     let nextId = 0;
     const waiting = new Map<number, (msg: any) => void>();
-    let buffer = '';
-    child.stdout?.on('data', (chunk: Buffer) => {
-      buffer += chunk.toString('utf8');
-      let nl: number;
-      while ((nl = buffer.indexOf('\n')) >= 0) {
-        const line = buffer.slice(0, nl).trim();
-        buffer = buffer.slice(nl + 1);
-        if (!line) continue;
-        let msg: any;
-        try { msg = JSON.parse(line); } catch { continue; }
-        if (typeof msg.id === 'number' && waiting.has(msg.id)) {
-          waiting.get(msg.id)!(msg);
-          waiting.delete(msg.id);
-        }
-      }
+    onJsonLines(child, (msg) => {
+      if (typeof msg.id !== 'number' || !waiting.has(msg.id)) return;
+      waiting.get(msg.id)!(msg);
+      waiting.delete(msg.id);
     });
     const call = (method: string, params: unknown): Promise<any> => new Promise((res, rej) => {
       const id = ++nextId;
       waiting.set(id, (msg) => (msg.error ? rej(new Error(String(msg.error.message ?? method))) : res(msg.result)));
-      child.stdin?.write(`${JSON.stringify({ id, method, params })}\n`);
+      sendJsonLine(child, { id, method, params });
     });
 
-    (async () => {
-      await call('initialize', { clientInfo: { name: 'codey', version: '1' } });
-      child.stdin?.write(`${JSON.stringify({ method: 'initialized' })}\n`);
-      // The thread must be loaded in this server before it can be reverted.
-      await call('thread/resume', { threadId, excludeTurns: true });
-      // Newest first: the oldest of the newest N is the first turn to drop.
-      // One turn more is read to prove an older turn stays: a thread with
-      // fewer turns than expected is not the thread the caller counted, and
-      // reverting it would wipe turns the caller means to keep.
-      const turnIds: string[] = [];
-      let cursor: string | null = null;
-      while (turnIds.length <= numTurns) {
-        const page: any = await call('thread/turns/list', {
-          threadId, cursor, limit: Math.min(numTurns + 1 - turnIds.length, 100), sortDirection: 'desc', itemsView: 'summary',
-        });
-        for (const turn of page?.data ?? []) {
-          if (typeof turn?.id === 'string') turnIds.push(turn.id);
-        }
-        cursor = page?.nextCursor ?? null;
-        if (!cursor) break;
+    await call('initialize', { clientInfo: { name: 'codey', version: '1' } });
+    sendJsonLine(child, { method: 'initialized' });
+    // The thread must be loaded in this server before it can be reverted.
+    await call('thread/resume', { threadId, excludeTurns: true });
+    // Newest first: the oldest of the newest N is the first turn to drop.
+    // One turn more is read to prove an older turn stays: a thread with
+    // fewer turns than expected is not the thread the caller counted, and
+    // reverting it would wipe turns the caller means to keep.
+    const turnIds: string[] = [];
+    let cursor: string | null = null;
+    while (turnIds.length <= numTurns) {
+      const page: any = await call('thread/turns/list', {
+        threadId, cursor, limit: Math.min(numTurns + 1 - turnIds.length, 100), sortDirection: 'desc', itemsView: 'summary',
+      });
+      for (const turn of page?.data ?? []) {
+        if (typeof turn?.id === 'string') turnIds.push(turn.id);
       }
-      if (turnIds.length <= numTurns) return false;
-      const beforeTurnId = turnIds[numTurns - 1];
-      await call('thread/revert', { threadId, beforeTurnId });
-      return true;
-    })().then(finish, () => finish(false));
+      cursor = page?.nextCursor ?? null;
+      if (!cursor) break;
+    }
+    if (turnIds.length <= numTurns) return false;
+    const beforeTurnId = turnIds[numTurns - 1];
+    await call('thread/revert', { threadId, beforeTurnId });
+    return true;
   });
+  return ok === true;
 }

@@ -800,6 +800,31 @@ export class ChatManager {
   }
 
   /**
+   * `updateMessage` for many messages at once: every patch is merged, then
+   * the chat is written to disk a single time. An undo touches every message
+   * from its turn on; one write per message would rewrite the whole chat file
+   * (and the transcript) that many times. Unknown ids are skipped.
+   */
+  updateMessages(chatId: string, patches: Array<{ id: string; patch: Partial<ChatMessage> }>): Chat {
+    const chat = this.requireChat(chatId);
+    const index = new Map(chat.messages.map((m, i) => [m.id, i]));
+    let changed = false;
+    let transcript = false;
+    for (const { id, patch } of patches) {
+      const idx = index.get(id);
+      if (idx === undefined) continue;
+      chat.messages[idx] = { ...chat.messages[idx], ...patch };
+      changed = true;
+      if (patch.content !== undefined || patch.agent !== undefined || patch.model !== undefined || 'undone' in patch) transcript = true;
+    }
+    if (!changed) return chat;
+    chat.updatedAt = Date.now();
+    this.persist(chat);
+    if (transcript) this.rewriteTranscript(chat);
+    return chat;
+  }
+
+  /**
    * Kick off a background compaction job if the unsummarized tail has grown
    * past the threshold and one isn't already running for this chat. Errors
    * are logged and swallowed — compaction is best-effort and never blocks a

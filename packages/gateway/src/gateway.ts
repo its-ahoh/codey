@@ -7601,11 +7601,9 @@ Example: /model gpt-4.1 write a Python script`;
           if (forkedId) {
             this.chatManager.setSessionAnchor(chat.id, { ...anchor, sessionId: forkedId, syncedThroughMessageId: syncedThrough });
             // Kept turns now live in the fork, so a later undo finds them there.
-            for (const m of chat.messages.slice(0, from)) {
-              if (m.role === 'user' && m.agentSession?.sessionId === anchor.sessionId) {
-                this.chatManager.updateMessage(chat.id, m.id, { agentSession: { ...m.agentSession, sessionId: forkedId } });
-              }
-            }
+            this.chatManager.updateMessages(chat.id, chat.messages.slice(0, from)
+              .filter(m => m.role === 'user' && m.agentSession?.sessionId === anchor.sessionId)
+              .map(m => ({ id: m.id, patch: { agentSession: { ...m.agentSession!, sessionId: forkedId } } })));
             kept = true;
           }
         }
@@ -7632,9 +7630,8 @@ Example: /model gpt-4.1 write a Python script`;
       const withCheckpoint = chat.messages.filter(m => m.role === 'user' && m.checkpoint);
       if (withCheckpoint.length <= MAX_TURNS_PER_CHAT) return;
       const kept = withCheckpoint.slice(-MAX_TURNS_PER_CHAT);
-      for (const m of withCheckpoint.slice(0, -MAX_TURNS_PER_CHAT)) {
-        this.chatManager.updateMessage(chatId, m.id, { checkpoint: undefined });
-      }
+      this.chatManager.updateMessages(chatId, withCheckpoint.slice(0, -MAX_TURNS_PER_CHAT)
+        .map(m => ({ id: m.id, patch: { checkpoint: undefined } })));
       await deleteChatRefs(dir, chatId, { keepMessageIds: kept.map(m => m.id) });
     } catch (err) {
       this.logger.warn(`[checkpoints] prune failed for ${chatId}: ${(err as Error).message}`);
@@ -7730,14 +7727,18 @@ Example: /model gpt-4.1 write a Python script`;
       const undone = this.turnsFrom(chat, messageId);
       const at = Date.now();
       const result = await restoreCheckpoint(dir, target.checkpoint!.before, undoRef(chatId, at));
-      for (const m of undone) {
-        this.chatManager.updateMessage(chatId, m.id, { checkpoint: { ...m.checkpoint!, undone: { at, safety: result.safetyCommit } } });
-      }
-      // Every message from here on leaves the agent's context.
+      // Every message from here on leaves the agent's context. One write
+      // for all of them: a long chat would otherwise be saved once per message.
+      const marked = new Set(undone.map(m => m.id));
       const start = chat.messages.findIndex(m => m.id === messageId);
+      const patches: Array<{ id: string; patch: Partial<ChatMessage> }> = [];
       for (const m of chat.messages.slice(start)) {
-        if (!m.undone) this.chatManager.updateMessage(chatId, m.id, { undone: true });
+        const patch: Partial<ChatMessage> = {};
+        if (marked.has(m.id)) patch.checkpoint = { ...m.checkpoint!, undone: { at, safety: result.safetyCommit } };
+        if (!m.undone) patch.undone = true;
+        if (Object.keys(patch).length) patches.push({ id: m.id, patch });
       }
+      this.chatManager.updateMessages(chatId, patches);
       // The agents' own sessions are rewound when the next turn starts.
       this.chatManager.setPendingRewind(chatId, { fromMessageId: messageId });
       await this.pruneUndoSnapshots(chatId, dir);
@@ -7777,14 +7778,14 @@ Example: /model gpt-4.1 write a Python script`;
         const m = chat.messages[i];
         if (m.role === 'user' && m.checkpoint?.undone && m.checkpoint.undone.at !== undone.at) { end = i; break; }
       }
-      for (const m of chat.messages.slice(start, end)) {
+      this.chatManager.updateMessages(chatId, chat.messages.slice(start, end).map((m) => {
         const patch: Partial<ChatMessage> = { undone: undefined };
         if (m.role === 'user' && m.checkpoint?.undone?.at === undone.at) {
           const { undone: _drop, ...rest } = m.checkpoint;
           patch.checkpoint = rest;
         }
-        this.chatManager.updateMessage(chatId, m.id, patch);
-      }
+        return { id: m.id, patch };
+      }));
       // Nothing was rewound yet (a new turn would have blocked redo), so the
       // pending rewind now starts at the next turn still undone, if any.
       const next = chat.messages.slice(end).find(m => m.role === 'user' && m.undone);

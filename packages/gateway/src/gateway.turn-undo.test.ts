@@ -23,11 +23,18 @@ let repo: string;
 
 function fixture(executionMode: 'isolated-worktree' | 'shared-checkout' = 'isolated-worktree') {
   const chat: any = { id: 'chat', workspaceName: 'project', executionMode, messages: [] as ChatMessage[] };
+  /** Message count of each batched write. */
+  const writes: number[] = [];
   const chatManager = {
     get: () => chat,
     updateMessage: (_id: string, messageId: string, patch: Partial<ChatMessage>) => {
       const m = chat.messages.find((x: ChatMessage) => x.id === messageId);
       Object.assign(m, patch);
+      return chat;
+    },
+    updateMessages: (_id: string, patches: Array<{ id: string; patch: Partial<ChatMessage> }>) => {
+      writes.push(patches.length);
+      for (const { id, patch } of patches) Object.assign(chat.messages.find((x: ChatMessage) => x.id === id), patch);
       return chat;
     },
     setPendingRewind: (_id: string, rewind: any) => {
@@ -49,7 +56,7 @@ function fixture(executionMode: 'isolated-worktree' | 'shared-checkout' = 'isola
     logger: { warn: vi.fn(), info: vi.fn() },
   }) as Codey;
   (gateway as any).resolveChatWorkingDir = () => repo;
-  return { gateway, chat };
+  return { gateway, chat, writes };
 }
 
 /** Simulates one agent turn: snapshot, then the agent's file changes. */
@@ -94,6 +101,15 @@ describe('undoTurn / redoTurn', () => {
     expect(chat.messages.some((m: ChatMessage) => m.undone)).toBe(false);
     // Nothing was rewound yet, so there is nothing left to rewind.
     expect(chat.pendingRewind).toBeUndefined();
+  });
+
+  it('saves the chat once per undo and once per redo, however many messages', async () => {
+    const { gateway, chat, writes } = fixture();
+    for (let i = 1; i <= 6; i++) await turn(chat, `u${i}`, () => write(repo, 'a.txt', `v${i}\n`));
+    await gateway.undoTurn('chat', 'u1');
+    expect(writes).toEqual([12]);
+    await gateway.redoTurn('chat', 'u1');
+    expect(writes).toEqual([12, 12]);
   });
 
   it('refuses while a turn is running', async () => {
