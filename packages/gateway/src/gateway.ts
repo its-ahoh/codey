@@ -7528,15 +7528,8 @@ Example: /model gpt-4.1 write a Python script`;
         // but no message records it. Note that on the session, so a later
         // undo does not count turns it cannot see.
         if (resumeSessionId && !sessionTurnRecorded) this.chatManager.markSessionStray?.(chatId, resumeSessionId, started);
-        // Close the undo point whether the turn finished, failed or stopped.
-        // Holding the turn lock until it lands keeps an undo from racing it.
-        if (checkpointDir && this.chatManager.get(chatId)?.messages.find(m => m.id === userMessage.id)?.checkpoint) {
-          const after = await captureCheckpoint(checkpointDir, turnRef(chatId, userMessage.id, 'after'));
-          const current = this.chatManager.get(chatId)?.messages.find(m => m.id === userMessage.id)?.checkpoint;
-          if (after && current) this.chatManager.updateMessage(chatId, userMessage.id, { checkpoint: { ...current, after: after.commit } });
-        }
       } catch (err) {
-        this.logger.warn(`[checkpoints] could not close the undo point in ${chatId}: ${(err as Error).message}`);
+        this.logger.warn(`[checkpoints] could not record the stray turn in ${chatId}: ${(err as Error).message}`);
       }
       this.chatSemaphore.release();
       if (this.chatAborts.get(chatId) === abortController) {

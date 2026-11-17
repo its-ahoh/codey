@@ -33,9 +33,13 @@ One helper, `captureCheckpoint(worktree, ref)`, in a new
 1. Make a temp index file inside the repo's git dir
    (`<git-common-dir>/codey-checkpoint-index-<uuid>`).
 2. With `GIT_INDEX_FILE` set to it:
-   - `git read-tree HEAD` (skip when the repo has no commit yet)
-   - `git add -A -- .`
-   - `git write-tree` → tree id
+   - copy the real index into it, so `add -A` reuses its saved file stats and
+     hashes only changed files (about 3x faster on Codey's own 890-file repo;
+     a fresh index rehashes every file). No real index → `git read-tree HEAD`
+     (skipped when the repo has no commit yet)
+   - `git add -A -- .` and `git write-tree` → tree id, with
+     `core.splitIndex=false`, `splitIndex.sharedIndexExpire=never` and
+     `core.fsmonitor=false` so the scratch index never touches the real one
 3. `git commit-tree <tree> -p HEAD -m "codey checkpoint <ref>"` → commit id.
    HEAD as parent lets us tell later whether HEAD moved during the turn.
 4. `git update-ref <ref> <commit>`.
@@ -51,13 +55,12 @@ runs anyway, with no undo for it, and one warning goes to the log.
 
 ```
 refs/codey/chats/<chatId>/turns/<userMessageId>/before
-refs/codey/chats/<chatId>/turns/<userMessageId>/after
 refs/codey/chats/<chatId>/undo/<timestamp>     # safety snapshot taken by an undo
 ```
 
-`before` is captured right before the agent starts; `after` right after the
-turn ends (done, failed or stopped). We take `before` every turn, not "after of
-the previous turn", because the user may edit files by hand between turns, and
+`before` is captured right before the agent starts. There is no "after"
+snapshot: undo restores `before`, and redo uses the safety snapshot the undo
+took. We take `before` every turn, not "the end of the previous turn", because the user may edit files by hand between turns, and
 undo must not erase those edits.
 
 The **user message** that started the turn gets a small record (it exists
@@ -65,7 +68,7 @@ before the agent starts, and a team turn has many assistant messages):
 
 ```ts
 // packages/core/src/types/chat.ts, on ChatMessage
-checkpoint?: TurnCheckpoint;  // { before, after?, head, undone?: { at, safety } }
+checkpoint?: TurnCheckpoint;  // { before, head, undone?: { at, safety } }
 ```
 
 ## Where it hooks in
@@ -74,9 +77,7 @@ In `gateway.ts` `sendToChatWithMemoryTrace`, next to where `WriteDiffRecorder`
 is created (around the `const diffRecorder = new WriteDiffRecorder(...)` line):
 
 - capture `before` once the working dir is resolved and the chat is known to
-  be `isolated-worktree`;
-- capture `after` in the same place that emits `sink({ type: 'done', ... })`,
-  and also on the failed and stopped paths.
+  be `isolated-worktree`.
 
 One lock per worktree path, shared by capture and undo, so they never overlap.
 
@@ -162,7 +163,7 @@ Unit tests against real temp git repos (no mocks for git):
 
 - Should a chat in shared-checkout mode show a hint ("switch to a worktree to
   get undo")? Default: no hint in v1.
-- Team turns where bots write in parallel: one before/after pair for the
+- Team turns where bots write in parallel: one `before` snapshot for the
   whole team turn. Fine for v1.
 
 ## Not verified

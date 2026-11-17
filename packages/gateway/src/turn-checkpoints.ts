@@ -42,7 +42,9 @@ const REF_ROOT = 'refs/codey/chats';
 const refSafe = (id: string): string => id.replace(/[^A-Za-z0-9._-]/g, '_');
 
 export const chatRefPrefix = (chatId: string): string => `${REF_ROOT}/${refSafe(chatId)}/`;
-export const turnRef = (chatId: string, messageId: string, side: 'before' | 'after'): string =>
+// Only the snapshot before a turn is kept: undo restores it, and redo uses
+// the safety snapshot an undo takes. The state after a turn is never needed.
+export const turnRef = (chatId: string, messageId: string, side: 'before'): string =>
   `${chatRefPrefix(chatId)}turns/${refSafe(messageId)}/${side}`;
 export const undoRef = (chatId: string, stamp: number): string =>
   `${chatRefPrefix(chatId)}undo/${stamp}`;
@@ -91,13 +93,49 @@ async function withTempIndex<T>(cwd: string, git: CheckpointGit, fn: (env: Recor
   }
 }
 
+/** Git settings for writes to a scratch index: never split it (a split
+ *  scratch index could expire shared index files the real one still uses),
+ *  and never ask fsmonitor, whose answers belong to the real index. */
+const SCRATCH_INDEX_CONFIG = [
+  '-c', 'core.splitIndex=false',
+  '-c', 'splitIndex.sharedIndexExpire=never',
+  '-c', 'core.fsmonitor=false',
+];
+
+/**
+ * Copies the real index to `to`, keeping its modification time. Git trusts
+ * an entry's saved stats only if the file changed before the index was
+ * written ("racy git"): a file rewritten in the same second with the same
+ * size is caught by comparing against the index file's own mtime. A copy
+ * stamped "now" would hide such an edit, and the snapshot would keep the old
+ * content. Resolves false when there is no real index.
+ */
+async function copyIndex(from: string, to: string): Promise<boolean> {
+  try {
+    const stat = await fs.stat(from);
+    await fs.copyFile(from, to);
+    await fs.utimes(to, stat.atime, stat.mtime);
+    return true;
+  } catch {
+    await fs.rm(to, { force: true }).catch(() => undefined);
+    return false;
+  }
+}
+
 /** Snapshot of the folder as it is now, as a commit id (no ref written). */
 async function snapshotCommit(cwd: string, git: CheckpointGit, label: string): Promise<{ commit: string; head: string }> {
   const head = await headCommit(cwd, git);
   const commit = await withTempIndex(cwd, git, async (env) => {
-    if (head) await git(['read-tree', head], cwd, env);
-    await git(['-c', 'core.safecrlf=false', 'add', '-A', '--', '.'], cwd, env);
-    const tree = (await git(['write-tree'], cwd, env)).trim();
+    // Start from a copy of the real index: its saved file stats let `add -A`
+    // skip unchanged files and hash only the changed ones. A fresh index
+    // would hash every file in the repo on every snapshot (about 3x slower on
+    // Codey's own repo, far worse on large ones). Without a real index (a
+    // repo that has never staged anything), fall back to HEAD.
+    const realIndex = path.resolve(cwd, (await git(['rev-parse', '--git-path', 'index'], cwd)).trim());
+    const copied = await copyIndex(realIndex, env.GIT_INDEX_FILE);
+    if (!copied && head) await git(['read-tree', head], cwd, env);
+    await git([...SCRATCH_INDEX_CONFIG, '-c', 'core.safecrlf=false', 'add', '-A', '--', '.'], cwd, env);
+    const tree = (await git([...SCRATCH_INDEX_CONFIG, 'write-tree'], cwd, env)).trim();
     if (!tree) throw new Error('git write-tree returned no tree');
     const args = ['commit-tree', tree, ...(head ? ['-p', head] : []), '-m', `codey checkpoint ${label}`];
     const id = (await git(args, cwd, {
@@ -206,7 +244,7 @@ export async function restoreCheckpoint(
     }
     if (toWrite.length) {
       await withTempIndex(cwd, git, async (env) => {
-        await git(['read-tree', target], cwd, env);
+        await git([...SCRATCH_INDEX_CONFIG, 'read-tree', target], cwd, env);
         // A path that is now a directory (or the reverse) must be cleared
         // before checkout-index can write it.
         for (const rel of toWrite) {
@@ -217,7 +255,7 @@ export async function restoreCheckpoint(
         // checkout-index takes paths relative to cwd, one per call batch.
         const batch = 200;
         for (let i = 0; i < toWrite.length; i += batch) {
-          await git(['checkout-index', '-f', '--', ...toWrite.slice(i, i + batch)], cwd, env);
+          await git([...SCRATCH_INDEX_CONFIG, 'checkout-index', '-f', '--', ...toWrite.slice(i, i + batch)], cwd, env);
         }
       });
     }

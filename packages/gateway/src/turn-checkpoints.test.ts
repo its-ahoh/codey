@@ -67,6 +67,24 @@ describe('captureCheckpoint', () => {
     expect(git(repo, 'log', '--oneline', 'main').split('\n')).toHaveLength(1);
   });
 
+  it('catches a same-size edit whose file stats still match the index', async () => {
+    // The worst case for reusing the index's saved stats: after the edit the
+    // file has the same size and exactly the same mtime as when it was staged,
+    // so only git's racy check (entry mtime >= index mtime) can tell it
+    // changed. That check only works if the index copy keeps the real
+    // index's mtime.
+    const stamp = '202001010000';
+    write(repo, 'r.txt', 'one\n');
+    execFileSync('touch', ['-t', stamp, 'r.txt'], { cwd: repo });
+    git(repo, 'add', 'r.txt');
+    git(repo, 'commit', '-q', '-m', 'r');
+    write(repo, 'r.txt', 'two\n'); // same length
+    execFileSync('touch', ['-t', stamp, 'r.txt', '.git/index'], { cwd: repo });
+
+    const snap = await captureCheckpoint(repo, turnRef('c', 'racy', 'before'));
+    expect(git(repo, 'show', `${snap!.commit}:r.txt`)).toBe('two');
+  });
+
   it('works in a repo with no commit yet', async () => {
     const fresh = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'codey-ckpt-fresh-')));
     try {

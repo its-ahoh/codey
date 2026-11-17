@@ -48,8 +48,6 @@ export interface ToolCallEntry {
 export interface TurnCheckpoint {
   /** Snapshot of the folder right before the agent started. */
   before: string;
-  /** Snapshot right after the turn ended. Missing if that capture failed. */
-  after?: string;
   /** HEAD when the turn started ('' when the repo had no commit). Undo is
    *  refused once HEAD has moved, so commits are never rewritten. */
   head: string;
