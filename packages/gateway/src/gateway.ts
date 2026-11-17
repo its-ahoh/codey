@@ -75,13 +75,15 @@ export const MAX_NETWORK_RETRIES = 5;
 /** A timeout continuation gets one fresh execution window, not an endless loop. */
 export const MAX_TIMEOUT_RESUMES = 1;
 
-const TIMEOUT_RESUME_PROMPT = `Continue the task from where you left off. The previous turn was interrupted by Codey's execution time limit. Inspect the current state, complete only the remaining work, verify the result, and report the final outcome.`;
+const TIMEOUT_RESUME_PROMPT = `Continue the task from where you left off. The previous turn was stopped by Codey after it went silent for too long. Inspect the current state, complete only the remaining work, verify the result, and report the final outcome.`;
 
-/** Codey's adapter timeout, as distinct from a provider/network timeout. */
+/** Codey's adapter idle limit (the CLI went silent for the whole window), as
+ *  distinct from a provider/network timeout. The older fixed-limit wording is
+ *  still recognised. */
 export function isOwnTimeoutFailure(response: AgentResponse): boolean {
   if (response.success) return false;
   return [response.error, response.output].some(value =>
-    /^timeout after \d+(?:\.\d+)? minutes?$/i.test(value?.trim() ?? ''),
+    /^(?:timeout after|no output for) \d+(?:\.\d+)? minutes?$/i.test(value?.trim() ?? ''),
   );
 }
 
@@ -5833,7 +5835,7 @@ Example: /model gpt-4.1 write a Python script`;
         // Give the terminated CLI a moment to release its session lock before
         // starting `--resume`.
         delayMs = 1000;
-        message = `Execution limit reached — resuming Claude session ${timeoutResumes}/${MAX_TIMEOUT_RESUMES} in 1s`;
+        message = `Agent went silent — resuming Claude session ${timeoutResumes}/${MAX_TIMEOUT_RESUMES} in 1s`;
       } else {
         if (networkRetries >= MAX_NETWORK_RETRIES) break;
         networkRetries++;

@@ -7,6 +7,7 @@ import { ChecklistTracker } from './checklist';
 import { preferLocalBin, withCommonBinPaths } from './env';
 import { cursorToolPolicyArgs } from './tool-policy';
 import { agentSpawnOptions, cleanupProcessTreeAfterClose, terminateProcessTree, withForegroundPolicy } from './process-tree';
+import { DEFAULT_IDLE_TIMEOUT_MS, idleTimeoutMessage, startIdleTimer, IdleTimer } from './idle-timer';
 
 /**
  * Cursor CLI (`cursor-agent`) adapter.
@@ -323,7 +324,7 @@ export class CursorAdapter extends BaseAgentAdapter {
       let errorMessage: string | undefined;
       let capturedSessionId: string | undefined;
       let tokens: AgentResponse['tokens'];
-      let timeoutTimer: NodeJS.Timeout | undefined;
+      let idleTimer: IdleTimer | undefined;
       let abortHandler: (() => void) | undefined;
       const tools = new ToolCallCollector(request.onStatus);
       const statusUpdates = tools.statusUpdates;
@@ -333,7 +334,7 @@ export class CursorAdapter extends BaseAgentAdapter {
       const safeResolve = (response: AgentResponse) => {
         if (resolved) return;
         resolved = true;
-        if (timeoutTimer) clearTimeout(timeoutTimer);
+        idleTimer?.stop();
         if (abortHandler && request.signal) request.signal.removeEventListener('abort', abortHandler);
         resolve(response);
       };
@@ -377,6 +378,7 @@ export class CursorAdapter extends BaseAgentAdapter {
       };
 
       childProcess.stdout?.on('data', (data: Buffer) => {
+        idleTimer?.touch();
         buffer += data.toString();
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
@@ -392,6 +394,7 @@ export class CursorAdapter extends BaseAgentAdapter {
       });
 
       childProcess.stderr?.on('data', (data: Buffer) => {
+        idleTimer?.touch();
         stderr += data.toString();
       });
 
@@ -430,18 +433,18 @@ export class CursorAdapter extends BaseAgentAdapter {
         });
       });
 
-      const timeout = request.timeout || 900000;
-      timeoutTimer = setTimeout(() => {
+      const timeout = request.timeout || DEFAULT_IDLE_TIMEOUT_MS;
+      idleTimer = startIdleTimer(timeout, () => {
         if (resolved) return;
         terminateProcessTree(childProcess);
         const duration = Math.round((Date.now() - startTime) / 1000);
         safeResolve({
           success: false,
-          output: `Timeout after ${Math.round(timeout / 60000)} minutes`,
+          output: idleTimeoutMessage(timeout),
           error: 'timeout',
           duration,
         });
-      }, timeout);
+      });
 
       if (request.signal) {
         abortHandler = () => {
