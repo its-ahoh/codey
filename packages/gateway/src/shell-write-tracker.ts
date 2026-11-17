@@ -173,6 +173,18 @@ export class ShellWriteTracker {
     }
   }
 
+  /**
+   * Absolute paths that are already dirty and named in the pending command.
+   * Call after `noteStart`: these are the ones worth hashing before the
+   * command runs, so a later turn ledger keeps uncommitted pre-edit content.
+   */
+  pathsToPrime(): string[] {
+    const root = this.repoRoot
+    if (!root || this.disabled || !this.command) return []
+    return mentionedPaths(this.command, [...this.before.keys()], root, this.workingDir)
+      .map(rel => `${root}/${rel}`)
+  }
+
   /** Absolute paths the just-finished command wrote, newest sample retained so
    *  a following command compares against the tree this one left behind. */
   async noteEnd(): Promise<string[]> {
@@ -247,4 +259,31 @@ export const fileChangePaths = (output: unknown, workingDir: string): string[] =
     if (!out.includes(abs)) out.push(abs);
   }
   return out;
+};
+
+/** File-editing tools that name their target in the tool input (Claude Edit/
+ *  Write, and close cousins). Shell and Codex `file_change` are handled
+ *  separately. */
+const FILE_EDIT_TOOLS = new Set([
+  'edit', 'write', 'multiedit', 'notebookedit', 'notebook',
+  'create', 'create_file', 'apply_patch', 'applypatch',
+  'strreplace', 'search_replace', 'replace_in_file',
+]);
+
+const normalizeToolName = (tool: string): string =>
+  tool.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+export const isFileEditTool = (tool?: string): boolean => {
+  if (!tool || isShellTool(tool) || isFileChangeTool(tool)) return false;
+  return FILE_EDIT_TOOLS.has(normalizeToolName(tool));
+};
+
+/** Absolute paths an Edit/Write-style tool is about to touch, from its input. */
+export const fileEditPaths = (tool: string | undefined, input: unknown, workingDir: string): string[] => {
+  if (!isFileEditTool(tool)) return [];
+  const i = (input ?? {}) as Record<string, unknown>;
+  const raw = i.file_path ?? i.path ?? i.filename ?? i.notebook_path;
+  if (typeof raw !== 'string' || !raw) return [];
+  const abs = raw.startsWith('/') ? raw : `${workingDir.replace(/\/$/, '')}/${raw.replace(/^\.\//, '')}`;
+  return [abs];
 };

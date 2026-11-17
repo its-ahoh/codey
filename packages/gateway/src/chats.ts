@@ -693,6 +693,15 @@ export class ChatManager {
     this.persist(chat);
   }
 
+  setStrayTurnFiles(chatId: string, files: NonNullable<Chat['strayTurnFiles']> | null): void {
+    const chat = this.cache.get(chatId);
+    if (!chat) return;
+    if (files && files.length) chat.strayTurnFiles = files;
+    else if (chat.strayTurnFiles) delete chat.strayTurnFiles;
+    else return;
+    this.persist(chat);
+  }
+
   /** Drop the list so a new turn starts without inheriting the last one. */
   clearChecklist(chatId: string): void {
     const chat = this.cache.get(chatId);

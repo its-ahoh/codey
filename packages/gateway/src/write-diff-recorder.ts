@@ -15,9 +15,14 @@
 // patch text go into the chat, so the baseline survives a gateway restart —
 // the next write to a path diffs against the blob its last write recorded.
 // A blob that git has since pruned falls back to HEAD's copy of the file.
+//
+// For a future path-level undo, callers should `primeBefore` on tool_start so
+// the before blob is the on-disk content *before* the write (not HEAD, which
+// misses uncommitted edits). Each WriteDiff then carries `before`, and
+// `aggregateTurnFiles` rolls a turn's diffs into one ledger entry per path.
 
 import { promises as fs } from 'fs';
-import type { WriteDiff } from '@codey/core';
+import type { TurnFileEntry, WriteDiff } from '@codey/core';
 import type { GitRunner } from './shell-write-tracker';
 
 /** Resolves symlinks so a path can be matched against git's repo root, which
@@ -33,7 +38,7 @@ export const defaultRealpath: RealpathRunner = async (p) => {
 export const MAX_PATCH_CHARS = 64 * 1024;
 
 /** Git's id for empty content. `hash-object -w /dev/null` guarantees it exists. */
-const EMPTY_BLOB = 'e69de29bb2d1d6434b8b29ae775ad8c2e48c5391';
+export const EMPTY_BLOB = 'e69de29bb2d1d6434b8b29ae775ad8c2e48c5391';
 
 /** Counts +/- lines of a unified diff, ignoring the file header. */
 export const countPatchLines = (patch: string): { added: number; removed: number } => {
@@ -63,9 +68,42 @@ export const priorBlobs = (
   return out;
 };
 
+/**
+ * Roll per-call diffs into one entry per path for the turn: the first call's
+ * `before`, the last call's `after`. When the first call had no exact before
+ * (an older chat, or a write the gateway could not hash in advance) the
+ * entry's `before` stays unset — the path was touched but cannot be restored.
+ */
+export const aggregateTurnFiles = (diffs: WriteDiff[]): TurnFileEntry[] => {
+  const map = new Map<string, TurnFileEntry>();
+  for (const d of diffs) {
+    const existing = map.get(d.path);
+    if (existing) existing.after = d.blob;
+    else map.set(d.path, { path: d.path, ...(d.before ? { before: d.before } : {}), after: d.blob });
+  }
+  return [...map.values()];
+};
+
+/**
+ * Fold a later ledger onto an earlier one (a stopped turn's files onto the
+ * turn that follows it): per path, the earlier `before` and the later `after`.
+ */
+export const mergeTurnFiles = (earlier: TurnFileEntry[], later: TurnFileEntry[]): TurnFileEntry[] => {
+  const map = new Map<string, TurnFileEntry>(earlier.map(e => [e.path, { ...e }]));
+  for (const e of later) {
+    const existing = map.get(e.path);
+    if (existing) existing.after = e.after;
+    else map.set(e.path, { ...e });
+  }
+  return [...map.values()];
+};
+
 export class WriteDiffRecorder {
   private disabled = false;
   private repoRoot: string | null = null;
+  /** Path → on-disk blob hashed on the pending call's tool_start. Consumed by
+   *  that call's record(), so each call still diffs only its own change. */
+  private readonly primed = new Map<string, string>();
 
   constructor(
     private readonly workingDir: string,
@@ -109,23 +147,9 @@ export class WriteDiffRecorder {
     }
   }
 
-  /** The file's content before this call: its last recorded write, else the
-   *  committed copy, else nothing (a file this chat created). */
-  private async beforeBlob(absPath: string, rel: string | null): Promise<string> {
-    const remembered = this.lastBlob.get(absPath);
-    if (remembered && await this.blobExists(remembered)) return remembered;
-    if (rel) {
-      try {
-        const id = (await this.git(['rev-parse', '--verify', '--quiet', `HEAD:${rel}`], this.workingDir)).trim();
-        if (id) return id;
-      } catch { /* not in HEAD: a new file */ }
-    }
-    return EMPTY_BLOB;
-  }
-
   /** Stores the file's current content and returns its blob; the empty blob
-   *  when the file is gone (deleted by the call). */
-  private async afterBlob(absPath: string): Promise<string> {
+   *  when the file is gone (deleted or not yet created). */
+  private async hashPath(absPath: string): Promise<string> {
     try {
       const id = (await this.git(['hash-object', '-w', '--', absPath], this.workingDir)).trim();
       if (id) return id;
@@ -135,11 +159,62 @@ export class WriteDiffRecorder {
   }
 
   /**
+   * Hash on-disk content for paths about to be written. Call on tool_start.
+   * Per call, not per turn: the turn's pre-state is the first call's `before`,
+   * which `aggregateTurnFiles` keeps.
+   */
+  async primeBefore(paths: string[]): Promise<void> {
+    if (this.disabled || paths.length === 0) return;
+    const root = await this.resolveRepoRoot();
+    if (!root) return;
+    try {
+      for (const path of paths) {
+        // Outside the repo: still hash so a write there can be ledgered; the
+        // relative check in record() will name it by absolute path.
+        this.primed.set(path, await this.hashPath(path));
+      }
+    } catch {
+      this.disabled = true;
+    }
+  }
+
+  /** The committed copy of `rel`, else the empty blob (a new file). */
+  private async headBlob(rel: string | null): Promise<string> {
+    if (rel) {
+      try {
+        const id = (await this.git(['rev-parse', '--verify', '--quiet', `HEAD:${rel}`], this.workingDir)).trim();
+        if (id) return id;
+      } catch { /* not in HEAD: a new file */ }
+    }
+    return EMPTY_BLOB;
+  }
+
+  /**
+   * The file's content before this call, and whether that is known to be what
+   * was on disk. Exact: a tool_start prime, or HEAD for a path the caller saw
+   * clean at the start. Otherwise a guess — the last recorded write (which a
+   * commit, checkout, or hand edit since may have made stale), else HEAD. A
+   * guess is fine for showing a diff but not for restoring a file.
+   */
+  private async beforeBlob(absPath: string, rel: string | null, cleanAtStart: boolean): Promise<{ blob: string; exact: boolean }> {
+    const primed = this.primed.get(absPath);
+    if (primed && await this.blobExists(primed)) return { blob: primed, exact: true };
+    if (cleanAtStart) return { blob: await this.headBlob(rel), exact: true };
+    const remembered = this.lastBlob.get(absPath);
+    if (remembered && await this.blobExists(remembered)) return { blob: remembered, exact: false };
+    return { blob: await this.headBlob(rel), exact: false };
+  }
+
+  /**
    * Diffs of what the just-finished call did to `paths` (absolute). A path
    * whose content is unchanged is left out. Best-effort: any git failure
    * disables the recorder for the rest of the turn.
+   *
+   * `cleanAtStart`: every path not primed was unmodified (matched HEAD, or did
+   * not exist) when the call began — true for the shell tracker, whose dirty
+   * paths are all primed. `before` is only set on an entry when it is exact.
    */
-  async record(paths: string[]): Promise<WriteDiff[]> {
+  async record(paths: string[], opts: { cleanAtStart?: boolean } = {}): Promise<WriteDiff[]> {
     if (this.disabled || paths.length === 0) return [];
     const root = await this.resolveRepoRoot();
     if (!root) return [];
@@ -147,9 +222,10 @@ export class WriteDiffRecorder {
     try {
       for (const path of paths) {
         const rel = await this.relativeTo(root, path);
-        const before = await this.beforeBlob(path, rel);
+        const { blob: before, exact } = await this.beforeBlob(path, rel, !!opts.cleanAtStart);
         if (before === EMPTY_BLOB) await this.git(['hash-object', '-w', '/dev/null'], this.workingDir);
-        const after = await this.afterBlob(path);
+        const after = await this.hashPath(path);
+        this.primed.delete(path);
         this.lastBlob.set(path, after);
         if (before === after) continue;
         const name = rel ?? path.replace(/^\/+/, '');
@@ -162,7 +238,7 @@ export class WriteDiffRecorder {
           .replace(`+++ b/${after}`, `+++ b/${name}`);
         const binary = /^Binary files .* differ$/m.test(raw) && !raw.includes('@@');
         const counts = binary ? { added: 0, removed: 0 } : countPatchLines(patch);
-        const entry: WriteDiff = { path, ...counts, blob: after };
+        const entry: WriteDiff = { path, ...counts, blob: after, ...(exact ? { before } : {}) };
         if (!binary) {
           if (patch.length > MAX_PATCH_CHARS) entry.truncated = true;
           else entry.patch = patch;
