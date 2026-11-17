@@ -15,76 +15,14 @@
       "enabled": false
     }
   },
-  "agents": {
-    "claude-code": {
-      "enabled": true,
-      "provider": "anthropic",
-      "defaultModel": "claude-sonnet-4-20250514",
-      "models": [
-        "claude-sonnet-4-20250514",
-        "claude-opus-4-20250514",
-        "claude-3-5-sonnet-20241022"
-      ]
-    },
-    "opencode": {
-      "enabled": true,
-      "provider": "openai",
-      "defaultModel": "gpt-4.1",
-      "models": [
-        "gpt-4.1",
-        "gpt-4o",
-        "o4-mini"
-      ]
-    },
-    "codex": {
-      "enabled": true,
-      "provider": "openai",
-      "defaultModel": "gpt-5-codex",
-      "models": [
-        "gpt-5-codex",
-        "gpt-4.1"
-      ]
-    }
-  },
-  "context": {
-    "ttlMinutes": 60
-  },
-  "memory": {
+  "agents": {},
+  "models": [],
+  "apiKeys": [],
+  "fallback": {
     "enabled": true,
-    "autoExtract": true
-  },
-  "api": {
-    "bindHost": "127.0.0.1",
-    "allowedOrigins": []
+    "order": []
   },
   "dev": {
-    "logLevel": "info",
-    "logFile": "gateway.log"
-  },
-  "advisor": {
-    "agent": "claude-code",
-    "model": "claude-haiku-4-5"
-  },
-  "apiKeys": [
-    {
-      "name": "voice-main",
-      "apiKey": "",
-      "openaiBaseUrl": "https://api.openai.com/v1",
-      "purpose": "voice"
-    }
-  ],
-  "voice": {
-    "enabled": false,
-    "dictationEnabled": false,
-    "conversationEnabled": false,
-    "hotkey": "F5",
-    "converseHotkey": "Shift+Fn",
-    "language": "auto",
-    "injection": "paste",
-    "provider": "api",
-    "apiUrl": "https://api.openai.com/v1",
-    "apiKeyRef": "voice-main",
-    "apiModel": "whisper-1",
-    "localModel": "openai_whisper-large-v3-turbo"
+    "logLevel": "info"
   }
 }

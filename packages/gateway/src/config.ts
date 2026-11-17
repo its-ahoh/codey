@@ -491,9 +491,19 @@ export class ConfigManager extends EventEmitter {
   getApiAllowedOrigins(): string[] { return this.config.api?.allowedOrigins ?? []; }
   getSkipPermissions(): boolean { return this.config.gateway.skipPermissions ?? true; }
 
-  /** Canonical default = first entry in fallback.order. */
+  /**
+   * Canonical default = first entry in fallback.order. A fresh install has
+   * none, because Codey does not assume which agent the user has; callers that
+   * need a value get `claude-code` as a placeholder, and the gateway refuses to
+   * run a turn until `hasDefaultAgent()` is true.
+   */
   getDefaultAgent(): CodingAgent {
     return (this.config.fallback.order[0]?.agent ?? 'claude-code') as CodingAgent;
+  }
+
+  /** True once the user has picked at least one agent. */
+  hasDefaultAgent(): boolean {
+    return this.config.fallback.order.length > 0;
   }
 
   /**
@@ -904,21 +914,10 @@ function getDefaultConfig(): GatewayConfigJson {
       'cursor':      {},
       'grok':        {},
     },
-    models: [
-      { apiType: 'anthropic', model: 'claude-sonnet-4-5', provider: 'anthropic' },
-      { apiType: 'anthropic', model: 'claude-opus-4-1',   provider: 'anthropic' },
-      { apiType: 'anthropic', model: 'claude-haiku-4-5',  provider: 'anthropic' },
-      { apiType: 'openai',    model: 'gpt-5',             provider: 'openai' },
-    ],
+    // No models and no agents: the user picks their own agent on first run.
+    models: [],
     apiKeys: [],
-    fallback: {
-      enabled: true,
-      order: [
-        { agent: 'claude-code', model: 'claude-sonnet-4-5' },
-        { agent: 'opencode',    model: 'gpt-5' },
-        { agent: 'codex',       model: 'gpt-5' },
-      ],
-    },
+    fallback: { enabled: true, order: [] },
     dev: { logLevel: 'info' },
   };
 }

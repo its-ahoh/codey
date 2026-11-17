@@ -466,7 +466,8 @@ export interface MemorySettings {
 export interface GatewayConfig {
   port: number;
   channels: ChannelConfig;
-  defaultAgent: CodingAgent;
+  /** Unset until the user picks an agent; see ConfigManager.hasDefaultAgent. */
+  defaultAgent?: CodingAgent;
   agents?: {
     'claude-code'?: AgentModelConfig;
     'opencode'?: AgentModelConfig;

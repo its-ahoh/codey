@@ -39,6 +39,7 @@ function setup() {
     resolveChatWorkingDir: (chat: Chat) => chat.workingDirOverride ?? chat.botChat?.homeDir ?? root,
     resolveWorkspaceWorkingDir: () => root,
     getDefaultAgent: () => 'codex',
+    hasDefaultAgent: () => true,
     getDefaultModelConfig: () => undefined,
     getModelConfig: (_agent: string, model: string) => ({ model }),
     getSkipPermissions: () => false,

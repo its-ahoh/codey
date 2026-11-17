@@ -253,3 +253,28 @@ describe('api key CRUD', () => {
     });
   });
 });
+
+describe('no assumed default agent', () => {
+  it('a config without a fallback block picks no agent and no models', () => {
+    withTempConfig({}, cm => {
+      expect(cm.hasDefaultAgent()).toBe(false);
+      expect(cm.getFallback().order).toEqual([]);
+      expect(cm.getDefaultModel()).toBe('');
+    });
+  });
+
+  it('a config with an agent in fallback.order has a default', () => {
+    withTempConfig({ fallback: { enabled: true, order: [{ agent: 'grok' }] } }, cm => {
+      expect(cm.hasDefaultAgent()).toBe(true);
+      expect(cm.getDefaultAgent()).toBe('grok');
+    });
+  });
+
+  it('the shipped gateway.json.example picks no agent and no models', () => {
+    const example = JSON.parse(fs.readFileSync(path.join(__dirname, '../../../gateway.json.example'), 'utf-8'));
+    withTempConfig(example, cm => {
+      expect(cm.hasDefaultAgent()).toBe(false);
+      expect(cm.listModels()).toEqual([]);
+    });
+  });
+});
