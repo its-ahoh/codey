@@ -336,3 +336,32 @@ describe('applyPendingRewind: OpenCode and Pi', () => {
     expect(chat.messages[0].agentSession.sessionId).toBe('oc-fork');
   });
 });
+
+describe('redo after a final undo', () => {
+  it('ignores turns whose undo is final and can still redo the newest undo', async () => {
+    const { gateway, chat } = fixture();
+    await turn(chat, 'u1', () => write(repo, 'a.txt', '1\n'));
+    await turn(chat, 'u2', () => write(repo, 'a.txt', '2\n'));
+    await gateway.undoTurn('chat', 'u2');
+    // A new turn makes the undo of u2 final.
+    await turn(chat, 'u3', () => write(repo, 'a.txt', '3\n'));
+    await turn(chat, 'u4', () => write(repo, 'a.txt', '4\n'));
+    await gateway.undoTurn('chat', 'u4');
+    expect(read(repo, 'a.txt')).toBe('3\n');
+
+    await gateway.redoTurn('chat', 'u4');
+    expect(read(repo, 'a.txt')).toBe('4\n');
+    // u2 stays undone for good.
+    expect(chat.messages.find((m: ChatMessage) => m.id === 'u2').undone).toBe(true);
+  });
+
+  it('still makes an earlier undo in the same tail go first', async () => {
+    const { gateway, chat } = fixture();
+    await turn(chat, 'u1', () => write(repo, 'a.txt', '1\n'));
+    await turn(chat, 'u2', () => write(repo, 'a.txt', '2\n'));
+    await turn(chat, 'u3', () => write(repo, 'a.txt', '3\n'));
+    await gateway.undoTurn('chat', 'u3');
+    await gateway.undoTurn('chat', 'u2');
+    await expect(gateway.redoTurn('chat', 'u3')).rejects.toThrow(/Redo that one first/);
+  });
+});

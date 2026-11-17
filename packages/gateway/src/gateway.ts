@@ -7765,8 +7765,13 @@ Example: /model gpt-4.1 write a Python script`;
       }
       // This undo's snapshot holds the files of every turn before it. Bringing
       // it back while an earlier turn is still undone would restore that
-      // turn's files too, behind the chat's back.
-      if (chat.messages.slice(0, start).some(m => m.role === 'user' && m.undone)) {
+      // turn's files too, behind the chat's back. Only the undone turns since
+      // the last live one count: an undo with a newer turn after it is final,
+      // and its turns stay undone for good.
+      for (let i = start - 1; i >= 0; i--) {
+        const m = chat.messages[i];
+        if (m.role !== 'user') continue;
+        if (!m.undone) break;
         throw new Error('An earlier turn is still undone. Redo that one first.');
       }
       if (!(await commitExists(dir, undone.safety))) throw new Error('The redo point is gone.');

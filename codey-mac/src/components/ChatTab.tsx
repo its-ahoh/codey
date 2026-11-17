@@ -915,20 +915,23 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
   // Messages of undone turns are dimmed. The first user message of each undo
   // carries the Redo chip (one undo can cover several turns).
   const { undoneIds, redoAnchors } = useMemo(() => {
+    const messages = chat?.messages ?? []
     const ids = new Set<string>()
     const anchors = new Set<string>()
-    const seenUndo = new Set<number>()
     let inUndone = false
-    for (const m of chat?.messages ?? []) {
-      if (m.role === 'user') {
-        const undone = m.checkpoint?.undone
-        inUndone = !!undone
-        if (undone && !seenUndo.has(undone.at)) { seenUndo.add(undone.at); anchors.add(m.id) }
-      }
+    for (const m of messages) {
+      if (m.role === 'user') inUndone = !!m.checkpoint?.undone
       // `undone` is what the gateway goes by; a turn without an undo point
       // of its own is still undone along with the turns around it.
       if (m.undone || inUndone) ids.add(m.id)
     }
+    // Only the undone turns after the last live one can be redone, and the
+    // gateway redoes the earliest of them first. An undo with a newer turn
+    // after it is final, so it gets no Redo.
+    let lastLive = -1
+    messages.forEach((m, i) => { if (m.role === 'user' && !m.undone) lastLive = i })
+    const firstRedo = messages.find((m, i) => i > lastLive && m.role === 'user' && m.checkpoint?.undone)
+    if (firstRedo) anchors.add(firstRedo.id)
     return { undoneIds: ids, redoAnchors: anchors }
   }, [chat?.messages])
   const pendingBotRequests = chat.messages.filter(m => m.botInteraction?.status === 'pending')

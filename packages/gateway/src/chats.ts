@@ -457,9 +457,15 @@ export class ChatManager {
     )) {
       migrated.push(chat.sessionAnchor);
     }
+    // A stopped or failed turn this session ran stays in the session after
+    // the next good turn, so its marker must outlive that save.
+    const previous = migrated.find(item => item.agent === anchor.agent && item.scopeKey === anchor.scopeKey);
+    const kept = previous?.strayAt !== undefined && anchor.strayAt === undefined && previous.sessionId === anchor.sessionId
+      ? { ...anchor, strayAt: previous.strayAt }
+      : anchor;
     chat.sessionAnchors = migrated
       .filter(item => item.agent !== anchor.agent || item.scopeKey !== anchor.scopeKey)
-      .concat(anchor);
+      .concat(kept);
     delete chat.sessionAnchor;
     chat.updatedAt = Date.now();
     this.persist(chat);
