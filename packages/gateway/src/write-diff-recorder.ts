@@ -16,10 +16,10 @@
 // the next write to a path diffs against the blob its last write recorded.
 // A blob that git has since pruned falls back to HEAD's copy of the file.
 //
-// For a future path-level undo, callers should `primeBefore` on tool_start so
-// the before blob is the on-disk content *before* the write (not HEAD, which
-// misses uncommitted edits). Each WriteDiff then carries `before`, and
-// `aggregateTurnFiles` rolls a turn's diffs into one ledger entry per path.
+// The recorder also keeps the turn's undo ledger (`turnFiles`): per path, the
+// content before the turn's first write and after its last. Callers should
+// `primeBefore` on tool_start so that "before" is what was on disk (not HEAD,
+// which misses uncommitted edits). The WriteDiffs stay display-only.
 
 import { promises as fs } from 'fs';
 import type { TurnFileEntry, WriteDiff } from '@codey/core';
@@ -69,22 +69,6 @@ export const priorBlobs = (
 };
 
 /**
- * Roll per-call diffs into one entry per path for the turn: the first call's
- * `before`, the last call's `after`. When the first call had no exact before
- * (an older chat, or a write the gateway could not hash in advance) the
- * entry's `before` stays unset — the path was touched but cannot be restored.
- */
-export const aggregateTurnFiles = (diffs: WriteDiff[]): TurnFileEntry[] => {
-  const map = new Map<string, TurnFileEntry>();
-  for (const d of diffs) {
-    const existing = map.get(d.path);
-    if (existing) existing.after = d.blob;
-    else map.set(d.path, { path: d.path, ...(d.before ? { before: d.before } : {}), after: d.blob });
-  }
-  return [...map.values()];
-};
-
-/**
  * Fold a later ledger onto an earlier one (a stopped turn's files onto the
  * turn that follows it): per path, the earlier `before` and the later `after`.
  */
@@ -104,6 +88,8 @@ export class WriteDiffRecorder {
   /** Path → on-disk blob hashed on the pending call's tool_start. Consumed by
    *  that call's record(), so each call still diffs only its own change. */
   private readonly primed = new Map<string, string>();
+  /** The turn's undo ledger, in first-write order. */
+  private readonly ledger = new Map<string, TurnFileEntry>();
 
   constructor(
     private readonly workingDir: string,
@@ -212,7 +198,7 @@ export class WriteDiffRecorder {
    *
    * `cleanAtStart`: every path not primed was unmodified (matched HEAD, or did
    * not exist) when the call began — true for the shell tracker, whose dirty
-   * paths are all primed. `before` is only set on an entry when it is exact.
+   * paths are all primed. The ledger only takes a `before` that is exact.
    */
   async record(paths: string[], opts: { cleanAtStart?: boolean } = {}): Promise<WriteDiff[]> {
     if (this.disabled || paths.length === 0) return [];
@@ -228,6 +214,9 @@ export class WriteDiffRecorder {
         this.primed.delete(path);
         this.lastBlob.set(path, after);
         if (before === after) continue;
+        const ledgered = this.ledger.get(path);
+        if (ledgered) ledgered.after = after;
+        else this.ledger.set(path, { path, ...(exact ? { before } : {}), after });
         const name = rel ?? path.replace(/^\/+/, '');
         const raw = await this.git(['diff', '--no-color', before, after], this.workingDir);
         // Git names the sides by blob id; name them by the file instead so the
@@ -238,7 +227,7 @@ export class WriteDiffRecorder {
           .replace(`+++ b/${after}`, `+++ b/${name}`);
         const binary = /^Binary files .* differ$/m.test(raw) && !raw.includes('@@');
         const counts = binary ? { added: 0, removed: 0 } : countPatchLines(patch);
-        const entry: WriteDiff = { path, ...counts, blob: after, ...(exact ? { before } : {}) };
+        const entry: WriteDiff = { path, ...counts, blob: after };
         if (!binary) {
           if (patch.length > MAX_PATCH_CHARS) entry.truncated = true;
           else entry.patch = patch;
@@ -249,5 +238,15 @@ export class WriteDiffRecorder {
       this.disabled = true;
     }
     return out;
+  }
+
+  /**
+   * The turn so far, one entry per path: the content before its first write
+   * and after its last. No `before` = the first write's starting content was
+   * a guess, so that path must not be restored. A path written and then put
+   * back is still listed (before === after).
+   */
+  turnFiles(): TurnFileEntry[] {
+    return [...this.ledger.values()].map(e => ({ ...e }));
   }
 }

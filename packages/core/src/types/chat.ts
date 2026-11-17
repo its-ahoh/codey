@@ -68,10 +68,6 @@ export interface WriteDiff {
   /** Git blob id of the file after the call. The next write to this path
    *  diffs against it, so each call is charged only its own change. */
   blob: string;
-  /** Git blob id of the file before this call. Set when the gateway hashed
-   *  the on-disk content (or a prior write) before the tool ran. Absent on
-   *  older chats — those cannot rebuild a turn ledger for undo. */
-  before?: string;
   truncated?: boolean;
 }
 

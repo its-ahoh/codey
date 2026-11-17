@@ -11,7 +11,7 @@ import { publishTeamFinal, composeTeamFinal, planTeamFooter, isSoloRun, parseTea
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { writeTranscriptSlice, TranscriptSlice, AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, WriteDiff, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, runAide, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, parseBotMentions, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, BlackboardSnapshot, BotAnchor, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, applySkill, playbookSkillName, playbookNameTaken, writePlaybookSkill, removePlaybookSkill, absorbPlaybookEdit, reconcilePlaybookSkills, playbookSkillsUsed, PlaybookHome, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, AutomationCheck, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, pickVoiceAck, needsDigest, buildSpeechDigestPrompt, stripForSpeech, needsPolish, buildVoicePolishPrompt, sanitizePolished, DEFAULT_POLISH_TIMEOUT_MS, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort, DEFAULT_THINKING_EFFORT, ApiType, DEDICATED_API_TYPES, AGENT_API_TYPE, CLI_DEFAULT_MODEL, cliDefaultModelConfig, isCliDefaultModelConfig, unwiredAllProtocols } from '@codey/core';
+import { writeTranscriptSlice, TranscriptSlice, AgentRequest, AgentResponse, AideOptions, ChannelKind, Chat, ChatCompaction, ChatRoute, FallbackEntry, GatewayConfig, GatewayResponse, UserMessage, CodingAgent, ModelConfig, ChannelType, ChannelConfig, ChatMessage, ToolCallEntry, runAdvisor, summarizeChatMessages, generateChatTitle, generateTaskBrief, generateAideTurnDigest, runAide, TaskBrief, AdvisorTurn, AdvisorHistoryEntry, parseAskUser, parseAsk, parseBotMentions, PendingTeamState, discussionDir, controlPath, summaryPath, topicPath, opinionPath, initDiscussionDir, TeamBlackboard, BlackboardSnapshot, BotAnchor, parseAskAdvisor, stripAskAdvisor, buildSoloAdvisorPrompt, buildSoloAdvisorFollowupPrompt, SoloAdvisorInput, SoloAdvisorFollowupInput, TeamGraph, validateGraph, startRun, advance, resolveEdge, outgoingEdges, eligibleEdges, runJudge, JudgeInput, JudgeDecision, TeamGraphEdge, GraphRunState, SkillEntry, SkillStore, RunTrace, DistillDeps, DistillResult, applySkill, playbookSkillName, playbookNameTaken, writePlaybookSkill, removePlaybookSkill, absorbPlaybookEdit, reconcilePlaybookSkills, playbookSkillsUsed, PlaybookHome, distillCandidate, evolveSkill, isLowSignalTrace, stepsFrom, clusterProcedures, induceTemplate, nameTemplate, ClusterReport, ProcedureCluster, hasProcedureData, RECENT_TRACES_MAX, Automation, AutomationRun, AutomationEvent, AutomationCheck, renderBrief, automationChatTurn, classifyDryRun, DryRunVerdict, parseVoiceCommand, VoiceCommand, pickVoiceAck, needsDigest, buildSpeechDigestPrompt, stripForSpeech, needsPolish, buildVoicePolishPrompt, sanitizePolished, DEFAULT_POLISH_TIMEOUT_MS, splitIntoSentences, SentenceAccumulator, ConversationDigestCache, VoiceConverseEvent, buildTeamFastPathPrompt, parseTeamFastPathDecision, TeamFastPathDecision, finalizeTeamRunSummary, TeamRunSummary, ThinkingEffort, DEFAULT_THINKING_EFFORT, ApiType, DEDICATED_API_TYPES, AGENT_API_TYPE, CLI_DEFAULT_MODEL, cliDefaultModelConfig, isCliDefaultModelConfig, unwiredAllProtocols } from '@codey/core';
 import { randomUUID, createHash } from 'crypto';
 import { AutomationStore } from './automations/store';
 import { AutomationEngine, TargetResult } from './automations/engine';
@@ -40,7 +40,7 @@ import { PairingStore, ChannelBinding } from './pairings';
 import { summarizePriorHistory } from './summary';
 import { chatStreamEventForStatus, isPersistableToolCall } from './chat-status-events';
 import { ShellWriteTracker, isShellTool, shellCommandText, defaultGitRunner, defaultStatRunner, isFileChangeTool, fileChangePaths, fileEditPaths } from './shell-write-tracker';
-import { WriteDiffRecorder, priorBlobs, aggregateTurnFiles, mergeTurnFiles } from './write-diff-recorder';
+import { WriteDiffRecorder, priorBlobs, mergeTurnFiles } from './write-diff-recorder';
 import { CHAT_CONTEXT_WINDOW, buildChatPrompt, buildChatBootstrapPrompt, buildChatResumePrompt, buildChatCatchupPrompt, buildQuickQuestionPrompt, assistantPrefixForSelection, RunSemaphore, ChatStreamSink, ChatStreamEvent, READ_ONLY_TOOLS, QQStreamEvent, QQHistoryEntry, SOLO_ADVISOR_INSTRUCTION } from './chat-runner';
 import { TurnQueue, QueuedMessage, Surface } from './turn-queue';
 import { renderQuestion, renderCancelNotice, stripAskMarker } from './team-pause';
@@ -5265,7 +5265,7 @@ Example: /model gpt-4.1 write a Python script`;
     chatId: string,
     chat: Chat,
     signal?: AbortSignal,
-    opts: { forceAll?: boolean; routingTask?: string; taskId?: string; mediaCache?: Map<string, FileAttachment>; writeDiffsOut?: WriteDiff[] } = {},
+    opts: { forceAll?: boolean; routingTask?: string; taskId?: string; mediaCache?: Map<string, FileAttachment>; diffRecorder?: WriteDiffRecorder } = {},
     chatAgent?: CodingAgent,
     chatModel?: ModelConfig,
   ): Promise<{ response: string; tokens?: number; choices?: string[]; thinkingByStep?: Record<number, string>; teamTurnId?: string; advisorSummary?: string }> {
@@ -5317,7 +5317,9 @@ Example: /model gpt-4.1 write a Python script`;
     // bots run one after another; the parallel path below shares a directory
     // between concurrent bots, where no sample can say which one wrote what.
     const teamWriteTracker = new ShellWriteTracker(workingDir, defaultGitRunner, defaultStatRunner);
-    const teamDiffRecorder = new WriteDiffRecorder(workingDir, defaultGitRunner, priorBlobs(chat.messages));
+    // A chat turn passes its own recorder so team writes land in that turn's
+    // ledger; a channel run keeps its own.
+    const teamDiffRecorder = opts.diffRecorder ?? new WriteDiffRecorder(workingDir, defaultGitRunner, priorBlobs(chat.messages));
     let teamStatusChain: Promise<void> = Promise.resolve();
 
     const runOneBot = async (
@@ -5372,7 +5374,6 @@ Example: /model gpt-4.1 write a Python script`;
               // The shell tracker primes every dirty path it names, so an unprimed
               // shell write was to a file still at HEAD (or not yet there).
               const writeDiffs = writes.length ? await teamDiffRecorder.record(writes, { cleanAtStart: isShellTool(parsed.tool) }) : [];
-              if (writeDiffs.length) opts.writeDiffsOut?.push(...writeDiffs);
               botMsgs.onTool({
                 type: 'tool_end', tool: parsed.tool, message: parsed.message ?? '', output: parsed.output,
                 ...(writes.length ? { writes } : {}),
@@ -6960,12 +6961,10 @@ Example: /model gpt-4.1 write a Python script`;
     // the Files panel can show this turn's change rather than everything
     // since the last commit.
     const diffRecorder = new WriteDiffRecorder(workingDir, defaultGitRunner, priorBlobs(afterUser.messages));
-    /** Every writeDiff this turn produced; rolled into userMessage.turnFiles. */
-    const turnWriteDiffs: WriteDiff[] = [];
     /** A stopped turn before this one left its ledger on the chat; this turn
      *  owns it now, so undoing this turn also takes back the stopped attempt. */
     const strayTurnFiles = afterUser.strayTurnFiles ?? [];
-    const turnLedger = () => mergeTurnFiles(strayTurnFiles, aggregateTurnFiles(turnWriteDiffs));
+    const turnLedger = () => mergeTurnFiles(strayTurnFiles, diffRecorder.turnFiles());
     /** Writes the ledger onto the user message (finished or failed turn). */
     const saveTurnLedger = () => {
       const turnFiles = turnLedger();
@@ -7002,7 +7001,6 @@ Example: /model gpt-4.1 write a Python script`;
         // The shell tracker primes every dirty path it names, so an unprimed
         // shell write was to a file still at HEAD (or not yet there).
         const writeDiffs = writes.length ? await diffRecorder.record(writes, { cleanAtStart: isShellTool(parsed.tool) }) : [];
-        if (writeDiffs.length) turnWriteDiffs.push(...writeDiffs);
         if (isPersistableToolCall(parsed.type)) {
           toolCalls.push({
             id: randomUUID(),
@@ -7121,7 +7119,7 @@ Example: /model gpt-4.1 write a Python script`;
           : team.members.length > 1
             ? `Ad-hoc team from mentions: ${team.members.join(', ')} (Advisor dispatches)`
             : `Routing to bot ${team.members[0]}` });
-        const r = await this.runTeamForChat(teamName, team, teamPrompt, workingDir, sink, chatId, contextChat, abortController.signal, { routingTask: userText, taskId, mediaCache: turnMediaCache, writeDiffsOut: turnWriteDiffs }, agent, model);
+        const r = await this.runTeamForChat(teamName, team, teamPrompt, workingDir, sink, chatId, contextChat, abortController.signal, { routingTask: userText, taskId, mediaCache: turnMediaCache, diffRecorder }, agent, model);
         output = r.response;
         tokens = r.tokens;
         teamChoices = r.choices;
@@ -7164,7 +7162,7 @@ Example: /model gpt-4.1 write a Python script`;
         }
         const team: TeamConfig = wsTeam ?? fallbackTeam;
         this.logger.info(`[parallel-debug] teamName=${teamName} dispatch=${team.dispatch} hasRoundtable=${!!team.roundtable} wsTeam=${!!wsTeam} fallbackDispatch=${fallbackDispatch} members=${team.members.join(',')}`);
-        const r = await this.runTeamForChat(teamName, team, prompt, workingDir, sink, chatId, contextChat, abortController.signal, { routingTask: userText, taskId, mediaCache: turnMediaCache, writeDiffsOut: turnWriteDiffs }, agent, model);
+        const r = await this.runTeamForChat(teamName, team, prompt, workingDir, sink, chatId, contextChat, abortController.signal, { routingTask: userText, taskId, mediaCache: turnMediaCache, diffRecorder }, agent, model);
         output = r.response;
         tokens = r.tokens;
         teamChoices = r.choices;
