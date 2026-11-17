@@ -107,7 +107,8 @@ function formatAttachmentList(attachments: FileAttachment[]): string {
  */
 // A failed turn's reply is its visible error (and maybe a partial answer).
 // It stays in the chat for the user but never becomes agent context.
-const isAgentContext = (message: ChatMessage): boolean => !message.failed;
+// An undone turn is gone as far as the agent is concerned.
+const isAgentContext = (message: ChatMessage): boolean => !message.failed && !message.undone;
 
 function renderChatContextSections(
   chat: Chat,
@@ -148,7 +149,7 @@ function renderChatContextSections(
             `[Earlier conversation — ${pointerLast - pointerFirst + 1} messages, not inlined]`,
             `Transcript: ${opts.transcriptPath}`,
             'One JSON object per line, one line per message, oldest first.',
-            'Skip lines with "failed": true — they are errors shown to the user, not conversation.',
+            'Skip lines with "failed": true or "undone": true — they are errors or turns the user undid, not conversation.',
             `Lines ${pointerFirst}-${pointerLast} hold this history.`,
             `Read them before answering (e.g. \`sed -n '${pointerFirst},${pointerLast}p'\`) unless the new request below is fully self-contained.`,
             'Context only — do not repeat or fabricate turns.',
@@ -296,7 +297,7 @@ export function buildChatCatchupPrompt(
           `[Codey conversation updates since this agent was last active — ${missed.length} messages, not inlined]`,
           `Transcript: ${opts.transcriptPath}`,
           'One JSON object per line, one line per message, oldest first.',
-          'Skip lines with "failed": true — they are errors shown to the user, not conversation.',
+          'Skip lines with "failed": true or "undone": true — they are errors or turns the user undid, not conversation.',
           `You last saw line ${cursor + 1}. Lines ${firstUnseenLine}-${lastLine} are new.`,
           `Read them if you need the detail (e.g. \`sed -n '${firstUnseenLine},${lastLine}p'\`); skip it if the new request stands on its own.`,
           'Context only — do not repeat or fabricate turns.',

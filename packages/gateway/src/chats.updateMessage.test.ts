@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -33,5 +33,24 @@ describe('ChatManager.updateMessage', () => {
   it('is a no-op when the message id is unknown', () => {
     const chat = mgr.create({ workspaceName: 'ws', selection: { type: 'team', name: 't' }, title: 't' });
     expect(() => mgr.updateMessage(chat.id, 'nope', { content: 'x' })).not.toThrow();
+  });
+
+  it('updateMessages merges every patch and writes the chat once', () => {
+    const chat = mgr.create({ workspaceName: 'ws', selection: { type: 'team', name: 't' }, title: 't' });
+    for (let i = 0; i < 5; i++) mgr.appendMessage(chat.id, { id: `m${i}`, role: 'user', content: `c${i}`, timestamp: i });
+    const persist = vi.spyOn(mgr as any, 'persist');
+    const rewrite = vi.spyOn(mgr as any, 'rewriteTranscript');
+
+    mgr.updateMessages(chat.id, [
+      ...[0, 1, 2, 3, 4].map(i => ({ id: `m${i}`, patch: { undone: true } })),
+      { id: 'nope', patch: { undone: true } },
+    ]);
+    expect(persist).toHaveBeenCalledTimes(1);
+    expect(rewrite).toHaveBeenCalledTimes(1);
+    const onDisk = JSON.parse(fs.readFileSync(path.join(root, 'ws', 'chats', `${chat.id}.json`), 'utf8'));
+    expect(onDisk.messages.every((m: any) => m.undone === true)).toBe(true);
+
+    mgr.updateMessages(chat.id, [{ id: 'nope', patch: { undone: true } }]);
+    expect(persist).toHaveBeenCalledTimes(1);
   });
 });

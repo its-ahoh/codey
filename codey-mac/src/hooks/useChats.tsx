@@ -733,6 +733,9 @@ interface ChatsContextValue {
   bindWorktree: (chatId: string, worktreePath: string, expectedBranch?: string) => Promise<Chat>
   createWorktree: (chatId: string, name: string) => Promise<Chat>
   setPullRequest: (chatId: string, pullRequest: NonNullable<Chat['pullRequest']>) => Promise<void>
+  /** Undo (or redo) the file changes of a turn and every later turn. */
+  undoTurn: (chatId: string, userMessageId: string) => Promise<Chat>
+  redoTurn: (chatId: string, userMessageId: string) => Promise<Chat>
   setContextPanelOpen: (chatId: string, open: boolean | null) => Promise<void>
   setSoloAdvisor: (chatId: string, enabled: boolean) => Promise<void>
   generateTaskBrief: (chatId: string) => Promise<TaskBrief | null>
@@ -1187,6 +1190,16 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     },
     async createWorktree(chatId, name) {
       const chat = await apiService.chats.createWorktree(chatId, name)
+      dispatch({ type: 'upsert', chat })
+      return chat
+    },
+    async undoTurn(chatId, userMessageId) {
+      const chat = await apiService.chats.undoTurn(chatId, userMessageId)
+      dispatch({ type: 'upsert', chat })
+      return chat
+    },
+    async redoTurn(chatId, userMessageId) {
+      const chat = await apiService.chats.redoTurn(chatId, userMessageId)
       dispatch({ type: 'upsert', chat })
       return chat
     },

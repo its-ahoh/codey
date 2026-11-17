@@ -14,6 +14,8 @@ export interface StreamEvent {
   type: string;
   subtype?: string;
   session_id?: string;
+  /** Id of this message in the CLI's session file. */
+  uuid?: string;
   // result event
   result?: string;
   is_error?: boolean;
@@ -217,6 +219,9 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       // can resume the same id on later turns without parsing it back out.
       if (request.resumeSessionId) {
         args.push('--resume', request.resumeSessionId);
+        // Undocumented flag (the Agent SDK's `resumeSessionAt`): continue from
+        // this message, dropping later ones. Later plain resumes stay on it.
+        if (request.resumeSessionAt) args.push('--resume-session-at', request.resumeSessionAt);
       } else if (request.newSessionId) {
         args.push('--session-id', request.newSessionId);
       }
@@ -317,6 +322,8 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       // adapters can be used concurrently, and timeout recovery must resume
       // only a session that this particular CLI process actually announced.
       let startedSessionId: string | undefined;
+      // Last assistant message of this run: the point a later rewind resumes at.
+      let sessionEndId: string | undefined;
 
       const safeResolve = (response: AgentResponse) => {
         if (!resolved) {
@@ -325,6 +332,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
           if (timeoutShutdownTimer) clearTimeout(timeoutShutdownTimer);
           if (abortHandler && request.signal) request.signal.removeEventListener('abort', abortHandler);
           response.startedSessionId = startedSessionId;
+          if (sessionEndId) response.sessionEndId = sessionEndId;
           resolve(response);
         }
       };
@@ -411,6 +419,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
             } catch { /* ignore parse failure */ }
           }
         } else if (event.type === 'assistant' && event.message?.content) {
+          if (event.uuid) sessionEndId = event.uuid;
           for (const block of event.message.content) {
             if (block.type === 'thinking' && block.thinking) {
               if (!streamedThinkingFromDeltas) {

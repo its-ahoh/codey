@@ -5586,6 +5586,24 @@ app.whenReady().then(async () => {
     })
   )
 
+  ipcMain.handle('chats:previewUndoTurn', async (_e, id: string, messageId: string) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not initialized')
+      return inProcessGateway.previewUndoTurn(id, messageId)
+    })
+  )
+  ipcMain.handle('chats:undoTurn', async (_e, id: string, messageId: string) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not initialized')
+      return inProcessGateway.undoTurn(id, messageId)
+    })
+  )
+  ipcMain.handle('chats:redoTurn', async (_e, id: string, messageId: string) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not initialized')
+      return inProcessGateway.redoTurn(id, messageId)
+    })
+  )
   ipcMain.handle('chats:stop', async (_e, chatId: string) =>
     wrap(async () => {
       if (!inProcessGateway) throw new Error('Gateway not initialized')
