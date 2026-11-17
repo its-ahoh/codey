@@ -184,6 +184,9 @@ export function rebaseForFallbackAgent(
  *  stays in the gateway log; this only has to explain the fallback in a popup. */
 const FALLBACK_REASON_MAX = 400;
 
+/** Shown instead of running a turn when the user has not picked an agent yet. */
+export const NO_AGENT_MESSAGE = 'No coding agent is set up yet. Pick one in Codey Settings → Agents (or run `npm run set-agent`), then try again.';
+
 /** One-line-ish explanation of why a run failed, for the fallback badge.
  *  Prefers `error` (the adapter's own diagnosis) over raw `output`. */
 export function summarizeFailure(response: AgentResponse): string | undefined {
@@ -400,6 +403,17 @@ export class Codey {
     if (fromCfg) return fromCfg as CodingAgent;
     const fromFallback = this.config.fallback?.order?.[0]?.agent;
     return (fromFallback ?? this.config.defaultAgent ?? 'claude-code') as CodingAgent;
+  }
+
+  /**
+   * Whether the user has picked an agent. Codey does not assume one: on a
+   * fresh install `getDefaultAgent()` only returns a placeholder, and no turn
+   * runs until this is true.
+   */
+  hasDefaultAgent(): boolean {
+    const fromCfg = (this.configManager as { hasDefaultAgent?: () => boolean } | undefined)?.hasDefaultAgent?.();
+    if (fromCfg !== undefined) return fromCfg;
+    return !!(this.config?.fallback?.order?.[0]?.agent ?? this.config?.defaultAgent);
   }
 
   private getSkipPermissions(): boolean {
@@ -2665,6 +2679,10 @@ export class Codey {
       return;
     }
 
+    if (!parsed.agent && !this.hasDefaultAgent()) {
+      await this.sendResponse({ chatId, channel, text: NO_AGENT_MESSAGE });
+      return;
+    }
     const agent = parsed.agent || this.getDefaultAgent();
 
     // ── Single-step execution (default path) ──────────────────
@@ -6415,6 +6433,9 @@ Example: /model gpt-4.1 write a Python script`;
   ): Promise<{ response: string; chatId: string; tokens?: number; durationSec?: number; /** Set when the turn failed. */ error?: string }> {
     let chat = this.chatManager.get(chatId);
     if (!chat) throw new Error(`Chat not found: ${chatId}`);
+    // A chat with its own agent runs on it; otherwise there is nothing to
+    // run until the user picks a default. Codey never assumes one.
+    if (!chat.agent && !this.hasDefaultAgent()) throw new Error(NO_AGENT_MESSAGE);
     const answeringTeam = chat.pendingTeam && !/^\s*\//.test(userTextParam) && !origin?.skillInvoke;
     // Keep the current/paused task's members and session scope intact.
     if (!answeringTeam && !this.chatAborts.has(chatId) && chat.botChat?.pendingMembers) {

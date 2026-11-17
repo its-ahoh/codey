@@ -1066,7 +1066,7 @@ function buildRuntimeConfig(json: any): any {
   // every-enabled-agent regardless of user configuration.
   return {
     port: json?.gateway?.port,
-    defaultAgent: json?.fallback?.order?.[0]?.agent ?? 'claude-code',
+    defaultAgent: json?.fallback?.order?.[0]?.agent,
     agents: json?.agents,
     models: json?.models,
     fallback: json?.fallback,
@@ -1164,7 +1164,7 @@ async function bootInProcessCore() {
     applyCaptureHotkey(coreConfigManager.get())
     applyScreenshotHotkey(coreConfigManager.get())
     applyUiPreferences(coreConfigManager.get())
-    sendToRenderer('gateway-log', `[core] In-process core booted (root: ${root}, bots: ${botManager.getAllBots().length}, agent: ${runtimeCfg.defaultAgent})`)
+    sendToRenderer('gateway-log', `[core] In-process core booted (root: ${root}, bots: ${botManager.getAllBots().length}, agent: ${runtimeCfg.defaultAgent ?? 'not set'})`)
     // Boot the gateway in the background so configured channels (telegram,
     // discord, imessage) connect. Done after returning so IPC handler
     // registration in app.whenReady() isn't blocked by network I/O
