@@ -8,6 +8,7 @@ import { ChecklistTracker, checklistFromTodos, isChecklistTool } from './checkli
 import { opencodeEffortArgs } from './effort';
 import { opencodeToolPolicyEnv } from './tool-policy';
 import { agentSpawnOptions, cleanupProcessTreeAfterClose, terminateProcessTree, withForegroundPolicy } from './process-tree';
+import { DEFAULT_IDLE_TIMEOUT_MS, idleTimeoutMessage, startIdleTimer, IdleTimer } from './idle-timer';
 
 export interface OpenCodeEvent {
   type: string;
@@ -149,7 +150,7 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
       // tells us which session OpenCode opened so the gateway can resume it.
       let capturedSessionId: string | undefined;
       let backgroundViolation: string | undefined;
-      let timeoutTimer: NodeJS.Timeout | undefined;
+      let idleTimer: IdleTimer | undefined;
       let abortHandler: (() => void) | undefined;
 
       const activityTimer = setInterval(() => {
@@ -166,7 +167,7 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
         if (!resolved) {
           resolved = true;
           clearInterval(activityTimer);
-          if (timeoutTimer) clearTimeout(timeoutTimer);
+          idleTimer?.stop();
           if (abortHandler && request.signal) request.signal.removeEventListener('abort', abortHandler);
           resolve(response);
         }
@@ -175,6 +176,7 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
       // Collect and parse stdout in real-time for streaming
       let buffer = '';
       childProcess.stdout?.on('data', (data: Buffer) => {
+        idleTimer?.touch();
         buffer += data.toString();
         allData += data.toString();
 
@@ -214,6 +216,7 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
       });
 
       childProcess.stderr?.on('data', (data: Buffer) => {
+        idleTimer?.touch();
         stderr += data.toString();
       });
 
@@ -302,15 +305,15 @@ export class OpenCodeAdapter extends BaseAgentAdapter {
         safeResolve(this.createResponse(spawnError.message, false, undefined, duration));
       });
 
-      // Timeout (default 15 minutes)
-      const timeout = request.timeout || 900000;
-      timeoutTimer = setTimeout(() => {
+      // Idle limit (default 15 minutes of silence, not total run time)
+      const timeout = request.timeout || DEFAULT_IDLE_TIMEOUT_MS;
+      idleTimer = startIdleTimer(timeout, () => {
         if (!resolved) {
           terminateProcessTree(childProcess);
           const duration = Math.round((Date.now() - startTime) / 1000);
-          safeResolve(this.createResponse(`Timeout after ${Math.round(timeout / 60000)} minutes`, false, undefined, duration));
+          safeResolve(this.createResponse(idleTimeoutMessage(timeout), false, undefined, duration));
         }
-      }, timeout);
+      });
 
       if (request.signal) {
         abortHandler = () => {

@@ -225,6 +225,12 @@ async function handle(m) {
       return send({ jsonrpc: '2.0', id: m.id, result: {} });
     case 'session/prompt': {
       const s = p.sessionId;
+      // A turn that goes quiet for good, and one that runs long but keeps talking.
+      if (process.env.FAKE_GROK_SILENT) return;
+      for (let n = Number(process.env.FAKE_GROK_SLOW_CHUNKS || 0); n > 0; n--) {
+        await new Promise(r => setTimeout(r, 150));
+        update(s, { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: '.' } });
+      }
       update(s, { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'thinking' } });
       update(s, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Looking.' } });
       update(s, { sessionUpdate: 'plan', entries: [{ content: 'Read', status: 'in_progress' }, { content: 'Edit', status: 'pending' }] });
@@ -339,6 +345,22 @@ describe('GrokAdapter against a fake ACP agent', () => {
       try { process.kill(pid, 0); await new Promise(r => setTimeout(r, 100)); } catch { alive = false; }
     }
     expect(alive).toBe(false);
+  });
+
+  it('lets a turn run past the limit as long as it keeps reporting', async () => {
+    // 8 chunks 150 ms apart = 1.2 s of work against a 400 ms silence limit.
+    const res = await new GrokAdapter().run(base({ timeout: 400, extraEnv: { FAKE_GROK_SLOW_CHUNKS: '8' } }));
+    expect(res.success).toBe(true);
+    expect(res.output).toBe('Looking.\n\nEdit was refused.');
+  });
+
+  it('stops a turn that has gone silent for the whole limit', async () => {
+    const started = Date.now();
+    const res = await new GrokAdapter(undefined, { exitGraceMs: 300 }).run(base({ timeout: 400, extraEnv: { FAKE_GROK_SILENT: '1' } }));
+    expect(res.success).toBe(false);
+    expect(res.error).toBe('timeout');
+    expect(res.output).toMatch(/^No output for \d+ minutes?$/);
+    expect(Date.now() - started).toBeLessThan(5000);
   });
 
   it('stops on abort', async () => {

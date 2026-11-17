@@ -8,6 +8,7 @@ import { AcpClient, AcpRequestError } from './acp-client';
 import { preferLocalBin, withCommonBinPaths } from './env';
 import { agentSpawnOptions, cleanupProcessTreeAfterClose, terminateProcessTree, withForegroundPolicy } from './process-tree';
 import { CODEY_VERSION } from '../version';
+import { DEFAULT_IDLE_TIMEOUT_MS, idleTimeoutMessage, startIdleTimer, IdleTimer } from './idle-timer';
 
 /**
  * Grok Build (`grok`) adapter, driven over the Agent Client Protocol.
@@ -413,11 +414,15 @@ export class GrokAdapter extends BaseAgentAdapter {
       }
     };
 
+    // Silence, not total run time, ends a turn: every ACP message resets it.
+    let idleTimer: IdleTimer | undefined;
     const client = new AcpClient(child.stdout!, child.stdin!, {
       onNotification: (method, params) => {
+        idleTimer?.touch();
         if (method === 'session/update') onUpdate((params as { update?: AcpSessionUpdate } | undefined)?.update);
       },
       onRequest: (method, params) => {
+        idleTimer?.touch();
         if (method === 'session/request_permission') {
           const ask = (params ?? {}) as { toolCall?: AcpToolCall; options?: AcpPermissionOption[] };
           const call: AcpToolCall = ask.toolCall ?? {};
@@ -433,7 +438,7 @@ export class GrokAdapter extends BaseAgentAdapter {
       },
     });
 
-    child.stderr?.on('data', (d: Buffer) => { stderr += d.toString(); });
+    child.stderr?.on('data', (d: Buffer) => { idleTimer?.touch(); stderr += d.toString(); });
 
     let abortHandler: (() => void) | undefined;
     let stopReason: 'timeout' | 'aborted' | undefined;
@@ -457,8 +462,8 @@ export class GrokAdapter extends BaseAgentAdapter {
       if (sessionId) client.notify('session/cancel', { sessionId });
       terminateProcessTree(child);
     };
-    const timeout = request.timeout || 900000;
-    const timeoutTimer = setTimeout(() => stop('timeout'), timeout);
+    const timeout = request.timeout || DEFAULT_IDLE_TIMEOUT_MS;
+    idleTimer = startIdleTimer(timeout, () => stop('timeout'));
     if (request.signal) {
       abortHandler = () => stop('aborted');
       if (request.signal.aborted) abortHandler();
@@ -466,7 +471,7 @@ export class GrokAdapter extends BaseAgentAdapter {
     }
 
     const finish = async (response: AgentResponse): Promise<AgentResponse> => {
-      clearTimeout(timeoutTimer);
+      idleTimer?.stop();
       if (abortHandler && request.signal) request.signal.removeEventListener('abort', abortHandler);
       tools.finish();
       if (this.activeProcess === child) {
@@ -556,7 +561,7 @@ export class GrokAdapter extends BaseAgentAdapter {
       // A stop we caused explains the failure better than the dead pipe does.
       if (stopReason) await exited;
       const message = stopReason === 'timeout'
-        ? `Timeout after ${Math.round(timeout / 60000)} minutes`
+        ? idleTimeoutMessage(timeout)
         : stopReason === 'aborted'
           ? 'Stopped'
           : grokErrorMessage(err);

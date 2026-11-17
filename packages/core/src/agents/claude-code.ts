@@ -8,6 +8,7 @@ import { ChecklistTracker, checklistFromTodos, isChecklistTool } from './checkli
 import { claudeEffortArgs } from './effort';
 import { claudeToolPolicyArgs } from './tool-policy';
 import { agentSpawnOptions, cleanupProcessTreeAfterClose, terminateProcessTree, withForegroundPolicy } from './process-tree';
+import { DEFAULT_IDLE_TIMEOUT_MS, idleTimeoutMessage, startIdleTimer, IdleTimer } from './idle-timer';
 
 export interface StreamEvent {
   type: string;
@@ -191,7 +192,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
 
   async run(request: AgentRequest): Promise<AgentResponse> {
     return new Promise((resolve) => {
-      const timeout = request.timeout || 900000;
+      const timeout = request.timeout || DEFAULT_IDLE_TIMEOUT_MS;
       const args = [
         '--verbose',
         '--output-format', 'stream-json',
@@ -308,7 +309,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       let userQuestion: AgentResponse['userQuestion'];
       let askUserInputJson = '';
       let collectingAskUser = false;
-      let timeoutTimer: NodeJS.Timeout | undefined;
+      let idleTimer: IdleTimer | undefined;
       let timeoutShutdownTimer: NodeJS.Timeout | undefined;
       let abortHandler: (() => void) | undefined;
       let timedOut = false;
@@ -320,7 +321,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       const safeResolve = (response: AgentResponse) => {
         if (!resolved) {
           resolved = true;
-          if (timeoutTimer) clearTimeout(timeoutTimer);
+          idleTimer?.stop();
           if (timeoutShutdownTimer) clearTimeout(timeoutShutdownTimer);
           if (abortHandler && request.signal) request.signal.removeEventListener('abort', abortHandler);
           response.startedSessionId = startedSessionId;
@@ -508,6 +509,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       };
 
       childProcess.stdout?.on('data', (data: Buffer) => {
+        idleTimer?.touch();
         buffer += data.toString();
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
@@ -523,6 +525,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       });
 
       childProcess.stderr?.on('data', (data: Buffer) => {
+        idleTimer?.touch();
         stderr += data.toString();
       });
 
@@ -549,7 +552,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
         // "Session ID is already in use" failure timeout recovery prevents.
         if (timedOut) {
           safeResolve(this.createResponse(
-            `Timeout after ${Math.round(timeout / 60000)} minutes`,
+            idleTimeoutMessage(timeout),
             false,
             undefined,
             finalDuration,
@@ -615,9 +618,10 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
         safeResolve(this.createResponse(spawnError.message, false, undefined, duration));
       });
 
-      // Safety timeout so we don't hang forever if the CLI never responds.
-      // Timeout (default 15 minutes)
-      timeoutTimer = setTimeout(() => {
+      // Safety net so we don't hang forever on a CLI that stopped responding.
+      // It counts silence (default 15 minutes), not total run time: every
+      // chunk the CLI writes pushes it back, so long tasks keep running.
+      idleTimer = startIdleTimer(timeout, () => {
         if (!resolved) {
           timedOut = true;
           terminateProcessTree(childProcess);
@@ -627,7 +631,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
             const duration = Math.round((Date.now() - startTime) / 1000);
             mcpCleanup?.();
             safeResolve(this.createResponse(
-              `Timeout after ${Math.round(timeout / 60000)} minutes`,
+              idleTimeoutMessage(timeout),
               false,
               undefined,
               duration,
@@ -637,7 +641,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
           }, 3_000);
           timeoutShutdownTimer.unref?.();
         }
-      }, timeout);
+      });
 
       // Caller-driven cancellation
       if (request.signal) {
