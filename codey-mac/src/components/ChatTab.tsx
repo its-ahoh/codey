@@ -461,7 +461,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
   chat,
 }) => {
   const outerRef = useRef<HTMLDivElement>(null)
-  const { state, createChat, renameChat, sendMessage, removeQueuedMessage, resumeQueue, stopChat, clearRestore, setSelection, setAgentModel, setEffort, setExecutionMode, bindWorktree, createWorktree, setPullRequest, setContextPanelOpen, setSoloAdvisor, linkChannel, unlinkChannel, resolvePermission, generateTaskBrief } = useChats()
+  const { state, createChat, renameChat, sendMessage, removeQueuedMessage, resumeQueue, stopChat, clearRestore, setSelection, setAgentModel, setEffort, setExecutionMode, bindWorktree, createWorktree, setPullRequest, setContextPanelOpen, setSoloAdvisor, linkChannel, unlinkChannel, resolvePermission, generateTaskBrief, undoTurn, redoTurn } = useChats()
   const flight = state.inFlight[chatId]
   const queuedMessages = state.queuedMessages[chatId] ?? []
   // A stop holds the queue instead of emptying it, so these prompts stay put
@@ -912,6 +912,31 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
   }, [isGatewayRunning])
   const lastMsg = chat?.messages?.[chat.messages.length - 1]
   const renderItems = useMemo(() => groupMessages(chat?.messages ?? []), [chat?.messages])
+  // Messages of undone turns are dimmed. The first user message of each undo
+  // carries the Redo chip (one undo can cover several turns).
+  const { undoneIds, redoAnchors } = useMemo(() => {
+    const messages = chat?.messages ?? []
+    const ids = new Set<string>()
+    const anchors = new Set<string>()
+    let inUndone = false
+    for (const m of messages) {
+      if (m.role === 'user') inUndone = !!m.checkpoint?.undone
+      // `undone` is what the gateway goes by; a turn without an undo point
+      // of its own is still undone along with the turns around it.
+      if (m.undone || inUndone) ids.add(m.id)
+    }
+    // Only a pending undo can be redone, and the gateway redoes the earliest
+    // first. An undo is final once it was rewound or a live turn follows it.
+    let liveAfter = false
+    let firstRedo: ChatMessage | undefined
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i]
+      if (m.role === 'user' && !m.undone) liveAfter = true
+      if (m.role === 'user' && !liveAfter && !m.rewound && m.checkpoint?.undone) firstRedo = m
+    }
+    if (firstRedo) anchors.add(firstRedo.id)
+    return { undoneIds: ids, redoAnchors: anchors }
+  }, [chat?.messages])
   const pendingBotRequests = chat.messages.filter(m => m.botInteraction?.status === 'pending')
   const pendingRunIds = new Set(pendingBotRequests.map(m => m.teamTurnId))
   const runningBotCount = chat.messages.filter(m => pendingRunIds.has(m.teamTurnId) && m.bot && !m.botInteraction && m.botStatus === 'running').length
@@ -1776,6 +1801,23 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
       /* Clipboard denied — nothing useful to say, and an alert would be worse. */
     }
   }
+  // Undo puts the chat's worktree back to before this turn (and every later
+  // one). The gateway refuses with a plain reason when it can't.
+  const undoFromMessage = async (msg: ChatMessage) => {
+    try {
+      const preview = await apiService.chats.previewUndoTurn(chat.id, msg.id)
+      if (!preview.ok) { window.alert(preview.reason ?? 'This turn cannot be undone.'); return }
+      const turns = preview.turns === 1 ? 'this turn' : `this turn and the ${preview.turns - 1} after it`
+      const files = preview.files === 1 ? '1 file' : `${preview.files} files`
+      if (!window.confirm(`Undo ${turns}? ${files} will go back to how they were. The agent forgets those turns when you send your next message; until then you can redo.`)) return
+      await undoTurn(chat.id, msg.id)
+    } catch (err) {
+      window.alert((err as Error).message)
+    }
+  }
+  const redoFromMessage = async (msg: ChatMessage) => {
+    try { await redoTurn(chat.id, msg.id) } catch (err) { window.alert((err as Error).message) }
+  }
   const startEdit = (msg: ChatMessage) => {
     setEditingMsgId(msg.id)
     setEditDraft(msg.content)
@@ -2081,7 +2123,8 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                 cursor: isUser ? 'default' : 'pointer',
                 paddingLeft: !isUser ? MESSAGE_ROW_INSET : 0,
                 transform: isSelected ? 'translateY(-3px)' : 'translateY(0)',
-                transition: 'transform 0.18s ease',
+                transition: 'transform 0.18s ease, opacity 0.18s ease',
+                opacity: undoneIds.has(msg.id) ? 0.5 : 1,
               }}
             >
               <div style={isUser ? {
@@ -2405,6 +2448,17 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                     >
                       <UIIcon name="refresh" size={13} color={C.fg3} />
                     </button>
+                    {chat.executionMode === 'isolated-worktree' && msg.checkpoint && !msg.checkpoint.undone && (
+                      <button
+                        style={{ ...styles.msgActionBtn, opacity: canResend ? 1 : 0.4, cursor: canResend ? 'pointer' : 'default' }}
+                        disabled={!canResend}
+                        onClick={() => { void undoFromMessage(msg) }}
+                        title={canResend ? 'Undo the file changes from this turn on' : 'Wait for the current turn to finish'}
+                        aria-label="Undo file changes from this turn"
+                      >
+                        <UIIcon name="undo" size={13} color={C.fg3} />
+                      </button>
+                    )}
                     <button
                       style={{ ...styles.msgActionBtn, opacity: canResend ? 1 : 0.4, cursor: canResend ? 'pointer' : 'default' }}
                       disabled={!canResend}
@@ -2418,6 +2472,18 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                 )}
                 <span>{fmtTime(msg.timestamp)}</span>
               </div>
+              )}
+              {isUser && redoAnchors.has(msg.id) && (
+                <div style={styles.undoneChip}>
+                  <UIIcon name="undo" size={12} color={C.fg3} />
+                  <span>Files undone from here</span>
+                  <button
+                    style={{ ...styles.undoneRedoBtn, opacity: canResend ? 1 : 0.4, cursor: canResend ? 'pointer' : 'default' }}
+                    disabled={!canResend}
+                    onClick={() => { void redoFromMessage(msg) }}
+                    title="Bring the file changes back"
+                  >Redo</button>
+                </div>
               )}
             </div>
           )
@@ -3203,6 +3269,14 @@ const styles: Record<string, React.CSSProperties> = {
   // Hover actions on a user bubble. They share the timestamp's footer row so
   // revealing them costs no vertical space.
   msgActions: { display: 'flex', alignItems: 'center', gap: 2 },
+  undoneChip: {
+    display: 'flex', alignItems: 'center', gap: 6, marginTop: 6,
+    paddingRight: USER_BUBBLE_PADDING_X, color: C.fg3, fontSize: 12,
+  },
+  undoneRedoBtn: {
+    border: 'none', background: 'transparent', padding: 0, color: C.accent,
+    fontSize: 12, fontWeight: 600,
+  },
   msgActionBtn: {
     display: 'grid', placeItems: 'center', width: 20, height: 20, padding: 0,
     border: 'none', borderRadius: 6, background: 'transparent', cursor: 'pointer',

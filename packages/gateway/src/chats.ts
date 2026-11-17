@@ -107,6 +107,7 @@ export class ChatManager {
       ...(message.bot ? { bot: message.bot } : {}),
       // Kept as a line so line N stays messages[N-1]; slices skip it.
       ...(message.failed ? { failed: true } : {}),
+      ...(message.undone ? { undone: true } : {}),
       ...(message.authRequired ? { authRequired: message.authRequired } : {}),
       content: message.content,
     });
@@ -456,12 +457,35 @@ export class ChatManager {
     )) {
       migrated.push(chat.sessionAnchor);
     }
+    // A stopped or failed turn this session ran stays in the session after
+    // the next good turn, so its marker must outlive that save.
+    const previous = migrated.find(item => item.agent === anchor.agent && item.scopeKey === anchor.scopeKey);
+    const kept = previous?.strayAt !== undefined && anchor.strayAt === undefined && previous.sessionId === anchor.sessionId
+      ? { ...anchor, strayAt: previous.strayAt }
+      : anchor;
     chat.sessionAnchors = migrated
       .filter(item => item.agent !== anchor.agent || item.scopeKey !== anchor.scopeKey)
-      .concat(anchor);
+      .concat(kept);
     delete chat.sessionAnchor;
     chat.updatedAt = Date.now();
     this.persist(chat);
+  }
+
+  /**
+   * Notes that the session ran a turn no message records (stopped or failed
+   * at `at`). An undo then knows it cannot count that session's turns from
+   * the chat alone.
+   */
+  markSessionStray(chatId: string, sessionId: string, at: number): void {
+    const chat = this.cache.get(chatId);
+    if (!chat) return;
+    let changed = false;
+    for (const anchor of [...(chat.sessionAnchors ?? []), ...(chat.sessionAnchor ? [chat.sessionAnchor] : [])]) {
+      if (anchor.sessionId !== sessionId) continue;
+      anchor.strayAt = at;
+      changed = true;
+    }
+    if (changed) this.persist(chat);
   }
 
   /** Drop one agent's session, or every session when no agent is given. */
@@ -661,6 +685,14 @@ export class ChatManager {
     this.persist(chat);
   }
 
+  setPendingRewind(chatId: string, rewind: NonNullable<Chat['pendingRewind']> | null): void {
+    const chat = this.cache.get(chatId);
+    if (!chat) return;
+    if (rewind) chat.pendingRewind = rewind;
+    else delete chat.pendingRewind;
+    this.persist(chat);
+  }
+
   /** Drop the list so a new turn starts without inheriting the last one. */
   clearChecklist(chatId: string): void {
     const chat = this.cache.get(chatId);
@@ -767,9 +799,34 @@ export class ChatManager {
     this.persist(chat);
     // Team stubs are appended empty and filled here, so the sidecar's copy of
     // this line is stale whenever the patch carries new content or identity.
-    if (patch.content !== undefined || patch.agent !== undefined || patch.model !== undefined) {
+    if (patch.content !== undefined || patch.agent !== undefined || patch.model !== undefined || 'undone' in patch) {
       this.rewriteTranscript(chat);
     }
+    return chat;
+  }
+
+  /**
+   * `updateMessage` for many messages at once: every patch is merged, then
+   * the chat is written to disk a single time. An undo touches every message
+   * from its turn on; one write per message would rewrite the whole chat file
+   * (and the transcript) that many times. Unknown ids are skipped.
+   */
+  updateMessages(chatId: string, patches: Array<{ id: string; patch: Partial<ChatMessage> }>): Chat {
+    const chat = this.requireChat(chatId);
+    const index = new Map(chat.messages.map((m, i) => [m.id, i]));
+    let changed = false;
+    let transcript = false;
+    for (const { id, patch } of patches) {
+      const idx = index.get(id);
+      if (idx === undefined) continue;
+      chat.messages[idx] = { ...chat.messages[idx], ...patch };
+      changed = true;
+      if (patch.content !== undefined || patch.agent !== undefined || patch.model !== undefined || 'undone' in patch) transcript = true;
+    }
+    if (!changed) return chat;
+    chat.updatedAt = Date.now();
+    this.persist(chat);
+    if (transcript) this.rewriteTranscript(chat);
     return chat;
   }
 

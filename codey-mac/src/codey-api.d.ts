@@ -638,6 +638,9 @@ declare global {
         bindWorktree: (id: string, worktreePath: string, expectedBranch?: string) => Promise<IpcResult<Chat>>
         createWorktree: (id: string, name: string) => Promise<IpcResult<Chat>>
         setPullRequest: (id: string, pullRequest: NonNullable<Chat['pullRequest']>) => Promise<IpcResult<Chat>>
+        previewUndoTurn: (id: string, messageId: string) => Promise<IpcResult<{ ok: boolean; reason?: string; turns: number; files: number }>>
+        undoTurn: (id: string, messageId: string) => Promise<IpcResult<Chat>>
+        redoTurn: (id: string, messageId: string) => Promise<IpcResult<Chat>>
       }
       qq: {
         ask: (payload: { chatId: string; question: string; history: Array<{ role: 'user' | 'assistant'; content: string }>; attachments?: Array<{ id: string; name: string; path: string; mimeType: string; size: number }> }) => Promise<IpcResult<{ response: string; tokens?: number; durationSec?: number }>>

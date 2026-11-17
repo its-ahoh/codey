@@ -18,7 +18,7 @@ const failed = (error: string, over: Partial<AgentResponse> = {}): AgentResponse
   ({ success: false, output: '', error, ...over });
 
 describe('own-timeout classification', () => {
-  it.each(['Timeout after 15 minutes', 'timeout after 1 minute'])('recognises %s', text => {
+  it.each(['Timeout after 15 minutes', 'timeout after 1 minute', 'No output for 15 minutes', 'No output for 1 minute'])('recognises %s', text => {
     expect(isOwnTimeoutFailure(failed(text))).toBe(true);
   });
 

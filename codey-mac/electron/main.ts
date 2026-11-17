@@ -1088,7 +1088,7 @@ function buildRuntimeConfig(json: any): any {
   // every-enabled-agent regardless of user configuration.
   return {
     port: json?.gateway?.port,
-    defaultAgent: json?.fallback?.order?.[0]?.agent ?? 'claude-code',
+    defaultAgent: json?.fallback?.order?.[0]?.agent,
     agents: json?.agents,
     models: json?.models,
     fallback: json?.fallback,
@@ -1186,7 +1186,7 @@ async function bootInProcessCore() {
     applyCaptureHotkey(coreConfigManager.get())
     applyScreenshotHotkey(coreConfigManager.get())
     applyUiPreferences(coreConfigManager.get())
-    sendToRenderer('gateway-log', `[core] In-process core booted (root: ${root}, bots: ${botManager.getAllBots().length}, agent: ${runtimeCfg.defaultAgent})`)
+    sendToRenderer('gateway-log', `[core] In-process core booted (root: ${root}, bots: ${botManager.getAllBots().length}, agent: ${runtimeCfg.defaultAgent ?? 'not set'})`)
     // Boot the gateway in the background so configured channels (telegram,
     // discord, imessage) connect. Done after returning so IPC handler
     // registration in app.whenReady() isn't blocked by network I/O
@@ -5617,6 +5617,24 @@ app.whenReady().then(async () => {
     })
   )
 
+  ipcMain.handle('chats:previewUndoTurn', async (_e, id: string, messageId: string) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not initialized')
+      return inProcessGateway.previewUndoTurn(id, messageId)
+    })
+  )
+  ipcMain.handle('chats:undoTurn', async (_e, id: string, messageId: string) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not initialized')
+      return inProcessGateway.undoTurn(id, messageId)
+    })
+  )
+  ipcMain.handle('chats:redoTurn', async (_e, id: string, messageId: string) =>
+    wrap(async () => {
+      if (!inProcessGateway) throw new Error('Gateway not initialized')
+      return inProcessGateway.redoTurn(id, messageId)
+    })
+  )
   ipcMain.handle('chats:stop', async (_e, chatId: string) =>
     wrap(async () => {
       if (!inProcessGateway) throw new Error('Gateway not initialized')

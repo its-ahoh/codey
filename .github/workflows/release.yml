@@ -118,13 +118,23 @@ jobs:
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             echo "Release $GITHUB_REF_NAME already exists; electron-builder will upload into it."
           else
-            gh release create "$GITHUB_REF_NAME" --title "$version" --generate-notes
+            # Every tag starts as a pre-release. The in-app updater reads
+            # GitHub's "latest" release, which skips pre-releases, so nobody is
+            # offered this build until it is promoted by hand:
+            #   gh release edit v<version> --prerelease=false --latest
+            # Keep the version plain (no -nightly suffix): a suffixed version
+            # would opt the installed app into pre-release updates, and the
+            # promoted release would no longer be the build that was tested.
+            gh release create "$GITHUB_REF_NAME" --title "$version" --generate-notes --prerelease
           fi
 
       - name: Build & publish codey-mac
         working-directory: codey-mac
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Match the pre-release created above, so electron-builder never
+          # publishes this as a full release on its own.
+          EP_PRE_RELEASE: 'true'
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}

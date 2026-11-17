@@ -37,7 +37,7 @@ function startGateway(): void {
   // Build GatewayConfig from JSON config
   const gatewayConfig: GatewayConfig = {
     port: configManager.getPort(),
-    defaultAgent: configManager.getDefaultAgent() as any,
+    defaultAgent: configManager.hasDefaultAgent() ? configManager.getDefaultAgent() : undefined,
     agents: config.agents as any,
     models: config.models,
     fallback: config.fallback,
@@ -79,7 +79,7 @@ function startGateway(): void {
     configManager.on('change', (updated) => {
       const newConfig: GatewayConfig = {
         port: updated.gateway.port,
-        defaultAgent: configManager.getDefaultAgent() as any,
+        defaultAgent: configManager.hasDefaultAgent() ? configManager.getDefaultAgent() : undefined,
         agents: updated.agents as any,
         models: updated.models,
         fallback: updated.fallback,
@@ -118,7 +118,7 @@ async function startTui(): Promise<void> {
   await botManager.loadBots();
   const gatewayConfig: GatewayConfig = {
     port: configManager.getPort(),
-    defaultAgent: configManager.getDefaultAgent() as any,
+    defaultAgent: configManager.hasDefaultAgent() ? configManager.getDefaultAgent() : undefined,
     agents: config.agents as any,
     models: config.models,
     fallback: config.fallback,

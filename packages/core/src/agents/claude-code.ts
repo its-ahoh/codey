@@ -8,11 +8,14 @@ import { ChecklistTracker, checklistFromTodos, isChecklistTool } from './checkli
 import { claudeEffortArgs } from './effort';
 import { claudeToolPolicyArgs } from './tool-policy';
 import { agentSpawnOptions, cleanupProcessTreeAfterClose, terminateProcessTree, withForegroundPolicy } from './process-tree';
+import { DEFAULT_IDLE_TIMEOUT_MS, idleTimeoutMessage, startIdleTimer, IdleTimer } from './idle-timer';
 
 export interface StreamEvent {
   type: string;
   subtype?: string;
   session_id?: string;
+  /** Id of this message in the CLI's session file. */
+  uuid?: string;
   // result event
   result?: string;
   is_error?: boolean;
@@ -191,7 +194,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
 
   async run(request: AgentRequest): Promise<AgentResponse> {
     return new Promise((resolve) => {
-      const timeout = request.timeout || 900000;
+      const timeout = request.timeout || DEFAULT_IDLE_TIMEOUT_MS;
       const args = [
         '--verbose',
         '--output-format', 'stream-json',
@@ -216,6 +219,9 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       // can resume the same id on later turns without parsing it back out.
       if (request.resumeSessionId) {
         args.push('--resume', request.resumeSessionId);
+        // Undocumented flag (the Agent SDK's `resumeSessionAt`): continue from
+        // this message, dropping later ones. Later plain resumes stay on it.
+        if (request.resumeSessionAt) args.push('--resume-session-at', request.resumeSessionAt);
       } else if (request.newSessionId) {
         args.push('--session-id', request.newSessionId);
       }
@@ -308,7 +314,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       let userQuestion: AgentResponse['userQuestion'];
       let askUserInputJson = '';
       let collectingAskUser = false;
-      let timeoutTimer: NodeJS.Timeout | undefined;
+      let idleTimer: IdleTimer | undefined;
       let timeoutShutdownTimer: NodeJS.Timeout | undefined;
       let abortHandler: (() => void) | undefined;
       let timedOut = false;
@@ -316,14 +322,17 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       // adapters can be used concurrently, and timeout recovery must resume
       // only a session that this particular CLI process actually announced.
       let startedSessionId: string | undefined;
+      // Last assistant message of this run: the point a later rewind resumes at.
+      let sessionEndId: string | undefined;
 
       const safeResolve = (response: AgentResponse) => {
         if (!resolved) {
           resolved = true;
-          if (timeoutTimer) clearTimeout(timeoutTimer);
+          idleTimer?.stop();
           if (timeoutShutdownTimer) clearTimeout(timeoutShutdownTimer);
           if (abortHandler && request.signal) request.signal.removeEventListener('abort', abortHandler);
           response.startedSessionId = startedSessionId;
+          if (sessionEndId) response.sessionEndId = sessionEndId;
           resolve(response);
         }
       };
@@ -410,6 +419,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
             } catch { /* ignore parse failure */ }
           }
         } else if (event.type === 'assistant' && event.message?.content) {
+          if (event.uuid) sessionEndId = event.uuid;
           for (const block of event.message.content) {
             if (block.type === 'thinking' && block.thinking) {
               if (!streamedThinkingFromDeltas) {
@@ -508,6 +518,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       };
 
       childProcess.stdout?.on('data', (data: Buffer) => {
+        idleTimer?.touch();
         buffer += data.toString();
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
@@ -523,6 +534,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
       });
 
       childProcess.stderr?.on('data', (data: Buffer) => {
+        idleTimer?.touch();
         stderr += data.toString();
       });
 
@@ -549,7 +561,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
         // "Session ID is already in use" failure timeout recovery prevents.
         if (timedOut) {
           safeResolve(this.createResponse(
-            `Timeout after ${Math.round(timeout / 60000)} minutes`,
+            idleTimeoutMessage(timeout),
             false,
             undefined,
             finalDuration,
@@ -615,9 +627,10 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
         safeResolve(this.createResponse(spawnError.message, false, undefined, duration));
       });
 
-      // Safety timeout so we don't hang forever if the CLI never responds.
-      // Timeout (default 15 minutes)
-      timeoutTimer = setTimeout(() => {
+      // Safety net so we don't hang forever on a CLI that stopped responding.
+      // It counts silence (default 15 minutes), not total run time: every
+      // chunk the CLI writes pushes it back, so long tasks keep running.
+      idleTimer = startIdleTimer(timeout, () => {
         if (!resolved) {
           timedOut = true;
           terminateProcessTree(childProcess);
@@ -627,7 +640,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
             const duration = Math.round((Date.now() - startTime) / 1000);
             mcpCleanup?.();
             safeResolve(this.createResponse(
-              `Timeout after ${Math.round(timeout / 60000)} minutes`,
+              idleTimeoutMessage(timeout),
               false,
               undefined,
               duration,
@@ -637,7 +650,7 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
           }, 3_000);
           timeoutShutdownTimer.unref?.();
         }
-      }, timeout);
+      });
 
       // Caller-driven cancellation
       if (request.signal) {
