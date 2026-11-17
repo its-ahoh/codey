@@ -42,7 +42,9 @@ function unwrap<T>(result: { ok: true; data: T } | { ok: false; error: string })
 
 // Type aliases for the shapes returned by core
 export interface BotPersonality { role: string; soul: string; instructions: string }
-export interface BotConfig { displayName?: string; avatar?: import('../components/botAvatarModel').BotAvatarConfig; tools: string[]; dispatchHint?: string }
+/** Optional per-Bot override of the agent/model it runs on. Unset fields follow the chat or gateway default. */
+export interface BotExecution { agent?: string; model?: string }
+export interface BotConfig { displayName?: string; avatar?: import('../components/botAvatarModel').BotAvatarConfig; tools: string[]; dispatchHint?: string; execution?: BotExecution }
 export interface BotDto {
   name: string
   personality: BotPersonality

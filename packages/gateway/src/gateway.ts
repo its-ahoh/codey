@@ -458,6 +458,36 @@ export class Codey {
    * only the blackboard delta since this session's last turn + the new
    * task body.
    */
+  /**
+   * A bot's own `execution` override wins over the agent/model the run would
+   * otherwise use (chat setting or gateway default). An agent override without
+   * a model takes that agent's default model; a model override without an agent
+   * applies to the run's agent. A model that does not resolve keeps the agent
+   * but drops to its default model, logged, rather than failing the run.
+   */
+  resolveBotExecution(botName: string, agent: CodingAgent, model: ModelConfig | undefined): { agent: CodingAgent; model: ModelConfig | undefined } {
+    const execution = this.workspaceManager.getBotManager().getBot(botName)?.config?.execution;
+    if (!execution?.agent && !execution?.model) return { agent, model };
+    const effectiveAgent = execution.agent ?? agent;
+    if (!execution.model) {
+      return { agent: effectiveAgent, model: effectiveAgent === agent ? model : this.getDefaultModelConfig(effectiveAgent) };
+    }
+    try {
+      const resolved = this.getModelConfig(effectiveAgent, execution.model);
+      if (resolved) return { agent: effectiveAgent, model: resolved };
+      this.logger.warn(`[bot:${botName}] model override "${execution.model}" does not resolve for ${effectiveAgent}; using its default`);
+    } catch (err) {
+      this.logger.warn(`[bot:${botName}] model override "${execution.model}" unusable: ${(err as Error).message}; using ${effectiveAgent} default`);
+    }
+    return { agent: effectiveAgent, model: this.getDefaultModelConfig(effectiveAgent) };
+  }
+
+  /** The agent/model a bot message is labelled with, after its override. */
+  private botLabel(botName: string, agent: CodingAgent, model: ModelConfig | undefined): { agent: CodingAgent; model?: string } {
+    const exec = this.resolveBotExecution(botName, agent, model);
+    return { agent: exec.agent, model: exec.model?.model };
+  }
+
   private async runBotStep(opts: {
     conversationId: string;
     botName: string;
@@ -478,6 +508,7 @@ export class Codey {
     onPermissionDenials?: (denials: NonNullable<AgentResponse['permissionDenials']>) => void;
     skipPermissions?: boolean;
   }): Promise<{ response: AgentResponse; usedResume: boolean }> {
+    const { agent: codingAgent, model: modelConfig } = this.resolveBotExecution(opts.botName, opts.codingAgent, opts.modelConfig);
     const outputStream = botOutputStream(opts.onStream);
     const finishResponse = (response: AgentResponse): AgentResponse => {
       const denials = response.permissionDenials?.filter(d => d.toolName !== 'AskUserQuestion');
@@ -501,8 +532,8 @@ export class Codey {
 
     const wm = this.workspaceManager.getBotManager();
     const baseReq = {
-      agent: opts.codingAgent,
-      model: opts.modelConfig,
+      agent: codingAgent,
+      model: modelConfig,
       // Execution settings belong to the run: the chat's effort when set,
       // otherwise runWithFallback supplies the agent default.
       effort: opts.effort,
@@ -518,13 +549,13 @@ export class Codey {
     } as const;
 
     // ── Warm path: anchor exists, same agent, within TTL ─────────
-    if (existing && existing.agent === opts.codingAgent && !ttlElapsed
+    if (existing && existing.agent === codingAgent && !ttlElapsed
         && (existing.memoryEpoch ?? 0) === memoryEpoch && existing.workingDir === workingDir) {
       const delta = opts.blackboard.renderDeltaForBot(opts.botName, existing.blackboardSeenCount);
       const memoryChat = opts.browserChatId ? this.chatManager.get(opts.browserChatId) : undefined;
       const memory = await this.buildMergedMemoryContext(opts.task, opts.botName, !!memoryChat?.botChat, memoryChat?.workspaceName, opts.workingDir);
       const resumePrompt = [memory, wm.buildResumeBotPrompt(opts.task, delta || undefined)].filter(Boolean).join('\n\n');
-      const resp = await this.runWithFallback(opts.codingAgent, {
+      const resp = await this.runWithFallback(codingAgent, {
         ...baseReq,
         prompt: resumePrompt,
         resumeSessionId: existing.sessionId,
@@ -544,7 +575,7 @@ export class Codey {
       }
       this.logger.warn(`[bot:${opts.botName}] resume of ${existing.sessionId} failed; bootstrapping fresh`);
       await this.contextManager.clearBotAnchor(ctxWindow.id, opts.botName);
-    } else if (existing && existing.agent !== opts.codingAgent) {
+    } else if (existing && existing.agent !== codingAgent) {
       // Different agent now — old anchor is unusable; drop it.
       await this.contextManager.clearBotAnchor(ctxWindow.id, opts.botName);
     } else if (existing && ttlElapsed) {
@@ -554,8 +585,8 @@ export class Codey {
     }
 
     // ── Cold path: bootstrap full prompt ─────────────────────────
-    const newSessionId = opts.codingAgent === 'claude-code' ? randomUUID() : undefined;
-    const resp = await this.runWithFallback(opts.codingAgent, {
+    const newSessionId = codingAgent === 'claude-code' ? randomUUID() : undefined;
+    const resp = await this.runWithFallback(codingAgent, {
       ...baseReq,
       prompt: await opts.buildBootstrapPrompt(),
       newSessionId,
@@ -565,7 +596,7 @@ export class Codey {
       if (sid && memoryEpoch === (this.memoryEpoch ?? 0)) {
         const anchor: BotAnchor = {
           memoryEpoch, workingDir,
-          agent: opts.codingAgent,
+          agent: codingAgent,
           sessionId: sid,
           botName: opts.botName,
           blackboardSeenCount: opts.blackboard.totalCount(),
@@ -4716,7 +4747,7 @@ Example: /model gpt-4.1 write a Python script`;
         blackboard.renderForBot(memberName),
       );
       await emitter.status(`🔄 Resuming **${memberName}** with your answer…`);
-      emitter.beginBot?.({ step: nextResumeStep, bot: memberName, agent: codingAgent, model: modelConfig?.model });
+      emitter.beginBot?.({ step: nextResumeStep, bot: memberName, ...this.botLabel(memberName, codingAgent, modelConfig) });
       const response = await runOneBot(memberName, reprompt, codingAgent, modelConfig, blackboard);
       if (!response.success) {
         emitter.endBot?.('failed', { failureReason: response.error ?? 'Bot failed without an error message', authRequired: response.authRequired });
@@ -4828,7 +4859,7 @@ Example: /model gpt-4.1 write a Python script`;
       resumeRoster,
       resumeBoardForPrompt.renderForBot(turn.next),
     );
-    emitter.beginBot?.({ step: nextResumeStep, bot: turn.next, reason: turn.reason, agent: codingAgent, model: modelConfig?.model });
+    emitter.beginBot?.({ step: nextResumeStep, bot: turn.next, reason: turn.reason, ...this.botLabel(turn.next, codingAgent, modelConfig) });
     const response = await runOneBot(turn.next, stepPrompt, codingAgent, modelConfig, resumeBoardForPrompt);
     if (!response.success) {
       emitter.endBot?.('failed', { failureReason: response.error ?? 'Bot failed without an error message', authRequired: response.authRequired });
@@ -4913,7 +4944,7 @@ Example: /model gpt-4.1 write a Python script`;
       const codingAgent = (opts.fallbackAgent ?? this.getDefaultAgent()) as CodingAgent;
       const modelConfig = opts.fallbackModel ?? this.getDefaultModelConfig(codingAgent);
       await emitter.status(`🔄 Bot **${bot.name}** is working...`);
-      emitter.beginBot?.({ step: executionStep, bot: bot.name, reason: i === (opts.startIndex ?? 0) ? opts.firstReason : undefined, agent: codingAgent, model: modelConfig?.model });
+      emitter.beginBot?.({ step: executionStep, bot: bot.name, reason: i === (opts.startIndex ?? 0) ? opts.firstReason : undefined, ...this.botLabel(bot.name, codingAgent, modelConfig) });
       const roster = members.map(n => ({ name: n, hint: botManager.getDispatchHint(n) }));
       const nextName = members[i + 1];
       const nextBot = nextName
@@ -5138,7 +5169,7 @@ Example: /model gpt-4.1 write a Python script`;
       const codingAgent = (opts?.fallbackAgent ?? this.getDefaultAgent()) as CodingAgent;
       const modelConfig = opts?.fallbackModel ?? this.getDefaultModelConfig(codingAgent);
       await emitter.status(`🔄 Step ${++stepIndex}: **${bot.name}** is working...`);
-      emitter.beginBot?.({ step: stepIndex, bot: bot.name, agent: codingAgent, model: modelConfig?.model });
+      emitter.beginBot?.({ step: stepIndex, bot: bot.name, ...this.botLabel(bot.name, codingAgent, modelConfig) });
 
       const roster = graph.nodes
         .filter(n => n.type === 'bot' && n.bot)
@@ -5304,12 +5335,12 @@ Example: /model gpt-4.1 write a Python script`;
     // clients can show members that are still waiting for their turn.
     const isParallelResume = team.dispatch === 'roundtable' && this.parallelResumes.has(chat.id);
     if (!isParallelResume) {
-      botMsgs.teamStart(team.members.map((bot, index) => ({
-        step: index + 1,
-        bot,
-        agent: chatAgent ?? this.getDefaultAgent() as CodingAgent,
-        model: (chatModel ?? this.getDefaultModelConfig(chatAgent ?? this.getDefaultAgent() as CodingAgent))?.model,
-      })));
+      const rosterAgent = chatAgent ?? this.getDefaultAgent() as CodingAgent;
+      const rosterModel = chatModel ?? this.getDefaultModelConfig(rosterAgent);
+      botMsgs.teamStart(team.members.map((bot, index) => {
+        const exec = this.resolveBotExecution(bot, rosterAgent, rosterModel);
+        return { step: index + 1, bot, agent: exec.agent, model: exec.model?.model };
+      }));
     }
 
     // Serial team runs sample the working tree around each shell command, as a
@@ -5453,11 +5484,12 @@ Example: /model gpt-4.1 write a Python script`;
         settings: team.roundtable,
         botRunner: async (req, botName) => {
           const outputStream = botOutputStream(text => botMsgs.onStream(text, botName));
-          const botAgent = chatAgent ?? this.getDefaultAgent() as CodingAgent;
+          const chatRunAgent = chatAgent ?? this.getDefaultAgent() as CodingAgent;
+          const { agent: botAgent, model: botModel } = this.resolveBotExecution(botName, chatRunAgent, chatModel ?? this.getDefaultModelConfig(chatRunAgent));
           const response = await this.runWithFallback(botAgent, {
           prompt: await this.wrapPromptWithMemory(req.prompt, prompt, botName, !!chat.botChat, chat.workspaceName, this.resolveChatWorkingDir(chat)),
-          agent: chatAgent ?? this.getDefaultAgent() as CodingAgent,
-          model: chatModel ?? this.getDefaultModelConfig(chatAgent ?? this.getDefaultAgent() as CodingAgent),
+          agent: botAgent,
+          model: botModel,
           // Parallel members share the chat's execution settings. The global
           // effort default is supplied by runWithFallback when no override is set.
           effort: resolveEffort({ chat: chat.effort }),
@@ -5604,8 +5636,8 @@ Example: /model gpt-4.1 write a Python script`;
             // (beginBot below). Don't also echo a "### Step N" header into the
             // turn's main message — that produced a second, redundant copy of the
             // whole run in a different format.
-            const botAgent = (chatAgent ?? this.getDefaultAgent()) as CodingAgent;
-            const botModel = chatModel ?? this.getDefaultModelConfig(botAgent);
+            const chatRunAgent = (chatAgent ?? this.getDefaultAgent()) as CodingAgent;
+            const { agent: botAgent, model: botModel } = this.resolveBotExecution(msg.bot, chatRunAgent, chatModel ?? this.getDefaultModelConfig(chatRunAgent));
             botMsgs.beginBot({
               step: msg.step,
               bot: msg.bot,
@@ -6789,7 +6821,7 @@ Example: /model gpt-4.1 write a Python script`;
     // Per-chat override takes precedence over the gateway default.
     const selectedBot = chat.selection.type === 'bot'
       ? this.workspaceManager.getBotManager().getBot(chat.selection.name) : undefined;
-    const agent = (chat.agent ?? this.getDefaultAgent()) as CodingAgent;
+    let agent = (chat.agent ?? this.getDefaultAgent()) as CodingAgent;
     const chatEffort = resolveEffort({ chat: chat.effort });
     let model: ModelConfig | undefined;
     try {
@@ -6804,6 +6836,11 @@ Example: /model gpt-4.1 write a Python script`;
       const msg = (err as Error).message;
       sink({ type: 'error', chatId, message: msg });
       throw err;
+    }
+    // A direct Bot chat runs on the Bot's own override when it has one. Team
+    // turns resolve each member's override inside the team runners instead.
+    if (selectedBot && !isTeamTurn) {
+      ({ agent, model } = this.resolveBotExecution(selectedBot.name, agent, model));
     }
 
     // Decide whether this turn resumes a warm CLI session or bootstraps a

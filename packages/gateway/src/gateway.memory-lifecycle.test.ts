@@ -8,7 +8,7 @@ function lifecycle() {
   const gateway = Object.assign(Object.create(Codey.prototype), {
     contextManager, workingDir: '/project-a',
     chatManager: { list: () => [chat], get: () => chat, clearSessionAnchor: vi.fn(), setPendingTeam: vi.fn() },
-    workspaceManager: { getBotManager: () => ({ buildResumeBotPrompt: () => 'Continue' }) },
+    workspaceManager: { getBotManager: () => ({ getBot: () => undefined, buildResumeBotPrompt: () => 'Continue' }) },
     buildMergedMemoryContext: async () => 'Current memory', logger: { warn: vi.fn() },
   }) as any;
   return { gateway, contextManager, chat };

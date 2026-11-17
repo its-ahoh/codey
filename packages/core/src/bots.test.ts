@@ -192,6 +192,37 @@ describe('role-only bot configuration', () => {
 });
 
 
+describe('bot execution override', () => {
+  it('keeps a valid agent/model override through load and save', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bot-execution-'));
+    try {
+      seedBots(root, ['alice']);
+      const configPath = path.join(root, 'alice', 'config.json');
+      fs.writeFileSync(configPath, JSON.stringify({ tools: [], execution: { agent: 'codex', model: ' sample-model ' } }));
+      const manager = new BotManager(root);
+      await manager.loadBots();
+      const bot = manager.getBot('alice')!;
+      expect(bot.config.execution).toEqual({ agent: 'codex', model: 'sample-model' });
+      await manager.saveBot('alice', bot.personality, bot.config);
+      expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).execution).toEqual({ agent: 'codex', model: 'sample-model' });
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it('drops an unknown agent, a blank model, and an empty override', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bot-execution-'));
+    try {
+      seedBots(root, ['alice', 'bob']);
+      fs.writeFileSync(path.join(root, 'alice', 'config.json'), JSON.stringify({ tools: [], execution: { agent: 'nope', model: 'kept' } }));
+      fs.writeFileSync(path.join(root, 'bob', 'config.json'), JSON.stringify({ tools: [], execution: { agent: 'nope', model: '  ' } }));
+      const manager = new BotManager(root);
+      await manager.loadBots();
+      expect(manager.getBot('alice')!.config.execution).toEqual({ model: 'kept' });
+      expect(manager.getBot('bob')!.config).not.toHaveProperty('execution');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+});
+
+
 describe('bot display names', () => {
   it('persists a display name without changing identity, directory, or lookup', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bot-display-name-'));

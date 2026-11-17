@@ -5,6 +5,7 @@ import { AvatarPicker } from './AvatarPicker'
 import { BotAvatar } from './BotAvatar'
 import { resolveBotAvatar } from './botAvatarModel'
 import { C } from '../theme'
+import { AGENT_API_TYPE, AGENT_NAMES, ApiType, modelFitsApiType } from './modelApiType'
 
 type Mode = { kind: 'idle' } | { kind: 'select'; name: string } | { kind: 'create' }
 
@@ -79,6 +80,14 @@ function EditorPanel({ bot, onSaved, onDeleted }: { bot: BotDto; onSaved: (name:
   const [soul, setSoul] = useState(bot.personality.soul)
   const [instructions, setInstructions] = useState(bot.personality.instructions)
   const [toolsText, setToolsText] = useState(bot.config.tools.join(', '))
+  const [execAgent, setExecAgent] = useState(bot.config.execution?.agent ?? '')
+  const [execModel, setExecModel] = useState(bot.config.execution?.model ?? '')
+  const [models, setModels] = useState<Array<{ apiType: ApiType; model: string }>>([])
+  useEffect(() => {
+    let stale = false
+    window.codey.models.list().then(r => { if (!stale && r.ok) setModels(r.data as Array<{ apiType: ApiType; model: string }>) }).catch(() => {})
+    return () => { stale = true }
+  }, [])
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -86,23 +95,28 @@ function EditorPanel({ bot, onSaved, onDeleted }: { bot: BotDto; onSaved: (name:
   const cancelNameEdit = useRef(false)
   const saveQueue = useRef(Promise.resolve())
   const revision = useRef(0)
-  const snapshot = (nextAvatar = avatar) => ({
-    personality: { role, soul, instructions },
-    config: {
-      ...bot.config,
-      displayName: name.trim() || bot.config.displayName || bot.name,
-      avatar: nextAvatar,
-      tools: toolsText.split(',').map(s => s.trim()).filter(Boolean),
-    },
-  })
+  const snapshot = (nextAvatar = avatar, nextExec = { agent: execAgent, model: execModel }) => {
+    const { execution: _previous, ...rest } = bot.config
+    const execution = { ...(nextExec.agent ? { agent: nextExec.agent } : {}), ...(nextExec.model ? { model: nextExec.model } : {}) }
+    return {
+      personality: { role, soul, instructions },
+      config: {
+        ...rest,
+        displayName: name.trim() || bot.config.displayName || bot.name,
+        avatar: nextAvatar,
+        tools: toolsText.split(',').map(s => s.trim()).filter(Boolean),
+        ...(execution.agent || execution.model ? { execution } : {}),
+      },
+    }
+  }
   const lastSaved = useRef(JSON.stringify(snapshot()))
   useEffect(() => {
     mounted.current = true
     return () => { mounted.current = false }
   }, [])
 
-  const save = (nextAvatar = avatar) => {
-    const body = snapshot(nextAvatar)
+  const save = (nextAvatar = avatar, nextExec = { agent: execAgent, model: execModel }) => {
+    const body = snapshot(nextAvatar, nextExec)
     const serialized = JSON.stringify(body)
     const currentRevision = ++revision.current
     // Serialize writes so a slower earlier blur cannot overwrite a newer edit.
@@ -184,9 +198,38 @@ function EditorPanel({ bot, onSaved, onDeleted }: { bot: BotDto; onSaved: (name:
       <label style={labelStyle}>Tools (comma-separated)</label>
       <input value={toolsText} onChange={e => { setToolsText(e.target.value); setSaved(false) }} onBlur={() => save()} style={fieldStyle} />
 
+      <label style={labelStyle}>Runs on</label>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <select aria-label="Bot agent" value={execAgent} style={{ ...fieldStyle, resize: undefined }}
+          onChange={e => {
+            const agent = e.target.value
+            // A pinned model the new agent cannot run would be dropped at run time; clear it now.
+            const keep = !!execModel && modelFitsAgent(models, execModel, agent)
+            const model = keep ? execModel : ''
+            setExecAgent(agent); setExecModel(model); save(avatar, { agent, model })
+          }}>
+          <option value="">Default agent</option>
+          {AGENT_NAMES.map(a => <option key={a} value={a}>{a}</option>)}
+        </select>
+        <select aria-label="Bot model" value={execModel} style={{ ...fieldStyle, resize: undefined }}
+          onChange={e => { const model = e.target.value; setExecModel(model); save(avatar, { agent: execAgent, model }) }}>
+          <option value="">Default model</option>
+          {execModel && !models.some(m => m.model === execModel) && <option value={execModel}>{execModel}</option>}
+          {models.filter(m => !execAgent || modelFitsApiType(m.apiType, AGENT_API_TYPE[execAgent])).map(m => <option key={m.model} value={m.model}>{m.model}</option>)}
+        </select>
+      </div>
+      <div style={{ fontSize: 12, color: C.fg3, marginTop: 6 }}>Overrides the chat and gateway default whenever this bot runs, alone or in a team.</div>
+
       <div role="status" aria-live="polite" style={{ marginTop: 16, minHeight: 18, fontSize: 12, color: C.fg3 }}>
         {saving ? 'Saving…' : saved ? 'Saved' : 'Changes save automatically when you leave a field.'}
       </div>
     </div>
   )
+}
+
+/** True when `model` is unknown to the catalog (kept as typed) or can drive `agent`; no agent fits everything. */
+function modelFitsAgent(models: Array<{ apiType: ApiType; model: string }>, model: string, agent: string): boolean {
+  if (!agent) return true
+  const entry = models.find(m => m.model === model)
+  return !entry || modelFitsApiType(entry.apiType, AGENT_API_TYPE[agent])
 }

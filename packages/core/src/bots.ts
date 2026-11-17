@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
 import { BLACKBOARD_MARKER_INSTRUCTIONS } from './team-blackboard';
+import { isCodingAgent, type CodingAgent } from './types/index';
 
 export interface BotPersonality {
   role: string;
@@ -21,6 +22,30 @@ export interface BotConfig {
    * `personality.soul` and `.instructions` are never sent to the dispatcher.
    */
   dispatchHint?: string;
+  /**
+   * Optional execution override. When set it wins over the chat's agent/model
+   * and the gateway default for every run of this bot. Nested under its own
+   * key so the flat `codingAgent`/`model` fields that pre-#439 configs still
+   * carry on disk stay ignored.
+   */
+  execution?: BotExecution;
+}
+
+export interface BotExecution {
+  agent?: CodingAgent;
+  /** Catalog model name or agent model id. Without `agent` it applies to the
+   *  agent the run would otherwise use. */
+  model?: string;
+}
+
+function botExecution(value: unknown): BotExecution | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  const execution: BotExecution = {
+    ...(isCodingAgent(raw.agent) ? { agent: raw.agent } : {}),
+    ...(typeof raw.model === 'string' && raw.model.trim() ? { model: raw.model.trim() } : {}),
+  };
+  return execution.agent || execution.model ? execution : undefined;
 }
 
 export interface Bot {
@@ -39,14 +64,16 @@ export interface ParallelPromptInputs {
   peerOpinions: Array<{ name: string; path: string }>;
 }
 
-/** Whitelist role metadata so legacy execution settings never reach callers or disk on save. */
+/** Whitelist known fields; unknown or malformed values never reach callers or disk on save. */
 function roleConfig(config: BotConfig): BotConfig {
-  return {
+  const base: BotConfig = {
     ...(typeof config.displayName === 'string' && config.displayName.trim() ? { displayName: config.displayName.trim() } : {}),
     ...(config.avatar ? { avatar: config.avatar } : {}),
     tools: Array.isArray(config.tools) ? config.tools : [],
     ...(typeof config.dispatchHint === 'string' ? { dispatchHint: config.dispatchHint } : {}),
   };
+  const execution = botExecution(config.execution);
+  return execution ? { ...base, execution } : base;
 }
 
 export class BotManager {
