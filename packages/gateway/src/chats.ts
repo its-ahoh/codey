@@ -465,6 +465,23 @@ export class ChatManager {
     this.persist(chat);
   }
 
+  /**
+   * Notes that the session ran a turn no message records (stopped or failed
+   * at `at`). An undo then knows it cannot count that session's turns from
+   * the chat alone.
+   */
+  markSessionStray(chatId: string, sessionId: string, at: number): void {
+    const chat = this.cache.get(chatId);
+    if (!chat) return;
+    let changed = false;
+    for (const anchor of [...(chat.sessionAnchors ?? []), ...(chat.sessionAnchor ? [chat.sessionAnchor] : [])]) {
+      if (anchor.sessionId !== sessionId) continue;
+      anchor.strayAt = at;
+      changed = true;
+    }
+    if (changed) this.persist(chat);
+  }
+
   /** Drop one agent's session, or every session when no agent is given. */
   clearSessionAnchor(
     chatId: string,

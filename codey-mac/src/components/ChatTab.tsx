@@ -925,7 +925,9 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
         inUndone = !!undone
         if (undone && !seenUndo.has(undone.at)) { seenUndo.add(undone.at); anchors.add(m.id) }
       }
-      if (inUndone) ids.add(m.id)
+      // `undone` is what the gateway goes by; a turn without an undo point
+      // of its own is still undone along with the turns around it.
+      if (m.undone || inUndone) ids.add(m.id)
     }
     return { undoneIds: ids, redoAnchors: anchors }
   }, [chat?.messages])

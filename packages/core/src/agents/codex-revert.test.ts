@@ -52,6 +52,14 @@ describe('revertCodexTurns', () => {
     expect(calls().at(-1).params).toEqual({ threadId: 'thread-1', beforeTurnId: 't2' });
   });
 
+  it('refuses when no older turn would be left, instead of wiping the thread', async () => {
+    for (const turns of [['t1', 't2'], ['t1', 't2', 't3']]) {
+      const { opts, calls } = setup(turns);
+      expect(await revertCodexTurns('thread-1', 3, opts)).toBe(false);
+      expect(calls().map(c => c.method)).not.toContain('thread/revert');
+    }
+  });
+
   it('fails when the thread is unknown', async () => {
     const { opts } = setup(['t1']);
     expect(await revertCodexTurns('missing', 1, opts)).toBe(false);

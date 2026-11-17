@@ -20,8 +20,9 @@ export interface CodexRevertOptions {
 
 /**
  * Removes the newest `numTurns` turns of `threadId`. Resolves true on
- * success, false on any failure (missing CLI, unknown thread, timeout); the
- * caller then falls back to a fresh session.
+ * success, false on any failure (missing CLI, unknown thread, timeout, or a
+ * thread with no older turn left to keep); the caller then falls back to a
+ * fresh session.
  */
 export function revertCodexTurns(threadId: string, numTurns: number, opts: CodexRevertOptions = {}): Promise<boolean> {
   if (numTurns <= 0) return Promise.resolve(true);
@@ -83,21 +84,23 @@ export function revertCodexTurns(threadId: string, numTurns: number, opts: Codex
       // The thread must be loaded in this server before it can be reverted.
       await call('thread/resume', { threadId, excludeTurns: true });
       // Newest first: the oldest of the newest N is the first turn to drop.
-      let remaining = numTurns;
-      let beforeTurnId: string | undefined;
+      // One turn more is read to prove an older turn stays: a thread with
+      // fewer turns than expected is not the thread the caller counted, and
+      // reverting it would wipe turns the caller means to keep.
+      const turnIds: string[] = [];
       let cursor: string | null = null;
-      while (remaining > 0) {
+      while (turnIds.length <= numTurns) {
         const page: any = await call('thread/turns/list', {
-          threadId, cursor, limit: Math.min(remaining, 100), sortDirection: 'desc', itemsView: 'summary',
+          threadId, cursor, limit: Math.min(numTurns + 1 - turnIds.length, 100), sortDirection: 'desc', itemsView: 'summary',
         });
         for (const turn of page?.data ?? []) {
-          beforeTurnId = turn.id;
-          if (--remaining === 0) break;
+          if (typeof turn?.id === 'string') turnIds.push(turn.id);
         }
         cursor = page?.nextCursor ?? null;
         if (!cursor) break;
       }
-      if (!beforeTurnId) return false;
+      if (turnIds.length <= numTurns) return false;
+      const beforeTurnId = turnIds[numTurns - 1];
       await call('thread/revert', { threadId, beforeTurnId });
       return true;
     })().then(finish, () => finish(false));

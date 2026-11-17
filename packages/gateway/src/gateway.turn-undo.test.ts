@@ -5,7 +5,7 @@ import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { forkOpenCodeSession, revertCodexTurns, type ChatMessage } from '@codey/core';
 import { Codey } from './gateway';
-import { captureCheckpoint, turnRef } from './turn-checkpoints';
+import { captureCheckpoint, chatRefPrefix, turnRef } from './turn-checkpoints';
 
 vi.mock('@codey/core', async (orig) => ({
   ...await orig<typeof import('@codey/core')>(),
@@ -44,6 +44,8 @@ function fixture(executionMode: 'isolated-worktree' | 'shared-checkout' = 'isola
   const gateway = Object.assign(Object.create(Codey.prototype), {
     chatManager,
     chatAborts: new Map(),
+    chatRestores: new Map(),
+    pendingChatTurns: new Map(),
     logger: { warn: vi.fn(), info: vi.fn() },
   }) as Codey;
   (gateway as any).resolveChatWorkingDir = () => repo;
@@ -127,6 +129,85 @@ describe('undoTurn / redoTurn', () => {
     await turn(chat, 'u2', () => write(repo, 'c.txt', 'c\n'));
     await expect(gateway.redoTurn('chat', 'u1')).rejects.toThrow(/New turns/);
   });
+
+  it('refuses to redo a later undo while an earlier turn is still undone', async () => {
+    const { gateway, chat } = fixture();
+    await turn(chat, 'u1', () => write(repo, 'a.txt', 'v1\n'));
+    await turn(chat, 'u2', () => write(repo, 'b.txt', 'b\n'));
+    await turn(chat, 'u3', () => write(repo, 'c.txt', 'c\n'));
+    await gateway.undoTurn('chat', 'u3');
+    await new Promise(r => setTimeout(r, 5)); // a distinct undo stamp
+    await gateway.undoTurn('chat', 'u1');
+
+    await expect(gateway.redoTurn('chat', 'u3')).rejects.toThrow(/earlier turn/);
+    expect(read(repo, 'a.txt')).toBe('v0\n');
+    expect(chat.pendingRewind).toEqual({ fromMessageId: 'u1' });
+
+    // Earliest first: u1's undo comes back, u3 stays undone and pending.
+    await gateway.redoTurn('chat', 'u1');
+    expect(read(repo, 'a.txt')).toBe('v1\n');
+    expect(read(repo, 'b.txt')).toBe('b\n');
+    expect(fs.existsSync(path.join(repo, 'c.txt'))).toBe(false);
+    expect(chat.messages.map((m: ChatMessage) => !!m.undone)).toEqual([false, false, false, false, true, true]);
+    expect(chat.pendingRewind).toEqual({ fromMessageId: 'u3' });
+
+    await gateway.redoTurn('chat', 'u3');
+    expect(read(repo, 'c.txt')).toBe('c\n');
+    expect(chat.messages.some((m: ChatMessage) => m.undone)).toBe(false);
+    expect(chat.pendingRewind).toBeUndefined();
+  });
+
+  it('redoes past an undone turn that has no undo point of its own', async () => {
+    const { gateway, chat } = fixture();
+    await turn(chat, 'u1', () => write(repo, 'a.txt', 'v1\n'));
+    // Its snapshot ran out of time, so the turn carries no checkpoint.
+    chat.messages.push({ id: 'u2', role: 'user', content: 'do u2', timestamp: 0 });
+    write(repo, 'b.txt', 'b\n');
+    chat.messages.push({ id: 'u2-reply', role: 'assistant', content: 'done', timestamp: 0 });
+
+    await gateway.undoTurn('chat', 'u1');
+    expect(chat.messages.every((m: ChatMessage) => m.undone)).toBe(true);
+    await gateway.redoTurn('chat', 'u1');
+    expect(read(repo, 'b.txt')).toBe('b\n');
+    expect(chat.messages.some((m: ChatMessage) => m.undone)).toBe(false);
+  });
+
+  it('keeps only the safety snapshots a redo can still use', async () => {
+    const undoRefs = () => git(repo, 'for-each-ref', '--format=%(objectname)', `${chatRefPrefix('chat')}undo/`).split('\n').filter(Boolean);
+    const { gateway, chat } = fixture();
+    await turn(chat, 'u1', () => write(repo, 'a.txt', 'v1\n'));
+    for (let i = 0; i < 3; i++) {
+      await gateway.undoTurn('chat', 'u1');
+      expect(undoRefs()).toEqual([chat.messages[0].checkpoint.undone.safety]);
+      await new Promise(r => setTimeout(r, 5));
+      await gateway.redoTurn('chat', 'u1');
+      expect(undoRefs()).toEqual([]);
+      await new Promise(r => setTimeout(r, 5));
+    }
+    // A new turn after an undo makes that undo final: its snapshot goes too.
+    await gateway.undoTurn('chat', 'u1');
+    await turn(chat, 'u2', () => write(repo, 'c.txt', 'c\n'));
+    await (gateway as any).pruneTurnCheckpoints('chat', repo);
+    expect(undoRefs()).toEqual([]);
+  });
+
+  it('refuses while a turn is about to start, and makes a new turn wait for a running undo', async () => {
+    const { gateway, chat } = fixture();
+    await turn(chat, 'u1', () => write(repo, 'a.txt', 'v1\n'));
+    (gateway as any).pendingChatTurns.set('chat', 1);
+    await expect(gateway.undoTurn('chat', 'u1')).rejects.toThrow(/current turn/);
+    (gateway as any).pendingChatTurns.clear();
+
+    const undo = gateway.undoTurn('chat', 'u1');
+    // Claimed before the first await: a turn arriving now sees it and waits.
+    const claimed: Promise<void> | undefined = (gateway as any).chatRestores.get('chat');
+    expect(claimed).toBeInstanceOf(Promise);
+    await expect(gateway.redoTurn('chat', 'u1')).rejects.toThrow(/still running/);
+    await claimed;
+    expect(read(repo, 'a.txt')).toBe('v0\n');
+    await undo;
+    expect((gateway as any).chatRestores.has('chat')).toBe(false);
+  });
 });
 
 describe('applyPendingRewind', () => {
@@ -157,6 +238,44 @@ describe('applyPendingRewind', () => {
     await (gateway as any).applyPendingRewind(chat, repo);
     expect(vi.mocked(revertCodexTurns)).toHaveBeenCalledWith('codex-t', 2, { cwd: repo });
     expect(chat.sessionAnchors).toEqual([{ agent: 'codex', sessionId: 'codex-t', syncedThroughMessageId: 'u1-reply' }]);
+  });
+
+  it('starts fresh instead of counting when the session ran a stopped or failed turn after the kept one', async () => {
+    vi.mocked(revertCodexTurns).mockClear();
+    const { gateway, chat } = fixture();
+    await turn(chat, 'u1', () => write(repo, 'a.txt', '1\n'), codex);
+    await turn(chat, 'u2', () => write(repo, 'a.txt', '2\n'), codex);
+    chat.messages.forEach((m: ChatMessage, i: number) => { m.timestamp = 100 + i; });
+    // A stopped turn ran in the thread after u2 started; no message holds it.
+    chat.sessionAnchors = [{ agent: 'codex', sessionId: 'codex-t', strayAt: 500 }];
+    await gateway.undoTurn('chat', 'u2');
+    await (gateway as any).applyPendingRewind(chat, repo);
+    expect(vi.mocked(revertCodexTurns)).not.toHaveBeenCalled();
+    expect(chat.sessionAnchors).toEqual([]);
+  });
+
+  it('still counts when the unrecorded turn came before the kept one', async () => {
+    vi.mocked(revertCodexTurns).mockClear();
+    const { gateway, chat } = fixture();
+    await turn(chat, 'u1', () => write(repo, 'a.txt', '1\n'), codex);
+    await turn(chat, 'u2', () => write(repo, 'a.txt', '2\n'), codex);
+    chat.messages.forEach((m: ChatMessage, i: number) => { m.timestamp = 100 + i; });
+    chat.sessionAnchors = [{ agent: 'codex', sessionId: 'codex-t', strayAt: 50 }];
+    await gateway.undoTurn('chat', 'u2');
+    await (gateway as any).applyPendingRewind(chat, repo);
+    expect(vi.mocked(revertCodexTurns)).toHaveBeenCalledWith('codex-t', 1, { cwd: repo });
+  });
+
+  it('drops the session when its rewind throws, and still finishes', async () => {
+    vi.mocked(revertCodexTurns).mockRejectedValueOnce(new Error('boom'));
+    const { gateway, chat } = fixture();
+    await turn(chat, 'u1', () => write(repo, 'a.txt', '1\n'), codex);
+    await turn(chat, 'u2', () => write(repo, 'a.txt', '2\n'), codex);
+    chat.sessionAnchors = [{ agent: 'codex', sessionId: 'codex-t' }];
+    await gateway.undoTurn('chat', 'u2');
+    await (gateway as any).applyPendingRewind(chat, repo);
+    expect(chat.sessionAnchors).toEqual([]);
+    expect(chat.pendingRewind).toBeUndefined();
   });
 
   it('starts fresh when Codex cannot revert or the whole session was undone; leaves untouched sessions alone', async () => {

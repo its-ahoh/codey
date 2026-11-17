@@ -253,16 +253,43 @@ export async function deleteChatRefs(
   const doomed = opts.keepMessageIds
     ? refs.filter(r => {
         const m = /\/turns\/([^/]+)\//.exec(r);
-        return m ? !keep.has(m[1]) : false; // undo/ safety refs stay with their turns' cleanup
+        return m ? !keep.has(m[1]) : false; // undo/ safety refs: see pruneUndoRefs
       })
     : refs;
-  if (!doomed.length) return 0;
-  const stdin = doomed.map(r => `delete ${r}\n`).join('');
+  await deleteRefs(cwd, doomed, git);
+  return doomed.length;
+}
+
+async function deleteRefs(cwd: string, refs: string[], git: CheckpointGit): Promise<void> {
+  if (!refs.length) return;
+  const stdin = refs.map(r => `delete ${r}\n`).join('');
   await new Promise<void>((resolve, reject) => {
     const child = execFile('git', ['update-ref', '--stdin'], { cwd }, (err) => (err ? reject(err) : resolve()));
     child.stdin?.end(stdin);
   }).catch(async () => {
-    for (const r of doomed) await git(['update-ref', '-d', r], cwd).catch(() => undefined);
+    for (const r of refs) await git(['update-ref', '-d', r], cwd).catch(() => undefined);
   });
-  return doomed.length;
+}
+
+/**
+ * Deletes the chat's `undo/` safety refs whose snapshot is not in
+ * `keepCommits`. A safety snapshot is only needed while its undo can still be
+ * redone; without this every undo and redo would pin a whole-folder snapshot
+ * until the chat is deleted. Best effort: returns 0 when git fails.
+ */
+export async function pruneUndoRefs(
+  cwd: string,
+  chatId: string,
+  keepCommits: string[],
+  git: CheckpointGit = defaultCheckpointGit,
+): Promise<number> {
+  try {
+    const keep = new Set(keepCommits);
+    const doomed = (await git(['for-each-ref', '--format=%(refname) %(objectname)', `${chatRefPrefix(chatId)}undo/`], cwd))
+      .split('\n').map(line => line.trim().split(' ')).filter(([ref, commit]) => ref && !keep.has(commit)).map(([ref]) => ref);
+    await deleteRefs(cwd, doomed, git);
+    return doomed.length;
+  } catch {
+    return 0;
+  }
 }

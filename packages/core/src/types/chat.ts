@@ -349,6 +349,9 @@ export interface Chat {
     /** Claude: resume the session at this message id on the next turn,
      *  dropping what came after it (set by a rewind). */
     resumeAt?: string;
+    /** Start time of the newest turn this session ran that no message
+     *  records (stopped or failed). Turns after it cannot be counted. */
+    strayAt?: number;
   }>;
   /** Legacy single-anchor field. Read for migration, never written by new code. */
   sessionAnchor?: {
@@ -359,6 +362,9 @@ export interface Chat {
     scopeKey?: string;
     syncedThroughMessageId?: string;
     resumeAt?: string;
+    /** Start time of the newest turn this session ran that no message
+     *  records (stopped or failed). Turns after it cannot be counted. */
+    strayAt?: number;
   };
   /**
    * Rolling LLM-generated summary of older messages. When set, the bootstrap
