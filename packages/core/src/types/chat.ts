@@ -171,6 +171,13 @@ export interface ChatMessage {
   /** Part of a turn the user undid. Shown dimmed, never agent context —
    *  like `failed` — and cleared again by Redo. */
   undone?: boolean;
+  /** Which undo marked this message (that undo's `at`). Redo clears only
+   *  its own messages; an older undo's turns inside the range stay undone. */
+  undoneAt?: number;
+  /** Set when the agents' sessions were rewound past this undone message.
+   *  Its undo is then final: it cannot be redone, and a later rewind must
+   *  not count it again. */
+  rewound?: boolean;
   /** Set on the user message once its turn ends: which CLI session ran it,
    *  and (Claude) the id of that session's last message after the turn.
    *  Undo uses it to rewind the agent's own conversation. */

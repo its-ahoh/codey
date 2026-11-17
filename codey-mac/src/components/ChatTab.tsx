@@ -925,12 +925,15 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
       // of its own is still undone along with the turns around it.
       if (m.undone || inUndone) ids.add(m.id)
     }
-    // Only the undone turns after the last live one can be redone, and the
-    // gateway redoes the earliest of them first. An undo with a newer turn
-    // after it is final, so it gets no Redo.
-    let lastLive = -1
-    messages.forEach((m, i) => { if (m.role === 'user' && !m.undone) lastLive = i })
-    const firstRedo = messages.find((m, i) => i > lastLive && m.role === 'user' && m.checkpoint?.undone)
+    // Only a pending undo can be redone, and the gateway redoes the earliest
+    // first. An undo is final once it was rewound or a live turn follows it.
+    let liveAfter = false
+    let firstRedo: ChatMessage | undefined
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i]
+      if (m.role === 'user' && !m.undone) liveAfter = true
+      if (m.role === 'user' && !liveAfter && !m.rewound && m.checkpoint?.undone) firstRedo = m
+    }
     if (firstRedo) anchors.add(firstRedo.id)
     return { undoneIds: ids, redoAnchors: anchors }
   }, [chat?.messages])

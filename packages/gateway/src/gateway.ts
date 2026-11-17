@@ -7557,8 +7557,15 @@ Example: /model gpt-4.1 write a Python script`;
     const pending = chat.pendingRewind!;
     const from = chat.messages.findIndex(m => m.id === pending.fromMessageId);
     this.chatManager.setPendingRewind(chat.id, null);
-    if (from < 0) return this.chatManager.get(chat.id) ?? chat;
-    const undoneTurns = chat.messages.slice(from).filter(m => m.role === 'user' && m.undone);
+    // From here on these undos are final. Marked even if the rewind below
+    // fails part way: a failed session starts fresh, so nothing recounts them.
+    const pendingSet = this.pendingUndone(chat);
+    const pendingIds = [...pendingSet];
+    const markRewound = () => this.chatManager.updateMessages(chat.id, pendingIds.map(id => ({ id, patch: { rewound: true } })));
+    if (from < 0) { markRewound(); return this.chatManager.get(chat.id) ?? chat; }
+    // Turns an earlier rewind already took out of the sessions are not
+    // counted again.
+    const undoneTurns = chat.messages.slice(from).filter(m => m.role === 'user' && pendingSet.has(m.id));
     const anchors = [...(chat.sessionAnchors ?? []), ...(chat.sessionAnchor ? [chat.sessionAnchor] : [])];
     for (const anchor of anchors) {
       const ran = undoneTurns.filter(m => m.agentSession?.sessionId === anchor.sessionId).length;
@@ -7616,6 +7623,7 @@ Example: /model gpt-4.1 write a Python script`;
       if (!kept) this.chatManager.clearSessionAnchor(chat.id, anchor.agent, anchor.scopeKey);
       this.logger.info(`[checkpoints] rewound ${anchor.agent} session ${anchor.sessionId} by ${ran} turn(s): ${kept ? 'in place' : 'fresh session'}`);
     }
+    markRewound();
     return this.chatManager.get(chat.id) ?? chat;
   }
 
@@ -7645,17 +7653,29 @@ Example: /model gpt-4.1 write a Python script`;
     return chat.messages.slice(start).filter(m => m.role === 'user' && m.checkpoint && !m.checkpoint.undone);
   }
 
-  /** Safety snapshots a Redo can still use: those of the undone turns at the
-   *  end of the chat. Once a live turn follows an undo, it can never be redone. */
-  private redoableSafetyCommits(chat: Chat): string[] {
-    const keep: string[] = [];
+  /**
+   * Ids of undone messages whose undo is still pending: not rewound yet and
+   * with no live turn after them. Any other undone message belongs to a final
+   * undo: it stays undone for good, cannot be redone, and is never counted
+   * by a rewind again.
+   */
+  private pendingUndone(chat: Chat): Set<string> {
+    const pending = new Set<string>();
+    let liveAfter = false;
     for (let i = chat.messages.length - 1; i >= 0; i--) {
       const m = chat.messages[i];
-      if (m.role !== 'user') continue;
-      if (!m.undone) break;
-      if (m.checkpoint?.undone) keep.push(m.checkpoint.undone.safety);
+      if (m.role === 'user' && !m.undone) liveAfter = true;
+      if (m.undone && !m.rewound && !liveAfter) pending.add(m.id);
     }
-    return keep;
+    return pending;
+  }
+
+  /** Safety snapshots a Redo can still use: those of pending undos. */
+  private redoableSafetyCommits(chat: Chat): string[] {
+    const pending = this.pendingUndone(chat);
+    return chat.messages
+      .filter(m => m.role === 'user' && pending.has(m.id) && m.checkpoint?.undone)
+      .map(m => m.checkpoint!.undone!.safety);
   }
 
   /** Drops safety snapshots no Redo can reach any more. Best effort. */
@@ -7735,7 +7755,7 @@ Example: /model gpt-4.1 write a Python script`;
       for (const m of chat.messages.slice(start)) {
         const patch: Partial<ChatMessage> = {};
         if (marked.has(m.id)) patch.checkpoint = { ...m.checkpoint!, undone: { at, safety: result.safetyCommit } };
-        if (!m.undone) patch.undone = true;
+        if (!m.undone) { patch.undone = true; patch.undoneAt = at; }
         if (Object.keys(patch).length) patches.push({ id: m.id, patch });
       }
       this.chatManager.updateMessages(chatId, patches);
@@ -7764,36 +7784,33 @@ Example: /model gpt-4.1 write a Python script`;
         throw new Error('New turns ran after this undo, so it can no longer be redone.');
       }
       // This undo's snapshot holds the files of every turn before it. Bringing
-      // it back while an earlier turn is still undone would restore that
-      // turn's files too, behind the chat's back. Only the undone turns since
-      // the last live one count: an undo with a newer turn after it is final,
-      // and its turns stay undone for good.
-      for (let i = start - 1; i >= 0; i--) {
-        const m = chat.messages[i];
-        if (m.role !== 'user') continue;
-        if (!m.undone) break;
+      // it back while an earlier undo is still pending would restore that
+      // undo's files too, behind the chat's back. A final undo (rewound when
+      // a newer turn started) stays undone for good and does not count.
+      const pendingNow = this.pendingUndone(chat);
+      if (chat.messages.slice(0, start).some(m => m.role === 'user' && pendingNow.has(m.id))) {
         throw new Error('An earlier turn is still undone. Redo that one first.');
       }
       if (!(await commitExists(dir, undone.safety))) throw new Error('The redo point is gone.');
       await restoreCheckpoint(dir, undone.safety, undoRef(chatId, Date.now()));
-      // This undo's messages run from `start` to the next turn undone by
-      // another undo, or to the end.
-      let end = chat.messages.length;
-      for (let i = start + 1; i < chat.messages.length; i++) {
-        const m = chat.messages[i];
-        if (m.role === 'user' && m.checkpoint?.undone && m.checkpoint.undone.at !== undone.at) { end = i; break; }
-      }
-      this.chatManager.updateMessages(chatId, chat.messages.slice(start, end).map((m) => {
-        const patch: Partial<ChatMessage> = { undone: undefined };
+      // Only the messages this undo marked come back. Turns of another undo
+      // in the same range (an older, final one) stay undone.
+      const patches: Array<{ id: string; patch: Partial<ChatMessage> }> = [];
+      for (const m of chat.messages.slice(start)) {
+        const patch: Partial<ChatMessage> = {};
+        if (m.undoneAt === undone.at) { patch.undone = undefined; patch.undoneAt = undefined; }
         if (m.role === 'user' && m.checkpoint?.undone?.at === undone.at) {
           const { undone: _drop, ...rest } = m.checkpoint;
           patch.checkpoint = rest;
         }
-        return { id: m.id, patch };
-      }));
+        if (Object.keys(patch).length) patches.push({ id: m.id, patch });
+      }
+      this.chatManager.updateMessages(chatId, patches);
       // Nothing was rewound yet (a new turn would have blocked redo), so the
-      // pending rewind now starts at the next turn still undone, if any.
-      const next = chat.messages.slice(end).find(m => m.role === 'user' && m.undone);
+      // pending rewind now starts at the next turn still pending, if any.
+      const after = this.chatManager.get(chatId)!;
+      const stillPending = this.pendingUndone(after);
+      const next = after.messages.find(m => m.role === 'user' && stillPending.has(m.id));
       this.chatManager.setPendingRewind(chatId, next ? { fromMessageId: next.id } : null);
       await this.pruneUndoSnapshots(chatId, dir);
       return this.chatManager.get(chatId)!;

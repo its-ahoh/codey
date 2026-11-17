@@ -365,3 +365,41 @@ describe('redo after a final undo', () => {
     await expect(gateway.redoTurn('chat', 'u3')).rejects.toThrow(/Redo that one first/);
   });
 });
+
+describe('undo reaching back past a final undo', () => {
+  const codexS = { agent: 'codex' as const, sessionId: 'S' };
+
+  it('redo brings back only its own turns and leaves no stale rewind', async () => {
+    const { gateway, chat } = fixture();
+    await turn(chat, 'u1', () => write(repo, 'a.txt', '1\n'), codexS);
+    await turn(chat, 'u2', () => write(repo, 'a.txt', '2\n'), codexS);
+    await gateway.undoTurn('chat', 'u2');
+    await turn(chat, 'u3', () => write(repo, 'a.txt', '3\n'), codexS); // the undo of u2 is now final
+    await gateway.undoTurn('chat', 'u1');
+    expect(read(repo, 'a.txt')).toBe('v0\n');
+
+    await gateway.redoTurn('chat', 'u1');
+    expect(read(repo, 'a.txt')).toBe('3\n');
+    const byId = (id: string) => chat.messages.find((m: ChatMessage) => m.id === id);
+    expect(byId('u1').undone).toBeUndefined();
+    expect(byId('u3').undone).toBeUndefined();
+    expect(byId('u3-reply').undone).toBeUndefined();
+    expect(byId('u2').undone).toBe(true); // the older, final undo stays
+    expect(chat.pendingRewind).toBeUndefined();
+  });
+
+  it('a rewind does not count turns an earlier rewind already removed', async () => {
+    const { gateway, chat } = fixture();
+    await turn(chat, 'u0', () => write(repo, 'a.txt', '0\n'), codexS);
+    await turn(chat, 'u1', () => write(repo, 'a.txt', '1\n'), codexS);
+    await turn(chat, 'u2', () => write(repo, 'a.txt', '2\n'), codexS);
+    chat.sessionAnchors = [{ agent: 'codex', sessionId: 'S' }];
+    await gateway.undoTurn('chat', 'u2');
+    await (gateway as any).applyPendingRewind(chat, repo); // S now holds u0, u1
+    await turn(chat, 'u3', () => write(repo, 'a.txt', '3\n'), codexS); // S: u0, u1, u3
+    vi.mocked(revertCodexTurns).mockClear();
+    await gateway.undoTurn('chat', 'u1');
+    await (gateway as any).applyPendingRewind(chat, repo);
+    expect(vi.mocked(revertCodexTurns)).toHaveBeenCalledWith('S', 2, { cwd: repo });
+  });
+});
