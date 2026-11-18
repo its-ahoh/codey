@@ -5,6 +5,8 @@ import {
   changedBetween,
   mentionedPaths,
   fileChangePaths,
+  fileEditPaths,
+  isFileEditTool,
   type GitRunner,
   type StatRunner,
   type Snapshot,
@@ -191,5 +193,25 @@ describe('fileChangePaths', () => {
     expect(fileChangePaths('nope', '/repo')).toEqual([]);
     expect(fileChangePaths(undefined, '/repo')).toEqual([]);
     expect(fileChangePaths([null, 3, {}], '/repo')).toEqual([]);
+  });
+});
+
+describe('fileEditPaths', () => {
+  it('resolves Edit/Write paths from tool input', () => {
+    expect(isFileEditTool('Edit')).toBe(true);
+    expect(isFileEditTool('Bash')).toBe(false);
+    expect(fileEditPaths('Edit', { file_path: 'src/a.ts' }, '/repo')).toEqual(['/repo/src/a.ts']);
+    expect(fileEditPaths('Write', { file_path: '/abs/b.ts' }, '/repo')).toEqual(['/abs/b.ts']);
+    expect(fileEditPaths('Read', { file_path: 'src/a.ts' }, '/repo')).toEqual([]);
+  });
+});
+
+describe('ShellWriteTracker.pathsToPrime', () => {
+  it('names dirty paths mentioned in the pending command', async () => {
+    const dirty = { 'a.ts': { status: ' M', size: 10, mtimeMs: 1 }, 'other.ts': { status: ' M', size: 2, mtimeMs: 1 } };
+    const { git, stat } = harness([dirty]);
+    const tracker = new ShellWriteTracker('/repo', git, stat);
+    await tracker.noteStart('sed -i s/x/y/ a.ts');
+    expect(tracker.pathsToPrime()).toEqual(['/repo/a.ts']);
   });
 });

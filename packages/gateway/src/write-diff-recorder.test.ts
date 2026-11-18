@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { WriteDiffRecorder, countPatchLines, priorBlobs, MAX_PATCH_CHARS } from './write-diff-recorder';
+import { WriteDiffRecorder, countPatchLines, priorBlobs, mergeTurnFiles, MAX_PATCH_CHARS, EMPTY_BLOB } from './write-diff-recorder';
 import type { GitRunner } from './shell-write-tracker';
 
-const EMPTY = 'e69de29bb2d1d6434b8b29ae775ad8c2e48c5391';
+const EMPTY = EMPTY_BLOB;
 
 /** A git that keeps blobs in memory: enough of hash-object / diff / rev-parse
  *  to exercise the recorder without a repo. */
@@ -70,16 +70,98 @@ describe('priorBlobs', () => {
   });
 });
 
+describe('mergeTurnFiles', () => {
+  it('keeps the earlier before and the later after', () => {
+    expect(mergeTurnFiles(
+      [{ path: '/a', before: 'a0', after: 'a1' }, { path: '/b', after: 'b1' }],
+      [{ path: '/a', before: 'a1', after: 'a2' }, { path: '/c', before: 'c0', after: 'c1' }],
+    )).toEqual([
+      { path: '/a', before: 'a0', after: 'a2' },
+      { path: '/b', after: 'b1' },
+      { path: '/c', before: 'c0', after: 'c1' },
+    ]);
+  });
+});
+
 describe('WriteDiffRecorder', () => {
   it('diffs a tracked file against its committed copy on the first write', async () => {
-    const { git } = fakeGit({ files: { '/repo/src/a.ts': 'one\ntwo\n' }, head: { 'src/a.ts': 'one\n' } });
+    const { git, idFor } = fakeGit({ files: { '/repo/src/a.ts': 'one\ntwo\n' }, head: { 'src/a.ts': 'one\n' } });
     const rec = new WriteDiffRecorder('/repo', git);
-    const out = await rec.record(['/repo/src/a.ts']);
+    const out = await rec.record(['/repo/src/a.ts'], { cleanAtStart: true });
     expect(out).toHaveLength(1);
-    expect(out[0]).toMatchObject({ path: '/repo/src/a.ts', added: 2, removed: 1 });
+    expect(out[0]).toMatchObject({ path: '/repo/src/a.ts', added: 2, removed: 1, blob: idFor('one\ntwo\n') });
+    expect(rec.turnFiles()).toEqual([{ path: '/repo/src/a.ts', before: idFor('one\n'), after: idFor('one\ntwo\n') }]);
     expect(out[0].patch).toContain('--- a/src/a.ts');
     expect(out[0].patch).toContain('+++ b/src/a.ts');
     expect(out[0].patch).toContain('+two');
+  });
+
+  it('primes on-disk content before the write so dirty files keep their real before', async () => {
+    const files: Record<string, string | undefined> = { '/repo/a.ts': 'dirty\n' };
+    const { git, idFor } = fakeGit({ files, head: { 'a.ts': 'committed\n' } });
+    const rec = new WriteDiffRecorder('/repo', git);
+    await rec.primeBefore(['/repo/a.ts']);
+    files['/repo/a.ts'] = 'dirty\nafter\n';
+    const out = await rec.record(['/repo/a.ts']);
+    expect(rec.turnFiles()[0].before).toBe(idFor('dirty\n'));
+    expect(out[0].blob).toBe(idFor('dirty\nafter\n'));
+    expect(out[0].patch).toContain('+after');
+    expect(out[0].patch).not.toContain('committed');
+  });
+
+  it('charges a second primed write in the same turn only its own change', async () => {
+    const files: Record<string, string | undefined> = { '/repo/a.ts': 'one\n' };
+    const { git, idFor } = fakeGit({ files, head: { 'a.ts': 'one\n' } });
+    const rec = new WriteDiffRecorder('/repo', git);
+    await rec.primeBefore(['/repo/a.ts']);
+    files['/repo/a.ts'] = 'one\ntwo\n';
+    await rec.record(['/repo/a.ts']);
+    await rec.primeBefore(['/repo/a.ts']);
+    files['/repo/a.ts'] = 'one\ntwo\nthree\n';
+    const second = await rec.record(['/repo/a.ts']);
+    // The fake diff lists every line, so "-two" means the second call was
+    // diffed against the first call's result, not the turn's start.
+    expect(second[0].patch).toContain('-two');
+    expect(second[0].patch).toContain('+three');
+    expect(rec.turnFiles()).toEqual([
+      { path: '/repo/a.ts', before: idFor('one\n'), after: idFor('one\ntwo\nthree\n') },
+    ]);
+  });
+
+  it('uses HEAD, not a stale earlier write, for a path clean at the start', async () => {
+    // An earlier turn left "old"; the user since reset the file to HEAD.
+    const files: Record<string, string | undefined> = { '/repo/a.ts': 'old\n' };
+    const { git, idFor } = fakeGit({ files, head: { 'a.ts': 'committed\n' } });
+    await git(['hash-object', '-w', '--', '/repo/a.ts'], '/repo');
+    files['/repo/a.ts'] = 'new\n';
+    const stale = () => new Map([['/repo/a.ts', idFor('old\n')]]);
+    const guess = new WriteDiffRecorder('/repo', git, stale());
+    await guess.record(['/repo/a.ts']);
+    expect(guess.turnFiles()).toEqual([{ path: '/repo/a.ts', after: idFor('new\n') }]);
+    const exact = new WriteDiffRecorder('/repo', git, stale());
+    await exact.record(['/repo/a.ts'], { cleanAtStart: true });
+    expect(exact.turnFiles()[0].before).toBe(idFor('committed\n'));
+  });
+
+  it('keeps a guessed first before unset even when a later write is exact', async () => {
+    const files: Record<string, string | undefined> = { '/repo/a.ts': 'old\n' };
+    const { git, idFor } = fakeGit({ files, head: { 'a.ts': 'committed\n' } });
+    await git(['hash-object', '-w', '--', '/repo/a.ts'], '/repo');
+    files['/repo/a.ts'] = 'one\n';
+    const rec = new WriteDiffRecorder('/repo', git, new Map([['/repo/a.ts', idFor('old\n')]]));
+    await rec.record(['/repo/a.ts']);
+    await rec.primeBefore(['/repo/a.ts']);
+    files['/repo/a.ts'] = 'two\n';
+    await rec.record(['/repo/a.ts']);
+    expect(rec.turnFiles()).toEqual([{ path: '/repo/a.ts', after: idFor('two\n') }]);
+  });
+
+  it('leaves unchanged writes out of the ledger', async () => {
+    const { git } = fakeGit({ files: { '/repo/a.ts': 'one\n' }, head: { 'a.ts': 'one\n' } });
+    const rec = new WriteDiffRecorder('/repo', git);
+    await rec.primeBefore(['/repo/a.ts']);
+    await rec.record(['/repo/a.ts']);
+    expect(rec.turnFiles()).toEqual([]);
   });
 
   it('matches a path to the repo root through a symlink', async () => {

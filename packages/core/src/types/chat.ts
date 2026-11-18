@@ -71,6 +71,16 @@ export interface WriteDiff {
   truncated?: boolean;
 }
 
+/** One path this turn wrote, rolled up across every tool call. Record-only
+ *  for now: no restore UI. `before` is the content before the first touch;
+ *  `after` is after the last. No `before` = touched, but the pre-turn content
+ *  is not known for sure, so the path must not be restored. */
+export interface TurnFileEntry {
+  path: string;
+  before?: string;
+  after: string;
+}
+
 export interface TeamRunSummaryEntry {
   bot: string;
   step: number;
@@ -222,6 +232,12 @@ export interface ChatMessage {
    * (see gateway `turn-checkpoints.ts`), so the turn can be undone.
    */
   checkpoint?: TurnCheckpoint;
+  /**
+   * Paths this turn wrote, with before/after git blobs. Aggregated from tool
+   * `writeDiffs` when the turn ends. Shared and worktree both record this;
+   * it is the ledger for a future path-level undo, not a restore by itself.
+   */
+  turnFiles?: TurnFileEntry[];
   /** Structured question from AskUserQuestion tool call, with option descriptions. */
   userQuestion?: {
     question: string;
@@ -296,6 +312,10 @@ export interface Chat {
    *  ran an undone turn (from this user message on). Cleared by Redo, or
    *  once applied. Waiting until the next turn keeps Redo free. */
   pendingRewind?: { fromMessageId: string };
+  /** Files a stopped turn wrote. A stop drops the user message, so its ledger
+   *  waits here and is folded into the next turn's `turnFiles` — that turn's
+   *  undo then also takes back what the stopped attempt changed. */
+  strayTurnFiles?: TurnFileEntry[];
   /** Stable filesystem environment owned by an isolated chat. The branch is
    *  deliberately not persisted: it is live Git state managed by the agent. */
   chatWorkspace?: {

@@ -39,8 +39,8 @@ import { resolveEffort } from './effort-resolve';
 import { PairingStore, ChannelBinding } from './pairings';
 import { summarizePriorHistory } from './summary';
 import { chatStreamEventForStatus, isPersistableToolCall } from './chat-status-events';
-import { ShellWriteTracker, isShellTool, shellCommandText, defaultGitRunner, defaultStatRunner, isFileChangeTool, fileChangePaths } from './shell-write-tracker';
-import { WriteDiffRecorder, priorBlobs } from './write-diff-recorder';
+import { ShellWriteTracker, isShellTool, shellCommandText, defaultGitRunner, defaultStatRunner, isFileChangeTool, fileChangePaths, fileEditPaths } from './shell-write-tracker';
+import { WriteDiffRecorder, priorBlobs, mergeTurnFiles } from './write-diff-recorder';
 import { CHAT_CONTEXT_WINDOW, buildChatPrompt, buildChatBootstrapPrompt, buildChatResumePrompt, buildChatCatchupPrompt, buildQuickQuestionPrompt, assistantPrefixForSelection, RunSemaphore, ChatStreamSink, ChatStreamEvent, READ_ONLY_TOOLS, QQStreamEvent, QQHistoryEntry, SOLO_ADVISOR_INSTRUCTION } from './chat-runner';
 import { TurnQueue, QueuedMessage, Surface } from './turn-queue';
 import { renderQuestion, renderCancelNotice, stripAskMarker } from './team-pause';
@@ -5265,7 +5265,7 @@ Example: /model gpt-4.1 write a Python script`;
     chatId: string,
     chat: Chat,
     signal?: AbortSignal,
-    opts: { forceAll?: boolean; routingTask?: string; taskId?: string; mediaCache?: Map<string, FileAttachment> } = {},
+    opts: { forceAll?: boolean; routingTask?: string; taskId?: string; mediaCache?: Map<string, FileAttachment>; diffRecorder?: WriteDiffRecorder } = {},
     chatAgent?: CodingAgent,
     chatModel?: ModelConfig,
   ): Promise<{ response: string; tokens?: number; choices?: string[]; thinkingByStep?: Record<number, string>; teamTurnId?: string; advisorSummary?: string }> {
@@ -5317,7 +5317,9 @@ Example: /model gpt-4.1 write a Python script`;
     // bots run one after another; the parallel path below shares a directory
     // between concurrent bots, where no sample can say which one wrote what.
     const teamWriteTracker = new ShellWriteTracker(workingDir, defaultGitRunner, defaultStatRunner);
-    const teamDiffRecorder = new WriteDiffRecorder(workingDir, defaultGitRunner, priorBlobs(chat.messages));
+    // A chat turn passes its own recorder so team writes land in that turn's
+    // ledger; a channel run keeps its own.
+    const teamDiffRecorder = opts.diffRecorder ?? new WriteDiffRecorder(workingDir, defaultGitRunner, priorBlobs(chat.messages));
     let teamStatusChain: Promise<void> = Promise.resolve();
 
     const runOneBot = async (
@@ -5356,13 +5358,22 @@ Example: /model gpt-4.1 write a Python script`;
           // Sampling is async; chaining keeps the bot's tool rows in order.
           teamStatusChain = teamStatusChain.then(async () => {
             if (parsed?.type === 'tool_start') {
-              if (isShellTool(parsed.tool)) await teamWriteTracker.noteStart(shellCommandText(parsed.input));
+              if (isShellTool(parsed.tool)) {
+                await teamWriteTracker.noteStart(shellCommandText(parsed.input));
+                await teamDiffRecorder.primeBefore(teamWriteTracker.pathsToPrime());
+              } else {
+                await teamDiffRecorder.primeBefore(fileEditPaths(parsed.tool, parsed.input, workingDir));
+              }
               botMsgs.onTool({ type: 'tool_start', tool: parsed.tool, message: parsed.message ?? '', input: parsed.input });
             } else if (parsed?.type === 'tool_end') {
               const writes = isShellTool(parsed.tool)
                 ? await teamWriteTracker.noteEnd()
-                : isFileChangeTool(parsed.tool) ? fileChangePaths(parsed.output, workingDir) : [];
-              const writeDiffs = writes.length ? await teamDiffRecorder.record(writes) : [];
+                : isFileChangeTool(parsed.tool)
+                  ? fileChangePaths(parsed.output, workingDir)
+                  : fileEditPaths(parsed.tool, parsed.input, workingDir);
+              // The shell tracker primes every dirty path it names, so an unprimed
+              // shell write was to a file still at HEAD (or not yet there).
+              const writeDiffs = writes.length ? await teamDiffRecorder.record(writes, { cleanAtStart: isShellTool(parsed.tool) }) : [];
               botMsgs.onTool({
                 type: 'tool_end', tool: parsed.tool, message: parsed.message ?? '', output: parsed.output,
                 ...(writes.length ? { writes } : {}),
@@ -6950,6 +6961,21 @@ Example: /model gpt-4.1 write a Python script`;
     // the Files panel can show this turn's change rather than everything
     // since the last commit.
     const diffRecorder = new WriteDiffRecorder(workingDir, defaultGitRunner, priorBlobs(afterUser.messages));
+    /** A stopped turn before this one left its ledger on the chat; this turn
+     *  owns it now, so undoing this turn also takes back the stopped attempt. */
+    const strayTurnFiles = afterUser.strayTurnFiles ?? [];
+    const turnLedger = () => mergeTurnFiles(strayTurnFiles, diffRecorder.turnFiles());
+    /** Writes the ledger onto the user message (finished or failed turn). */
+    const saveTurnLedger = () => {
+      const turnFiles = turnLedger();
+      if (turnFiles.length) this.chatManager.updateMessage(chatId, userMessage.id, { turnFiles });
+      if (strayTurnFiles.length) this.chatManager.setStrayTurnFiles?.(chatId, null);
+    };
+    /** A stop drops the user message; park the ledger for the next turn. */
+    const parkTurnLedger = async () => {
+      await settleStatus();
+      this.chatManager.setStrayTurnFiles?.(chatId, turnLedger());
+    };
     let statusChain: Promise<void> = Promise.resolve();
     const onStatus = (update: any) => {
       let parsed: any;
@@ -6957,15 +6983,24 @@ Example: /model gpt-4.1 write a Python script`;
         parsed = typeof update === 'string' ? JSON.parse(update) : update;
       } catch { return; /* non-JSON status */ }
       statusChain = statusChain.then(async () => {
-        if (parsed.type === 'tool_start' && isShellTool(parsed.tool)) {
-          await writeTracker.noteStart(shellCommandText(parsed.input));
+        if (parsed.type === 'tool_start') {
+          if (isShellTool(parsed.tool)) {
+            await writeTracker.noteStart(shellCommandText(parsed.input));
+            await diffRecorder.primeBefore(writeTracker.pathsToPrime());
+          } else {
+            await diffRecorder.primeBefore(fileEditPaths(parsed.tool, parsed.input, workingDir));
+          }
         }
         const writes = parsed.type !== 'tool_end'
           ? []
           : isShellTool(parsed.tool)
             ? await writeTracker.noteEnd()
-            : isFileChangeTool(parsed.tool) ? fileChangePaths(parsed.output, workingDir) : [];
-        const writeDiffs = writes.length ? await diffRecorder.record(writes) : [];
+            : isFileChangeTool(parsed.tool)
+              ? fileChangePaths(parsed.output, workingDir)
+              : fileEditPaths(parsed.tool, parsed.input, workingDir);
+        // The shell tracker primes every dirty path it names, so an unprimed
+        // shell write was to a file still at HEAD (or not yet there).
+        const writeDiffs = writes.length ? await diffRecorder.record(writes, { cleanAtStart: isShellTool(parsed.tool) }) : [];
         if (isPersistableToolCall(parsed.type)) {
           toolCalls.push({
             id: randomUUID(),
@@ -7084,7 +7119,7 @@ Example: /model gpt-4.1 write a Python script`;
           : team.members.length > 1
             ? `Ad-hoc team from mentions: ${team.members.join(', ')} (Advisor dispatches)`
             : `Routing to bot ${team.members[0]}` });
-        const r = await this.runTeamForChat(teamName, team, teamPrompt, workingDir, sink, chatId, contextChat, abortController.signal, { routingTask: userText, taskId, mediaCache: turnMediaCache }, agent, model);
+        const r = await this.runTeamForChat(teamName, team, teamPrompt, workingDir, sink, chatId, contextChat, abortController.signal, { routingTask: userText, taskId, mediaCache: turnMediaCache, diffRecorder }, agent, model);
         output = r.response;
         tokens = r.tokens;
         teamChoices = r.choices;
@@ -7127,7 +7162,7 @@ Example: /model gpt-4.1 write a Python script`;
         }
         const team: TeamConfig = wsTeam ?? fallbackTeam;
         this.logger.info(`[parallel-debug] teamName=${teamName} dispatch=${team.dispatch} hasRoundtable=${!!team.roundtable} wsTeam=${!!wsTeam} fallbackDispatch=${fallbackDispatch} members=${team.members.join(',')}`);
-        const r = await this.runTeamForChat(teamName, team, prompt, workingDir, sink, chatId, contextChat, abortController.signal, { routingTask: userText, taskId, mediaCache: turnMediaCache }, agent, model);
+        const r = await this.runTeamForChat(teamName, team, prompt, workingDir, sink, chatId, contextChat, abortController.signal, { routingTask: userText, taskId, mediaCache: turnMediaCache, diffRecorder }, agent, model);
         output = r.response;
         tokens = r.tokens;
         teamChoices = r.choices;
@@ -7250,6 +7285,7 @@ Example: /model gpt-4.1 write a Python script`;
       }
       if (abortController.signal.aborted) {
         await finishTeam('Stopped by user', true);
+        await parkTurnLedger();
         // User-initiated stop: roll the prompt back so the client can restore
         // it into the input box. Don't append a "Stopped" assistant message
         // and don't fan out to other routes.
@@ -7283,6 +7319,8 @@ Example: /model gpt-4.1 write a Python script`;
       // The last shell command's working-tree sample may still be in flight;
       // toolCalls is about to be frozen into the message.
       await settleStatus();
+      // Record-only ledger for a future path-level undo (shared + worktree).
+      saveTurnLedger();
 
       // Fallback metadata already carries the exact successful identity as
       // "agent(model)". Persist that identity instead of the failed primary;
@@ -7511,6 +7549,7 @@ Example: /model gpt-4.1 write a Python script`;
     } catch (err) {
       if (abortController.signal.aborted) {
         await finishTeam('Stopped by user', true);
+        await parkTurnLedger();
         // Same rollback as the abort branch above — agent runners surface
         // aborts as thrown errors, but we still want to restore the prompt.
         this.chatManager.removeMessage(chatId, userMessage.id);
@@ -7520,6 +7559,7 @@ Example: /model gpt-4.1 write a Python script`;
         return { response: '', chatId };
       }
       await settleStatus();
+      saveTurnLedger();
       if (activeTeamId) {
         const final = await finishTeam(`Error: ${(err as Error).message}`, abortController.signal.aborted);
         // A crashed team run still ends with `done`; `failed` lets clients
