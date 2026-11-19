@@ -93,6 +93,10 @@ export class WriteDiffRecorder {
   /** The turn's undo ledger, in first-write order. */
   private readonly ledger = new Map<string, TurnFileEntry>();
 
+  /** False once the recorder gave up for the turn (not a repo, a git failure):
+   *  the ledger may be missing writes, so it must not drive an undo. */
+  get healthy(): boolean { return !this.disabled; }
+
   constructor(
     private readonly workingDir: string,
     private readonly git: GitRunner,

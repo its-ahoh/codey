@@ -100,6 +100,44 @@ git('add', '.'); git('commit', '-qm', 'init');
   const missing = all.flatMap(x => [x.before, x.after]).filter(Boolean).filter(id => { try { git('cat-file', '-e', id); return false; } catch { return true; } });
   check('all ledger blobs exist in git', missing.length === 0);
 
+  // 6. Shared-checkout undo from turn 2 on, then redo.
+  const snapshot = () => Object.fromEntries(['a.txt', 'b.txt', 'c.txt', 'd.txt', 'e.txt']
+    .map(f => [f, fs.existsSync(path.join(repo, f)) ? fs.readFileSync(path.join(repo, f), 'utf8') : null]));
+  const beforeUndo = snapshot();
+  const pins = () => git('for-each-ref', '--format=%(refname)', 'refs/codey/').split('\n').filter(Boolean);
+  check('every turn with writes is pinned', pins().length === 5);
+  const turn2 = gw.chatManager.get(chat.id).messages.find(m => m.role === 'user' && m.content.includes('b committed'));
+  const preview = await gw.previewUndoTurn(chat.id, turn2.id);
+  console.log('\n### undo preview', JSON.stringify(preview));
+  check('preview covers 4 turns and 4 files', preview.ok && preview.turns === 4 && preview.files === 4);
+  await gw.undoTurn(chat.id, turn2.id);
+  const undone = snapshot();
+  console.log(JSON.stringify(undone));
+  check('undo: a.txt (turn 1) kept', undone['a.txt'] === beforeUndo['a.txt']);
+  check('undo: b.txt back to HEAD', undone['b.txt'] === 'b committed\n');
+  check('undo: c.txt back to the user dirty edit', undone['c.txt'] === 'c dirty by user\n');
+  check('undo: d.txt back to HEAD', undone['d.txt'] === 'd committed\n');
+  check('undo: e.txt (created) removed', undone['e.txt'] === null);
+  check('undo: chat marked, rewind pending', !!gw.chatManager.get(chat.id).pendingRewind);
+  await gw.redoTurn(chat.id, turn2.id);
+  const redone = snapshot();
+  check('redo: every file as before the undo', JSON.stringify(redone) === JSON.stringify(beforeUndo));
+  check('redo: turns live again', !gw.chatManager.get(chat.id).messages.some(m => m.undone));
+
+  // 7. Undo refuses to overwrite a hand edit made after the turn.
+  fs.writeFileSync(path.join(repo, 'b.txt'), 'hand edit\n');
+  const refused = await gw.previewUndoTurn(chat.id, turn2.id);
+  check('undo refused on a hand-edited file', !refused.ok && /b\.txt/.test(refused.reason ?? ''));
+  check('hand edit untouched', fs.readFileSync(path.join(repo, 'b.txt'), 'utf8') === 'hand edit\n');
+  fs.writeFileSync(path.join(repo, 'b.txt'), redone['b.txt']);
+
+  // 8. Undo turn 4, then a new turn: the agent session is rewound first.
+  const turn4 = gw.chatManager.get(chat.id).messages.find(m => m.role === 'user' && m.content.includes('python3'));
+  await gw.undoTurn(chat.id, turn4.id);
+  check('undo turn 4: d.txt back to HEAD, e.txt gone', snapshot()['d.txt'] === 'd committed\n' && snapshot()['e.txt'] === null);
+  tf = await run('Turn after undo', 'Reply with the single word ok. Do not use any tools.');
+  check('next turn ran after the rewind', !gw.chatManager.get(chat.id).pendingRewind);
+
   const failed = results.filter(r => !r[1]).length;
   console.log(`\n${results.length - failed}/${results.length} passed. repo=${repo} home=${home}`);
   process.exit(failed ? 1 : 0);
