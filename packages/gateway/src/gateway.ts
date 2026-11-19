@@ -39,7 +39,7 @@ import { resolveEffort } from './effort-resolve';
 import { PairingStore, ChannelBinding } from './pairings';
 import { summarizePriorHistory } from './summary';
 import { chatStreamEventForStatus, isPersistableToolCall } from './chat-status-events';
-import { ShellWriteTracker, isShellTool, shellCommandText, defaultGitRunner, defaultStatRunner, isFileChangeTool, fileChangePaths, fileEditPaths } from './shell-write-tracker';
+import { ShellWriteTracker, isShellTool, shellCommandText, defaultGitRunner, defaultStatRunner, isFileChangeTool, fileChangePaths, PendingEditPaths } from './shell-write-tracker';
 import { WriteDiffRecorder, priorBlobs, mergeTurnFiles } from './write-diff-recorder';
 import { CHAT_CONTEXT_WINDOW, buildChatPrompt, buildChatBootstrapPrompt, buildChatResumePrompt, buildChatCatchupPrompt, buildQuickQuestionPrompt, assistantPrefixForSelection, RunSemaphore, ChatStreamSink, ChatStreamEvent, READ_ONLY_TOOLS, QQStreamEvent, QQHistoryEntry, SOLO_ADVISOR_INSTRUCTION } from './chat-runner';
 import { TurnQueue, QueuedMessage, Surface } from './turn-queue';
@@ -311,6 +311,26 @@ export interface SkillInvoke {
 }
 
 const memoryUsageContext = new AsyncLocalStorage<Map<string, NonNullable<ChatMessage['memoryUsed']>[number]>>();
+
+/**
+ * Paths a finished Edit/Write-style call touched. When the agent echoed the
+ * file's prior content (Claude does), that becomes the recorder's "before":
+ * the tool_start snapshot races the agent's own write and often sees the new
+ * content already.
+ */
+async function editEndPaths(
+  recorder: WriteDiffRecorder,
+  pending: PendingEditPaths,
+  parsed: { tool?: string; input?: unknown; editedFile?: { path: string; originalContent: string | null } },
+  workingDir: string,
+): Promise<string[]> {
+  const paths = pending.end(parsed.tool, parsed.input, workingDir);
+  const edited = parsed.editedFile;
+  if (!edited) return paths;
+  const abs = edited.path.startsWith('/') ? edited.path : path.join(workingDir, edited.path);
+  await recorder.primeContent(abs, edited.originalContent);
+  return paths.includes(abs) ? paths : [abs];
+}
 
 export class Codey {
   private coMemo = new CoMemoClient();
@@ -5350,6 +5370,7 @@ Example: /model gpt-4.1 write a Python script`;
     const teamWriteTracker = new ShellWriteTracker(workingDir, defaultGitRunner, defaultStatRunner);
     // A chat turn passes its own recorder so team writes land in that turn's
     // ledger; a channel run keeps its own.
+    const teamEditPaths = new PendingEditPaths();
     const teamDiffRecorder = opts.diffRecorder ?? new WriteDiffRecorder(workingDir, defaultGitRunner, priorBlobs(chat.messages));
     let teamStatusChain: Promise<void> = Promise.resolve();
 
@@ -5393,7 +5414,7 @@ Example: /model gpt-4.1 write a Python script`;
                 await teamWriteTracker.noteStart(shellCommandText(parsed.input));
                 await teamDiffRecorder.primeBefore(teamWriteTracker.pathsToPrime());
               } else {
-                await teamDiffRecorder.primeBefore(fileEditPaths(parsed.tool, parsed.input, workingDir));
+                await teamDiffRecorder.primeBefore(teamEditPaths.start(parsed.tool, parsed.input, workingDir));
               }
               botMsgs.onTool({ type: 'tool_start', tool: parsed.tool, message: parsed.message ?? '', input: parsed.input });
             } else if (parsed?.type === 'tool_end') {
@@ -5401,7 +5422,7 @@ Example: /model gpt-4.1 write a Python script`;
                 ? await teamWriteTracker.noteEnd()
                 : isFileChangeTool(parsed.tool)
                   ? fileChangePaths(parsed.output, workingDir)
-                  : fileEditPaths(parsed.tool, parsed.input, workingDir);
+                  : await editEndPaths(teamDiffRecorder, teamEditPaths, parsed, workingDir);
               // The shell tracker primes every dirty path it names, so an unprimed
               // shell write was to a file still at HEAD (or not yet there).
               const writeDiffs = writes.length ? await teamDiffRecorder.record(writes, { cleanAtStart: isShellTool(parsed.tool) }) : [];
@@ -6998,6 +7019,7 @@ Example: /model gpt-4.1 write a Python script`;
     // the Files panel can show this turn's change rather than everything
     // since the last commit.
     const diffRecorder = new WriteDiffRecorder(workingDir, defaultGitRunner, priorBlobs(afterUser.messages));
+    const editPaths = new PendingEditPaths();
     /** A stopped turn before this one left its ledger on the chat; this turn
      *  owns it now, so undoing this turn also takes back the stopped attempt. */
     const strayTurnFiles = afterUser.strayTurnFiles ?? [];
@@ -7025,7 +7047,7 @@ Example: /model gpt-4.1 write a Python script`;
             await writeTracker.noteStart(shellCommandText(parsed.input));
             await diffRecorder.primeBefore(writeTracker.pathsToPrime());
           } else {
-            await diffRecorder.primeBefore(fileEditPaths(parsed.tool, parsed.input, workingDir));
+            await diffRecorder.primeBefore(editPaths.start(parsed.tool, parsed.input, workingDir));
           }
         }
         const writes = parsed.type !== 'tool_end'
@@ -7034,7 +7056,7 @@ Example: /model gpt-4.1 write a Python script`;
             ? await writeTracker.noteEnd()
             : isFileChangeTool(parsed.tool)
               ? fileChangePaths(parsed.output, workingDir)
-              : fileEditPaths(parsed.tool, parsed.input, workingDir);
+              : await editEndPaths(diffRecorder, editPaths, parsed, workingDir);
         // The shell tracker primes every dirty path it names, so an unprimed
         // shell write was to a file still at HEAD (or not yet there).
         const writeDiffs = writes.length ? await diffRecorder.record(writes, { cleanAtStart: isShellTool(parsed.tool) }) : [];

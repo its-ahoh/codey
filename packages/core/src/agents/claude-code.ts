@@ -29,6 +29,9 @@ export interface StreamEvent {
     cache_read_input_tokens?: number;
     cache_creation_input_tokens?: number;
   };
+  /** User event: what the tool reported. Edit/Write carry `originalFile`,
+   *  the file's content before the call (null for a file it created). */
+  tool_use_result?: unknown;
   // assistant event
   message?: {
     content: Array<{
@@ -65,7 +68,17 @@ export interface ClaudeToolResult {
   text?: string;
   isError?: boolean;
   backgroundTask?: ClaudeBackgroundTask;
+  /** Edit/Write only: the file's content before the call; null when the call
+   *  created it. Undefined when the tool did not report it. */
+  originalFile?: string | null;
 }
+
+/** `originalFile` from a user event's `tool_use_result`, when it has one. */
+const originalFileOf = (result: unknown): string | null | undefined => {
+  if (!result || typeof result !== 'object' || !('originalFile' in result)) return undefined;
+  const value = (result as { originalFile?: unknown }).originalFile;
+  return typeof value === 'string' || value === null ? value : undefined;
+};
 
 export interface ClaudeBackgroundTask {
   id: string;
@@ -114,9 +127,14 @@ export function extractClaudeToolResults(event: StreamEvent): ClaudeToolResult[]
     return [normalize(event.tool_use_id, event.content, event.is_error)];
   }
   if (event.type !== 'user' || !Array.isArray(event.message?.content)) return [];
-  return event.message.content
+  const results = event.message.content
     .filter(block => block.type === 'tool_result')
     .map(block => normalize(block.tool_use_id, block.content, block.is_error));
+  // `tool_use_result` describes the event as a whole, so it can only be
+  // pinned to a result when the event carries exactly one.
+  const originalFile = originalFileOf(event.tool_use_result);
+  if (results.length === 1 && originalFile !== undefined) results[0].originalFile = originalFile;
+  return results;
 }
 
 /** Parse both timeout-driven and explicitly requested Bash background results. */
@@ -369,6 +387,12 @@ export class ClaudeCodeAdapter extends BaseAgentAdapter {
             tool: toolName,
             message: `${toolName}: ${outcome}`,
             output: toolResult.text,
+            // Edit/Write echo the file's prior content. The gateway's own
+            // tool_start snapshot races the CLI's write, so this is the
+            // reliable "before" for its undo ledger. Not persisted.
+            ...(toolResult.originalFile !== undefined && typeof pending?.input?.file_path === 'string'
+              ? { editedFile: { path: pending.input.file_path, originalContent: toolResult.originalFile } }
+              : {}),
           });
 
           if (toolResult.toolUseId) pendingTools.delete(toolResult.toolUseId);

@@ -100,6 +100,25 @@ describe('classifyClaudeRunResult', () => {
 });
 
 describe('extractClaudeToolResults', () => {
+  it('pins Edit/Write originalFile to the single tool result', () => {
+    const block = { type: 'tool_result', tool_use_id: 't1', content: 'ok' };
+    expect(extractClaudeToolResults({
+      type: 'user', message: { content: [block] },
+      tool_use_result: { filePath: '/r/a.txt', originalFile: 'old\n' },
+    })[0].originalFile).toBe('old\n');
+    // A created file reports null.
+    expect(extractClaudeToolResults({
+      type: 'user', message: { content: [block] },
+      tool_use_result: { type: 'create', originalFile: null },
+    })[0].originalFile).toBeNull();
+    // Not reported, or ambiguous across two results: left undefined.
+    expect(extractClaudeToolResults({ type: 'user', message: { content: [block] } })[0].originalFile).toBeUndefined();
+    expect(extractClaudeToolResults({
+      type: 'user', message: { content: [block, { ...block, tool_use_id: 't2' }] },
+      tool_use_result: { originalFile: 'x' },
+    }).map(r => r.originalFile)).toEqual([undefined, undefined]);
+  });
+
   it('extracts current CLI user-message tool_result blocks', () => {
     expect(extractClaudeToolResults({
       type: 'user',

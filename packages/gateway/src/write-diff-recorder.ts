@@ -22,6 +22,8 @@
 // which misses uncommitted edits). The WriteDiffs stay display-only.
 
 import { promises as fs } from 'fs';
+import * as os from 'os';
+import * as nodePath from 'path';
 import type { TurnFileEntry, WriteDiff } from '@codey/core';
 import type { GitRunner } from './shell-write-tracker';
 
@@ -161,6 +163,37 @@ export class WriteDiffRecorder {
       }
     } catch {
       this.disabled = true;
+    }
+  }
+
+  /**
+   * Set a path's "before" from content the agent reported, rather than from
+   * disk. Call on tool_end, before `record`: a tool_start snapshot races the
+   * agent's own write (Claude writes the file the moment it emits the call),
+   * so the agent's echo of the original is the reliable one. `null` = the
+   * call created the file.
+   */
+  async primeContent(absPath: string, content: string | null): Promise<void> {
+    if (this.disabled) return;
+    const root = await this.resolveRepoRoot();
+    if (!root) return;
+    if (content === null) {
+      try {
+        await this.git(['hash-object', '-w', '/dev/null'], this.workingDir);
+        this.primed.set(absPath, EMPTY_BLOB);
+      } catch { /* leave the tool_start prime in place */ }
+      return;
+    }
+    const dir = await fs.mkdtemp(nodePath.join(os.tmpdir(), 'codey-before-'));
+    const tmp = nodePath.join(dir, 'content');
+    try {
+      await fs.writeFile(tmp, content);
+      const id = (await this.git(['hash-object', '-w', '--', tmp], this.workingDir)).trim();
+      if (id) this.primed.set(absPath, id);
+    } catch {
+      /* leave the tool_start prime in place */
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
     }
   }
 
