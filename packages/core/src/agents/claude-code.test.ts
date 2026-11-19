@@ -194,6 +194,13 @@ describe('extractClaudeBackgroundTask', () => {
     )).toEqual({ id: 'b4mm0k9c7', outputPath: '/private/tmp/claude/tasks/b4mm0k9c7.output' });
   });
 
+  it('ignores tool output that only quotes the notice text', () => {
+    const source = "const id = text.match(/running in background with ID:\\s*([^\\s.]+)/i)?.[1];\n"
+      + "const outputPath = text.match(/Output is being written to:\\s*([^\\n]+?)/i);";
+    expect(extractClaudeBackgroundTask(source)).toBeUndefined();
+    expect(extractClaudeBackgroundTask('42: // Command running in background with ID: abc123.')).toBeUndefined();
+  });
+
   it('parses an explicitly backgrounded command', () => {
     expect(extractClaudeBackgroundTask('Command running in background with ID: abc123.'))
       .toEqual({ id: 'abc123' });

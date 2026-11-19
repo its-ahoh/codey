@@ -122,10 +122,16 @@ export function extractClaudeToolResults(event: StreamEvent): ClaudeToolResult[]
 /** Parse both timeout-driven and explicitly requested Bash background results. */
 export function extractClaudeBackgroundTask(text?: string): ClaudeBackgroundTask | undefined {
   if (!text) return undefined;
-  const id = text.match(/moved to the background \(ID:\s*([^)\s]+)\)/i)?.[1]
-    ?? text.match(/running in background with ID:\s*([^\s.]+)/i)?.[1];
+  // Claude's notice is the whole tool result and starts with "Command". Only
+  // look at that leading notice: a Read/Grep of a file that merely quotes
+  // these phrases (e.g. this very parser) must not count as a detached task.
+  const notice = text.trimStart();
+  if (!/^Command\b/.test(notice)) return undefined;
+  const head = notice.split('\n', 1)[0];
+  const id = head.match(/moved to the background \(ID:\s*([\w-]+)\)/i)?.[1]
+    ?? head.match(/running in background with ID:\s*([\w-]+)/i)?.[1];
   if (!id) return undefined;
-  const outputPath = text.match(/Output is being written to:\s*([^\n]+?)(?:\.\s|\n|$)/i)?.[1]?.trim();
+  const outputPath = head.match(/Output is being written to:\s*(\S+?)(?:\.\s|\.?$)/i)?.[1]?.trim();
   return { id, ...(outputPath ? { outputPath } : {}) };
 }
 
