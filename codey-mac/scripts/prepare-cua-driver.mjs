@@ -9,6 +9,19 @@ const version = '0.34.0'
 const archive = `cua-driver-rs-${version}-darwin-universal-binary.tar.gz`
 const checksum = '940dc008e0f7c5d217d14c0f247d1ebab91b1bac965f4a649d19e8c789bdfd81'
 const destination = fileURLToPath(new URL('../build/cua-driver/', import.meta.url))
+// The packaged app loads the SDK from app.asar.unpacked/node_modules/@trycua
+// (see asarUnpack). electron-builder copies whatever node_modules holds, so a
+// half-finished install ships an app whose desktop control cannot load. Stop
+// the build here instead.
+// The SDK's own runtime dependencies (@ubjs/*) go missing the same way.
+const required = ['@trycua/cua-driver/dist/index.js', '@ubjs/core/package.json', '@ubjs/node/package.json']
+const missing = []
+for (const rel of required) {
+  try { await readFile(fileURLToPath(new URL(`../../node_modules/${rel}`, import.meta.url))) } catch { missing.push(rel) }
+}
+if (missing.length) {
+  throw new Error(`Cua Driver SDK files are missing from node_modules: ${missing.join(', ')}. Run \`npm install\` at the repo root, then build again.`)
+}
 const hash = bytes => createHash('sha256').update(bytes).digest('hex')
 await mkdir(destination, { recursive: true })
 try {
