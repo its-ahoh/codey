@@ -287,3 +287,32 @@ export const fileEditPaths = (tool: string | undefined, input: unknown, workingD
   const abs = raw.startsWith('/') ? raw : `${workingDir.replace(/\/$/, '')}/${raw.replace(/^\.\//, '')}`;
   return [abs];
 };
+
+/**
+ * Carries an Edit/Write call's target from tool_start to tool_end. Claude only
+ * names the file on tool_start — its tool_end has no input — so the path has
+ * to be remembered in between. Calls of one tool finish in the order they
+ * started, so a FIFO per tool name pairs them without a call id.
+ */
+export class PendingEditPaths {
+  private readonly queues = new Map<string, string[][]>();
+
+  /** Paths a starting call will touch; [] for a tool that is not an edit. */
+  start(tool: string | undefined, input: unknown, workingDir: string): string[] {
+    const paths = fileEditPaths(tool, input, workingDir);
+    if (!paths.length || !tool) return paths;
+    const queue = this.queues.get(tool) ?? [];
+    queue.push(paths);
+    this.queues.set(tool, queue);
+    return paths;
+  }
+
+  /** Paths the finishing call touched: its own input when the adapter sends
+   *  one on tool_end, else the oldest unfinished start of the same tool. */
+  end(tool: string | undefined, input: unknown, workingDir: string): string[] {
+    if (!isFileEditTool(tool) || !tool) return [];
+    const started = this.queues.get(tool)?.shift() ?? [];
+    const own = fileEditPaths(tool, input, workingDir);
+    return own.length ? own : started;
+  }
+}

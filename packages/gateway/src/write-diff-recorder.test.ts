@@ -164,6 +164,35 @@ describe('WriteDiffRecorder', () => {
     expect(rec.turnFiles()).toEqual([]);
   });
 
+  it('takes the agent-reported original over a tool_start snapshot that lost the race', async () => {
+    // The snapshot ran after the agent already wrote: it saw the new content.
+    const files: Record<string, string | undefined> = { '/repo/a.ts': 'new\n' };
+    const { git, idFor } = fakeGit({ files, head: { 'a.ts': 'head\n' } });
+    const realFs = await import('fs');
+    const tmpFiles: Record<string, string> = {};
+    const git2: typeof git = async (args, cwd) => {
+      const target = args[args.length - 1];
+      if (args[0] === 'hash-object' && target.includes('codey-before-')) {
+        files[target] = realFs.readFileSync(target, 'utf8');
+        tmpFiles[target] = files[target]!;
+      }
+      return git(args, cwd);
+    };
+    const rec = new WriteDiffRecorder('/repo', git2);
+    await rec.primeBefore(['/repo/a.ts']);
+    await rec.primeContent('/repo/a.ts', 'old\n');
+    const out = await rec.record(['/repo/a.ts']);
+    expect(out).toHaveLength(1);
+    expect(rec.turnFiles()).toEqual([{ path: '/repo/a.ts', before: idFor('old\n'), after: idFor('new\n') }]);
+    expect(Object.keys(tmpFiles)).toHaveLength(1);
+
+    // null = the call created the file.
+    files['/repo/b.ts'] = 'made\n';
+    await rec.primeContent('/repo/b.ts', null);
+    await rec.record(['/repo/b.ts']);
+    expect(rec.turnFiles()[1]).toEqual({ path: '/repo/b.ts', before: EMPTY, after: idFor('made\n') });
+  });
+
   it('matches a path to the repo root through a symlink', async () => {
     // git reports the resolved root; the agent may name the file by the link.
     const { git } = fakeGit({ files: { '/link/src/a.ts': 'one\ntwo\n' }, head: { 'src/a.ts': 'one\n' } });

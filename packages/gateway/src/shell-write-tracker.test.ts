@@ -7,6 +7,7 @@ import {
   fileChangePaths,
   fileEditPaths,
   isFileEditTool,
+  PendingEditPaths,
   type GitRunner,
   type StatRunner,
   type Snapshot,
@@ -213,5 +214,27 @@ describe('ShellWriteTracker.pathsToPrime', () => {
     const tracker = new ShellWriteTracker('/repo', git, stat);
     await tracker.noteStart('sed -i s/x/y/ a.ts');
     expect(tracker.pathsToPrime()).toEqual(['/repo/a.ts']);
+  });
+});
+
+describe('PendingEditPaths', () => {
+  it('pairs a tool_end without input to the path its tool_start named', () => {
+    // Claude sends the file path on tool_start only.
+    const p = new PendingEditPaths();
+    expect(p.start('Write', { file_path: 'a.txt' }, '/repo')).toEqual(['/repo/a.txt']);
+    expect(p.start('Edit', { file_path: 'b.txt' }, '/repo')).toEqual(['/repo/b.txt']);
+    expect(p.start('Edit', { file_path: 'c.txt' }, '/repo')).toEqual(['/repo/c.txt']);
+    expect(p.end('Write', undefined, '/repo')).toEqual(['/repo/a.txt']);
+    expect(p.end('Edit', undefined, '/repo')).toEqual(['/repo/b.txt']);
+    expect(p.end('Edit', undefined, '/repo')).toEqual(['/repo/c.txt']);
+    expect(p.end('Edit', undefined, '/repo')).toEqual([]);
+  });
+
+  it('prefers the input a tool_end carries, and ignores non-edit tools', () => {
+    const p = new PendingEditPaths();
+    p.start('Edit', { file_path: 'a.txt' }, '/repo');
+    expect(p.end('Edit', { file_path: 'z.txt' }, '/repo')).toEqual(['/repo/z.txt']);
+    expect(p.start('Read', { file_path: 'a.txt' }, '/repo')).toEqual([]);
+    expect(p.end('Read', undefined, '/repo')).toEqual([]);
   });
 });

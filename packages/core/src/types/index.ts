@@ -327,6 +327,10 @@ export interface StatusUpdate {
   output?: string;
   /** Set on 'checklist' updates only. */
   checklist?: ChecklistItem[];
+  /** tool_end of a file edit, when the agent reports what the file held
+   *  before the call: the path it edited and that content (null = the call
+   *  created the file). Used for the undo ledger; never persisted. */
+  editedFile?: { path: string; originalContent: string | null };
 }
 
 export interface AgentStateEntry {
