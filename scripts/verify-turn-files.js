@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-require-imports -- plain node script, run without a build step */
 // Live check of the turnFiles undo ledger: an in-process gateway (no app),
 // the real `claude` CLI, a throwaway git repo and CODEY_HOME. Spends a few
 // small model calls. Build core + gateway first, then:
