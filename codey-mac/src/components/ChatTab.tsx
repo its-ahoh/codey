@@ -920,7 +920,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
     const anchors = new Set<string>()
     let inUndone = false
     for (const m of messages) {
-      if (m.role === 'user') inUndone = !!m.checkpoint?.undone
+      if (m.role === 'user') inUndone = !!(m.checkpoint?.undone || m.filesUndone)
       // `undone` is what the gateway goes by; a turn without an undo point
       // of its own is still undone along with the turns around it.
       if (m.undone || inUndone) ids.add(m.id)
@@ -932,7 +932,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
     for (let i = messages.length - 1; i >= 0; i--) {
       const m = messages[i]
       if (m.role === 'user' && !m.undone) liveAfter = true
-      if (m.role === 'user' && !liveAfter && !m.rewound && m.checkpoint?.undone) firstRedo = m
+      if (m.role === 'user' && !liveAfter && !m.rewound && (m.checkpoint?.undone || m.filesUndone)) firstRedo = m
     }
     if (firstRedo) anchors.add(firstRedo.id)
     return { undoneIds: ids, redoAnchors: anchors }
@@ -1801,8 +1801,9 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
       /* Clipboard denied — nothing useful to say, and an alert would be worse. */
     }
   }
-  // Undo puts the chat's worktree back to before this turn (and every later
-  // one). The gateway refuses with a plain reason when it can't.
+  // Undo puts the files back to before this turn (and every later one): the
+  // whole worktree in an isolated chat, only the files those turns wrote on
+  // the shared checkout. The gateway refuses with a plain reason when it can't.
   const undoFromMessage = async (msg: ChatMessage) => {
     try {
       const preview = await apiService.chats.previewUndoTurn(chat.id, msg.id)
@@ -2448,7 +2449,10 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                     >
                       <UIIcon name="refresh" size={13} color={C.fg3} />
                     </button>
-                    {chat.executionMode === 'isolated-worktree' && msg.checkpoint && !msg.checkpoint.undone && (
+                    {(chat.executionMode === 'isolated-worktree'
+                      ? msg.checkpoint && !msg.checkpoint.undone
+                      // Shared checkout: only turns with a complete file record.
+                      : msg.turnFiles && !msg.undone) && (
                       <button
                         style={{ ...styles.msgActionBtn, opacity: canResend ? 1 : 0.4, cursor: canResend ? 'pointer' : 'default' }}
                         disabled={!canResend}

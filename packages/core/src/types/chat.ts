@@ -238,6 +238,12 @@ export interface ChatMessage {
    * it is the ledger for a future path-level undo, not a restore by itself.
    */
   turnFiles?: TurnFileEntry[];
+  /**
+   * Shared-checkout undo of the turns from this message on: the files it put
+   * back, per path the earliest `before` and the latest `after`. Redo writes
+   * the `after`s back. Worktree chats use `checkpoint.undone` instead.
+   */
+  filesUndone?: { at: number; files: TurnFileEntry[] };
   /** Structured question from AskUserQuestion tool call, with option descriptions. */
   userQuestion?: {
     question: string;

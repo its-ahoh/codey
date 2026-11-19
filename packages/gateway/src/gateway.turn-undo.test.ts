@@ -132,10 +132,12 @@ describe('undoTurn / redoTurn', () => {
     await expect(gateway.undoTurn('chat', 'u1')).rejects.toThrow(/commit/);
   });
 
-  it('refuses in a shared checkout', async () => {
+  it('refuses a shared-checkout turn that has no file ledger', async () => {
+    // Shared chats undo from `turnFiles` (see turn-files-undo); a turn
+    // without one (older, or recorded while git could not keep up) cannot.
     const { gateway, chat } = fixture('shared-checkout');
     await turn(chat, 'u1', () => write(repo, 'a.txt', 'v1\n'));
-    await expect(gateway.undoTurn('chat', 'u1')).rejects.toThrow(/own worktree/);
+    await expect(gateway.undoTurn('chat', 'u1')).rejects.toThrow(/no record of the files/);
   });
 
   it('cannot redo once a new turn ran after the undo', async () => {

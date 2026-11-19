@@ -41,6 +41,7 @@ import { summarizePriorHistory } from './summary';
 import { chatStreamEventForStatus, isPersistableToolCall } from './chat-status-events';
 import { ShellWriteTracker, isShellTool, shellCommandText, defaultGitRunner, defaultStatRunner, isFileChangeTool, fileChangePaths, PendingEditPaths } from './shell-write-tracker';
 import { WriteDiffRecorder, priorBlobs, mergeTurnFiles } from './write-diff-recorder';
+import { applyFileRestore, combineTurnFiles, pinTurnFiles, planBlocker, planFileRestore, repoRootOf, turnFilesRef, unpinTurnFiles } from './turn-files-undo';
 import { CHAT_CONTEXT_WINDOW, buildChatPrompt, buildChatBootstrapPrompt, buildChatResumePrompt, buildChatCatchupPrompt, buildQuickQuestionPrompt, assistantPrefixForSelection, RunSemaphore, ChatStreamSink, ChatStreamEvent, READ_ONLY_TOOLS, QQStreamEvent, QQHistoryEntry, SOLO_ADVISOR_INSTRUCTION } from './chat-runner';
 import { TurnQueue, QueuedMessage, Surface } from './turn-queue';
 import { renderQuestion, renderCancelNotice, stripAskMarker } from './team-pause';
@@ -1079,6 +1080,10 @@ export class Codey {
     if (this.chatAborts.has(chatId)) throw new Error('Wait for the current agent turn to finish before deleting this chat');
     // Undo refs live in the shared repository, not the worktree: drop them first.
     if (chat.chatWorkspace) await deleteChatRefs(chat.chatWorkspace.repositoryRoot, chatId).catch(() => 0);
+    else if (chat.messages.some(m => m.turnFiles?.length)) {
+      // Shared-checkout chats pin their turn ledgers in the project repo.
+      try { await deleteChatRefs(this.resolveChatWorkingDir(chat), chatId); } catch { /* folder gone */ }
+    }
     if (chat.chatWorkspace) await removeCleanChatWorktree(chat.chatWorkspace);
     this.chatManager.delete(chatId);
   }
@@ -7024,11 +7029,17 @@ Example: /model gpt-4.1 write a Python script`;
      *  owns it now, so undoing this turn also takes back the stopped attempt. */
     const strayTurnFiles = afterUser.strayTurnFiles ?? [];
     const turnLedger = () => mergeTurnFiles(strayTurnFiles, diffRecorder.turnFiles());
-    /** Writes the ledger onto the user message (finished or failed turn). */
-    const saveTurnLedger = () => {
-      const turnFiles = turnLedger();
-      if (turnFiles.length) this.chatManager.updateMessage(chatId, userMessage.id, { turnFiles });
+    /** Writes the ledger onto the user message (finished or failed turn).
+     *  An empty list is saved too: it says "this turn wrote nothing", which a
+     *  shared-checkout undo needs to tell apart from "not recorded". A ledger
+     *  that may have missed writes is not saved at all. */
+    const saveTurnLedger = async () => {
       if (strayTurnFiles.length) this.chatManager.setStrayTurnFiles?.(chatId, null);
+      if (!diffRecorder.healthy || !writeTracker.healthy) return;
+      const turnFiles = turnLedger();
+      this.chatManager.updateMessage(chatId, userMessage.id, { turnFiles });
+      // Pinned before the turn reports done, so an undo right after finds it.
+      if (turnFiles.length) await this.pinTurnLedger(chatId, workingDir, userMessage.id, turnFiles);
     };
     /** A stop drops the user message; park the ledger for the next turn. */
     const parkTurnLedger = async () => {
@@ -7379,7 +7390,7 @@ Example: /model gpt-4.1 write a Python script`;
       // toolCalls is about to be frozen into the message.
       await settleStatus();
       // Record-only ledger for a future path-level undo (shared + worktree).
-      saveTurnLedger();
+      await saveTurnLedger();
 
       // Fallback metadata already carries the exact successful identity as
       // "agent(model)". Persist that identity instead of the failed primary;
@@ -7618,7 +7629,7 @@ Example: /model gpt-4.1 write a Python script`;
         return { response: '', chatId };
       }
       await settleStatus();
-      saveTurnLedger();
+      await saveTurnLedger();
       if (activeTeamId) {
         const final = await finishTeam(`Error: ${(err as Error).message}`, abortController.signal.aborted);
         // A crashed team run still ends with `done`; `failed` lets clients
@@ -7761,6 +7772,55 @@ Example: /model gpt-4.1 write a Python script`;
     }
   }
 
+  /**
+   * Keeps a turn's ledger blobs from gc, and drops the ledgers (and pins) of
+   * all but the newest MAX_TURNS_PER_CHAT turns. Best effort.
+   */
+  private async pinTurnLedger(chatId: string, workingDir: string, messageId: string, files: import('@codey/core').TurnFileEntry[]): Promise<void> {
+    try {
+      const root = await repoRootOf(workingDir);
+      await pinTurnFiles(root, turnFilesRef(chatId, messageId), files);
+      const chat = this.chatManager.get(chatId);
+      if (!chat) return;
+      const withLedger = chat.messages.filter(m => m.role === 'user' && m.turnFiles);
+      if (withLedger.length <= MAX_TURNS_PER_CHAT) return;
+      const old = withLedger.slice(0, -MAX_TURNS_PER_CHAT);
+      this.chatManager.updateMessages(chatId, old.map(m => ({ id: m.id, patch: { turnFiles: undefined } })));
+      await unpinTurnFiles(root, old.map(m => turnFilesRef(chatId, m.id)));
+    } catch (err) {
+      this.logger.warn(`[turn-files] could not pin the ledger in ${chatId}: ${(err as Error).message}`);
+    }
+  }
+
+  /** Live user messages from `messageId` on, for a shared-checkout undo. */
+  private sharedTurnsFrom(chat: Chat, messageId: string): ChatMessage[] {
+    const start = chat.messages.findIndex(m => m.id === messageId);
+    if (start < 0) return [];
+    return chat.messages.slice(start).filter(m => m.role === 'user' && !m.undone);
+  }
+
+  /**
+   * What a shared-checkout undo from `messageId` would put back, or why it
+   * cannot. A stopped turn's ledger, still parked on the chat, is the newest
+   * turn and is undone with them.
+   */
+  private async sharedUndoPlan(chat: Chat, messageId: string): Promise<{ reason: string } | { turns: ChatMessage[]; files: import('@codey/core').TurnFileEntry[]; dir: string }> {
+    const target = chat.messages.find(m => m.id === messageId);
+    if (!target || target.role !== 'user') return { reason: 'Undo starts from one of your messages.' };
+    if (target.undone) return { reason: 'This turn is already undone.' };
+    const turns = this.sharedTurnsFrom(chat, messageId);
+    if (turns.some(m => !m.turnFiles)) {
+      return { reason: 'A turn from here on has no record of the files it changed (it ran before Codey kept one, outside a git repository, or while git could not keep up), so undo is turned off.' };
+    }
+    const dir = this.resolveChatWorkingDir(chat);
+    const ledgers = turns.map(m => m.turnFiles!);
+    if (chat.strayTurnFiles?.length) ledgers.push(chat.strayTurnFiles);
+    const files = combineTurnFiles(ledgers);
+    const plan = await planFileRestore(dir, files, 'undo');
+    const blocker = planBlocker(plan, dir, 'undo');
+    return blocker ? { reason: blocker } : { turns, files, dir };
+  }
+
   /** User messages from `messageId` on that still have a live undo point. */
   private turnsFrom(chat: Chat, messageId: string): ChatMessage[] {
     const start = chat.messages.findIndex(m => m.id === messageId);
@@ -7839,6 +7899,14 @@ Example: /model gpt-4.1 write a Python script`;
   async previewUndoTurn(chatId: string, messageId: string): Promise<{ ok: boolean; reason?: string; turns: number; files: number }> {
     const chat = this.chatManager.get(chatId);
     if (!chat) return { ok: false, reason: 'Chat not found.', turns: 0, files: 0 };
+    if (chat.executionMode !== 'isolated-worktree') {
+      if (this.chatAborts.has(chatId) || this.pendingChatTurns?.has(chatId)) {
+        return { ok: false, reason: 'Wait for the current turn to finish, or stop it first.', turns: 0, files: 0 };
+      }
+      const plan = await this.sharedUndoPlan(chat, messageId);
+      if ('reason' in plan) return { ok: false, reason: plan.reason, turns: 0, files: 0 };
+      return { ok: true, turns: plan.turns.length, files: plan.files.length };
+    }
     const reason = await this.undoBlocker(chat, messageId);
     if (reason) return { ok: false, reason, turns: 0, files: 0 };
     const target = chat.messages.find(m => m.id === messageId)!;
@@ -7855,6 +7923,7 @@ Example: /model gpt-4.1 write a Python script`;
     return this.withRestoreLock(chatId, async () => {
       const chat = this.chatManager.get(chatId);
       if (!chat) throw new Error('Chat not found.');
+      if (chat.executionMode !== 'isolated-worktree') return this.undoSharedTurn(chat, messageId);
       const reason = await this.undoBlocker(chat, messageId);
       if (reason) throw new Error(reason);
       const dir = this.resolveChatWorkingDir(chat);
@@ -7888,6 +7957,7 @@ Example: /model gpt-4.1 write a Python script`;
       const chat = this.chatManager.get(chatId);
       if (!chat) throw new Error('Chat not found.');
       const target = chat.messages.find(m => m.id === messageId);
+      if (target?.filesUndone) return this.redoSharedTurn(chat, target);
       const undone = target?.checkpoint?.undone;
       if (!undone) throw new Error('This turn is not undone.');
       const dir = this.resolveChatWorkingDir(chat);
@@ -7930,6 +8000,59 @@ Example: /model gpt-4.1 write a Python script`;
       await this.pruneUndoSnapshots(chatId, dir);
       return this.chatManager.get(chatId)!;
     });
+  }
+
+  /** Shared-checkout undo: puts back only the paths these turns wrote. */
+  private async undoSharedTurn(chat: Chat, messageId: string): Promise<Chat> {
+    const plan = await this.sharedUndoPlan(chat, messageId);
+    if ('reason' in plan) throw new Error(plan.reason);
+    await applyFileRestore(plan.dir, plan.files, 'undo');
+    const at = Date.now();
+    const start = chat.messages.findIndex(m => m.id === messageId);
+    const patches: Array<{ id: string; patch: Partial<ChatMessage> }> = [];
+    for (const m of chat.messages.slice(start)) {
+      const patch: Partial<ChatMessage> = {};
+      if (m.id === messageId) patch.filesUndone = { at, files: plan.files };
+      if (!m.undone) { patch.undone = true; patch.undoneAt = at; }
+      if (Object.keys(patch).length) patches.push({ id: m.id, patch });
+    }
+    this.chatManager.updateMessages(chat.id, patches);
+    // A parked stopped-turn ledger was undone with them.
+    if (chat.strayTurnFiles?.length) this.chatManager.setStrayTurnFiles(chat.id, null);
+    this.chatManager.setPendingRewind(chat.id, { fromMessageId: messageId });
+    this.logger.info(`[turn-files] undid ${plan.turns.length} turn(s) in ${chat.id}; ${plan.files.length} file(s) put back`);
+    return this.chatManager.get(chat.id)!;
+  }
+
+  /** Shared-checkout redo: writes the undone turns' files back. */
+  private async redoSharedTurn(chat: Chat, target: ChatMessage): Promise<Chat> {
+    const undone = target.filesUndone!;
+    const start = chat.messages.findIndex(m => m.id === target.id);
+    if (chat.messages.slice(start + 1).some(m => m.role === 'user' && !m.undone)) {
+      throw new Error('New turns ran after this undo, so it can no longer be redone.');
+    }
+    const pendingNow = this.pendingUndone(chat);
+    if (chat.messages.slice(0, start).some(m => m.role === 'user' && pendingNow.has(m.id))) {
+      throw new Error('An earlier turn is still undone. Redo that one first.');
+    }
+    const dir = this.resolveChatWorkingDir(chat);
+    const plan = await planFileRestore(dir, undone.files, 'redo');
+    const blocker = planBlocker(plan, dir, 'redo');
+    if (blocker) throw new Error(blocker);
+    await applyFileRestore(dir, undone.files, 'redo');
+    const patches: Array<{ id: string; patch: Partial<ChatMessage> }> = [];
+    for (const m of chat.messages.slice(start)) {
+      const patch: Partial<ChatMessage> = {};
+      if (m.undoneAt === undone.at) { patch.undone = undefined; patch.undoneAt = undefined; }
+      if (m.id === target.id) patch.filesUndone = undefined;
+      if (Object.keys(patch).length) patches.push({ id: m.id, patch });
+    }
+    this.chatManager.updateMessages(chat.id, patches);
+    const after = this.chatManager.get(chat.id)!;
+    const stillPending = this.pendingUndone(after);
+    const next = after.messages.find(m => m.role === 'user' && stillPending.has(m.id));
+    this.chatManager.setPendingRewind(chat.id, next ? { fromMessageId: next.id } : null);
+    return this.chatManager.get(chat.id)!;
   }
 
   /**

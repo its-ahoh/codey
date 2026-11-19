@@ -132,6 +132,10 @@ export class ShellWriteTracker {
     private readonly stat: StatRunner,
   ) {}
 
+  /** False once sampling gave up for the turn (not a repo, git too slow, tree
+   *  too dirty): shell writes after that point were not seen. */
+  get healthy(): boolean { return !this.disabled }
+
   private async resolveRepoRoot(): Promise<string | null> {
     if (this.repoRoot) return this.repoRoot
     try {
