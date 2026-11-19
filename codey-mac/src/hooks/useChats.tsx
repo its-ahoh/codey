@@ -1138,6 +1138,10 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     },
     async createChat(workspaceName) {
       const chat = await apiService.chats.create({ workspaceName })
+      // stateRef only catches up on the next render, so a caller that sends
+      // right away (Ask Agent on a fallback warning) would read a state with
+      // no such chat and fail with "Chat not found". Fold it in now.
+      stateRef.current = reducer(stateRef.current, { type: 'upsert', chat })
       dispatch({ type: 'upsert', chat })
       dispatch({ type: 'expandWorkspace', workspaceName: chat.workspaceName })
       dispatch({ type: 'select', chatId: chat.id })
