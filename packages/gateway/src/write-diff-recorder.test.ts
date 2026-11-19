@@ -193,6 +193,14 @@ describe('WriteDiffRecorder', () => {
     expect(rec.turnFiles()[1]).toEqual({ path: '/repo/b.ts', before: EMPTY, after: idFor('made\n') });
   });
 
+  it('reports itself unhealthy once marked incomplete', async () => {
+    const { git } = fakeGit({ files: {} });
+    const rec = new WriteDiffRecorder('/repo', git);
+    expect(rec.healthy).toBe(true);
+    rec.markIncomplete();
+    expect(rec.healthy).toBe(false);
+  });
+
   it('matches a path to the repo root through a symlink', async () => {
     // git reports the resolved root; the agent may name the file by the link.
     const { git } = fakeGit({ files: { '/link/src/a.ts': 'one\ntwo\n' }, head: { 'src/a.ts': 'one\n' } });

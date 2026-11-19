@@ -5511,6 +5511,10 @@ Example: /model gpt-4.1 write a Python script`;
       // Why a bot failed, when the reason is a signed-out agent.
       const botAuth = new Map<string, NonNullable<AgentResponse['authRequired']>>();
 
+      // Roundtable members write concurrently and their tool events are not
+      // fed to the turn's recorder, so this turn has no complete file ledger:
+      // a shared-checkout undo must refuse it rather than restore nothing.
+      opts.diffRecorder?.markIncomplete();
       const runner = new ParallelTeamRunner({
         workspacesRoot,
         workspace: chat.workspaceName,
