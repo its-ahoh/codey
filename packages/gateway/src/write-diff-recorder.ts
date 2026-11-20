@@ -97,6 +97,10 @@ export class WriteDiffRecorder {
    *  the ledger may be missing writes, so it must not drive an undo. */
   get healthy(): boolean { return !this.disabled; }
 
+  /** For writes this recorder cannot see (members running concurrently,
+   *  outside its tool events): the turn's ledger is then incomplete. */
+  markIncomplete(): void { this.disabled = true; }
+
   constructor(
     private readonly workingDir: string,
     private readonly git: GitRunner,
