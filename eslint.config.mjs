@@ -126,6 +126,8 @@ export default tseslint.config(
       'scripts/**/*.{mjs,cjs,js}',
       '**/scripts/**/*.{mjs,cjs,js}',
       '**/*.config.{ts,mts,js,mjs}',
+      // Playwright app tests run in Node and drive Electron from outside.
+      'codey-mac/e2e/**/*.{ts,mjs}',
     ],
     languageOptions: { globals: { ...globals.node } },
     rules: { '@typescript-eslint/no-explicit-any': 'off' },
