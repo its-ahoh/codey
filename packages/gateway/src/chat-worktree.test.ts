@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { chatWorktreeParent, discardDisposableWorktree, discoverChatWorktree, isGitWorkspace, normalizeWorktreeName, provisionChatWorktree, removeCleanChatWorktree, resolveRegisteredWorktreeBinding, workspaceHasUncommittedChanges } from './chat-worktree';
+import { chatWorktreeParent, discardDisposableWorktree, discoverChatWorktree, isGitWorkspace, normalizeWorktreeName, provisionChatWorktree, removeCleanChatWorktree, resolveRegisteredWorktreeBinding, sharedCheckoutInstruction, workspaceHasUncommittedChanges } from './chat-worktree';
 import { ChatManager } from './chats';
 
 const roots: string[] = [];
@@ -455,5 +455,23 @@ describe('ChatManager isolated workspace binding', () => {
 
     expect(updated.pullRequest).toEqual(pullRequest);
     expect(updated.updatedAt).toBe(updatedAt);
+  });
+});
+
+describe('sharedCheckoutInstruction', () => {
+  const parent = '/repo/.worktrees';
+
+  it('keeps the shared checkout unless the user asks', () => {
+    const text = sharedCheckoutInstruction(parent, false);
+    expect(text).toContain('do not create a worktree on your own initiative');
+    expect(text).toContain('git worktree add -b <name> "/repo/.worktrees/<name>" HEAD');
+  });
+
+  it('requires a worktree before any file change when forced', () => {
+    const text = sharedCheckoutInstruction(parent, true);
+    expect(text).toContain('before you create, edit or delete any file');
+    expect(text).toContain('Never change files in the shared checkout');
+    expect(text).toContain('git worktree add -b <name> "/repo/.worktrees/<name>" HEAD');
+    expect(text).not.toContain('on your own initiative');
   });
 });
