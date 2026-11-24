@@ -28,6 +28,19 @@ export function chatWorktreeParent(workspaceWorkingDir: string): string {
   return path.join(path.resolve(workspaceWorkingDir), WORKTREE_CONTAINER);
 }
 
+/** Prompt note for a project chat still on the shared checkout. Normally the
+ *  agent creates a worktree only on request; with `force` (Settings → Always
+ *  use a worktree) it must create one before its first file change. Either
+ *  way the checkout is picked up afterwards by discoverChatWorktree. */
+export function sharedCheckoutInstruction(parent: string, force: boolean): string {
+  const command = `\`git worktree add -b <name> ${JSON.stringify(path.join(parent, '<name>'))} HEAD\``;
+  const placement = `Create it only as a direct child of ${JSON.stringify(parent)} so Codey can bind and display it.`;
+  if (force) {
+    return `\n\n[Codey chat workspace]\nThe user requires every chat to work in its own worktree. This chat has none yet. Reading and answering questions is fine here, but before you create, edit or delete any file, choose a short semantic lower-kebab name with no slash, run ${command}, and do all further work in that new directory. Never change files in the shared checkout. ${placement} If this folder is not a Git repository, say so and ask the user before changing anything.`;
+  }
+  return `\n\n[Codey chat workspace]\nThis chat uses the shared checkout. Work there; do not create a worktree on your own initiative. Only when the user explicitly asks for one, choose a short semantic lower-kebab name with no slash, then run ${command} and perform all subsequent work in that new directory. ${placement}`;
+}
+
 /** The container sits inside a checkout, so it must exclude itself from Git:
  *  without this, every chat worktree would surface as untracked noise in the
  *  workspace's own `git status`. Repos that already ignore `.worktrees/` are

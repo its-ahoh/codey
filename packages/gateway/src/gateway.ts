@@ -34,7 +34,7 @@ import { ContextManager, ContextWindow } from '@codey/core';
 import { WorkspaceManager, TeamConfigRaw, TeamConfig, DEFAULT_ROUNDTABLE_SETTINGS, normalizeDispatchMode } from '@codey/core';
 import { BotManager } from '@codey/core';
 import { ChatManager, CreateChatInput } from './chats';
-import { chatWorktreeParent, discardDisposableWorktree, discoverChatWorktree, ensureWorktreeContainer, isGitWorkspace, provisionChatWorktree, removeCleanChatWorktree, resolveRegisteredWorktreeBinding, workspaceHasUncommittedChanges } from './chat-worktree';
+import { chatWorktreeParent, discardDisposableWorktree, discoverChatWorktree, ensureWorktreeContainer, isGitWorkspace, provisionChatWorktree, removeCleanChatWorktree, resolveRegisteredWorktreeBinding, sharedCheckoutInstruction, workspaceHasUncommittedChanges } from './chat-worktree';
 import { resolveEffort } from './effort-resolve';
 import { PairingStore, ChannelBinding } from './pairings';
 import { summarizePriorHistory } from './summary';
@@ -445,6 +445,10 @@ export class Codey {
 
   private getSkipPermissions(): boolean {
     return this.configManager?.getSkipPermissions() ?? true;
+  }
+
+  private getForceWorktree(): boolean {
+    return (this.configManager as { getForceWorktree?: () => boolean } | undefined)?.getForceWorktree?.() ?? false;
   }
 
   /** Bot session TTL — after this, the next call re-bootstraps so a
@@ -6932,7 +6936,7 @@ Example: /model gpt-4.1 write a Python script`;
       : chat.executionMode === 'isolated-worktree'
       ? '\n\n[Codey chat workspace]\nThis chat owns the current worktree and starts on its own same-named branch. You may rename or switch branches as the task evolves; do not operate in another chat’s worktree.'
       : agentWorktreeParent
-        ? `\n\n[Codey chat workspace]\nThis chat uses the shared checkout. Work there; do not create a worktree on your own initiative. Only when the user explicitly asks for one, choose a short semantic lower-kebab name with no slash, then run \`git worktree add -b <name> ${JSON.stringify(path.join(agentWorktreeParent, '<name>'))} HEAD\` and perform all subsequent work in that new directory. Create it only as a direct child of ${JSON.stringify(agentWorktreeParent)} so Codey can bind and display it.`
+        ? sharedCheckoutInstruction(agentWorktreeParent, this.getForceWorktree())
         : '\n\n[Codey chat workspace]\nThis chat already has a user-managed worktree. Continue using the selected checkout; do not create another worktree.';
     if (warmAnchor) {
       // Resume the agent's own session. If other agents produced messages

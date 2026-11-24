@@ -21,6 +21,7 @@ export const AppearanceTab: React.FC = () => {
   const previewMode = mode === 'system' ? effective : mode
   const [version, setVersion] = React.useState<string>('')
   const [skipPerms, setSkipPerms] = React.useState<boolean>(true)
+  const [forceWorktree, setForceWorktree] = React.useState<boolean>(false)
   const [notifyEnabled, setNotifyEnabled] = React.useState<boolean>(true)
   const [turnSound, setTurnSound] = React.useState<boolean>(true)
   const [soundFile, setSoundFile] = React.useState<string>('')
@@ -37,6 +38,7 @@ export const AppearanceTab: React.FC = () => {
     window.codey?.config?.get?.().then((res: any) => {
       const cfg = res?.ok ? res.data : res
       setSkipPerms(cfg?.gateway?.skipPermissions ?? true)
+      setForceWorktree(cfg?.gateway?.forceWorktree === true)
       setNotifyEnabled(cfg?.notifications?.enabled ?? true)
       setTurnSound(cfg?.notifications?.sound ?? true)
       setSoundFile(cfg?.notifications?.soundFile ?? '')
@@ -65,6 +67,13 @@ export const AppearanceTab: React.FC = () => {
     )) return
     setSkipPerms(v)
     window.codey?.config?.set?.({ gateway: { skipPermissions: v } }).catch(() => { /* ignore */ })
+  }
+
+  // gateway.* merges field-wise in ConfigManager.update, so port and
+  // skipPermissions survive this write.
+  const toggleForceWorktree = (v: boolean) => {
+    setForceWorktree(v)
+    window.codey?.config?.set?.({ gateway: { forceWorktree: v } }).catch(() => { /* ignore */ })
   }
 
   const toggleNotify = (v: boolean) => {
@@ -239,6 +248,16 @@ export const AppearanceTab: React.FC = () => {
               </div>
             </div>
             <Toggle on={skipPerms} onChange={toggleSkipPerms}/>
+          </div>
+
+          <div style={styles.settingRow}>
+            <div style={{ ...styles.label, width: 'auto', flex: 1 }}>
+              <div>Always use a worktree</div>
+              <div style={styles.settingDesc}>
+                Agents make their own worktree before changing files, never the shared checkout.
+              </div>
+            </div>
+            <Toggle on={forceWorktree} onChange={toggleForceWorktree}/>
           </div>
 
           <div style={styles.settingRow}>

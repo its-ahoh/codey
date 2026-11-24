@@ -23,6 +23,9 @@ export interface GatewayConfigJson {
   gateway: {
     port: number;
     skipPermissions?: boolean;
+    /** Every project chat must do its file changes in its own worktree,
+     *  never in the shared checkout (default off). */
+    forceWorktree?: boolean;
   };
   channels: {
     telegram?: { enabled: boolean; botToken: string };
@@ -490,6 +493,7 @@ export class ConfigManager extends EventEmitter {
   /** Browser origins allowed to call the HTTP server. Empty = block all. */
   getApiAllowedOrigins(): string[] { return this.config.api?.allowedOrigins ?? []; }
   getSkipPermissions(): boolean { return this.config.gateway.skipPermissions ?? true; }
+  getForceWorktree(): boolean { return this.config.gateway.forceWorktree === true; }
 
   /**
    * Canonical default = first entry in fallback.order. A fresh install has
