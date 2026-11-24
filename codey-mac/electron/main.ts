@@ -3810,6 +3810,22 @@ app.whenReady().then(async () => {
     })
   )
 
+  // The project folder was renamed or moved outside Codey: follow it. The
+  // gateway writes workspace.json and drops agent sessions filed under the old
+  // path; this process's own manager re-reads it if it is the active one.
+  ipcMain.handle('workspaces:setFolder', async (_e, name: string, dir: string) =>
+    wrap(async () => {
+      if (!workspaceManager) throw new Error('Workspace manager not ready')
+      const resolved = inProcessGateway
+        ? await inProcessGateway.setWorkspaceFolder(name, dir)
+        : await workspaceManager.setWorkspaceWorkingDir(name, dir)
+      if (inProcessGateway && workspaceManager.getCurrentWorkspace() === name) {
+        await workspaceManager.switchWorkspace(name)
+      }
+      return resolved
+    })
+  )
+
   ipcMain.handle('workspaces:reveal', async (_e, name: string) =>
     wrap(async () => {
       if (!workspaceManager) throw new Error('Workspace manager not ready')

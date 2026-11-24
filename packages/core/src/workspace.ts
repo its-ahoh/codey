@@ -368,6 +368,39 @@ export class WorkspaceManager {
     return this.getWorkingDir();
   }
 
+  /**
+   * Point a workspace at a different project folder, for when the user renamed
+   * or moved it outside Codey. Agents are spawned with the folder as their
+   * cwd, so a stale path fails every one of them before it starts. Refuses a
+   * folder another workspace already owns: two workspaces sharing a checkout
+   * would split its chats and project memory between them.
+   */
+  async setWorkspaceWorkingDir(name: string, dir: string): Promise<string> {
+    const configPath = path.join(this.workspacesDir, name, 'workspace.json');
+    if (!fs.existsSync(configPath)) throw new Error(`Workspace "${name}" does not exist`);
+    const resolved = path.resolve(dir);
+    if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
+      throw new Error(`Not a directory: ${resolved}`);
+    }
+    for (const ws of this.listWorkspaces()) {
+      if (ws === name) continue;
+      try {
+        const other = JSON.parse(fs.readFileSync(path.join(this.workspacesDir, ws, 'workspace.json'), 'utf-8')) as WorkspaceJson;
+        if (other.workingDir && path.resolve(other.workingDir) === resolved) {
+          throw new Error(`Folder is already used by workspace "${ws}"`);
+        }
+      } catch (err) {
+        if ((err as Error).message.startsWith('Folder is already used')) throw err;
+      }
+    }
+    const data = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as WorkspaceJson;
+    data.workingDir = resolved;
+    fs.writeFileSync(configPath, JSON.stringify(data, null, 2));
+    if (this.currentWorkspace === name && this.config) this.config.workingDir = resolved;
+    this.logger.info(`[Workspace] ${name} now points at ${resolved}`);
+    return resolved;
+  }
+
   async renameWorkspace(oldName: string, newName: string): Promise<void> {
     if (oldName === 'default') {
       throw new Error('The "default" workspace is protected and cannot be renamed.');

@@ -397,6 +397,7 @@ declare global {
         create: (dir: string) => Promise<IpcResult<string>>
         delete: (name: string) => Promise<IpcResult<void>>
         rename: (oldName: string, newName: string) => Promise<IpcResult<void>>
+        setFolder: (name: string, dir: string) => Promise<IpcResult<string>>
         reveal: (name: string) => Promise<IpcResult<void>>
       }
       dialog: {

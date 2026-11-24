@@ -172,6 +172,11 @@ export interface ChatMessage {
    */
   authRequired?: { agent: CodingAgent };
   /**
+   * The turn failed because the workspace's project folder no longer exists.
+   * The Mac app shows a Choose folder card instead of the raw error.
+   */
+  folderMissing?: { workingDir: string };
+  /**
    * The turn failed; `content` is what the user sees (partial reply and/or the
    * error). Kept out of agent context: resume checkpoint, history, catch-up.
    */

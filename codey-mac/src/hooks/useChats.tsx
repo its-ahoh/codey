@@ -74,7 +74,7 @@ type Action =
   | { type: 'toolCall'; chatId: string; entry: ToolCallEntry; status: AgentActivity; messageId?: string }
   | { type: 'patchChecklist'; chatId: string; items: ChecklistItem[] }
   | { type: 'queued'; chatId: string; position: number }
-  | { type: 'completeSend'; memoryUsed?: ChatMessage['memoryUsed']; taskId?: string | null; tasks?: Chat['tasks']; bot?: string; botStatus?: ChatMessage['botStatus']; chatId: string; assistantMessageId: string; content: string; attachments?: ChatMessage['attachments']; thinking?: string; tokens?: number; durationSec?: number; agent?: ChatMessage['agent']; model?: string; title?: string; choices?: string[]; userQuestion?: ChatMessage['userQuestion']; fallback?: ChatMessage['fallback']; authRequired?: ChatMessage['authRequired']; teamTurnId?: string }
+  | { type: 'completeSend'; memoryUsed?: ChatMessage['memoryUsed']; taskId?: string | null; tasks?: Chat['tasks']; bot?: string; botStatus?: ChatMessage['botStatus']; chatId: string; assistantMessageId: string; content: string; attachments?: ChatMessage['attachments']; thinking?: string; tokens?: number; durationSec?: number; agent?: ChatMessage['agent']; model?: string; title?: string; choices?: string[]; userQuestion?: ChatMessage['userQuestion']; fallback?: ChatMessage['fallback']; authRequired?: ChatMessage['authRequired']; folderMissing?: ChatMessage['folderMissing']; teamTurnId?: string }
   | { type: 'errorSend'; chatId: string; assistantMessageId: string; error: string }
   | { type: 'stoppedSend'; chatId: string; text: string }
   | { type: 'clearRestore'; chatId: string }
@@ -594,7 +594,7 @@ export function reducer(state: State, action: Action): State {
             // `?? m.thinking` rather than a plain assignment: thinking that
             // already streamed in through thinkingToken must not be wiped by a
             // done event that carries none.
-            ? { ...m, ...(action.bot ? { bot: action.bot, botStatus: action.botStatus } : {}), content: action.content, attachments: action.attachments, thinking: action.thinking ?? m.thinking, tokens: action.tokens, memoryUsed: action.memoryUsed, durationSec: action.durationSec, agent: action.agent, model: action.model, isComplete: true, choices: action.choices, userQuestion: action.userQuestion, fallback: action.fallback, ...(action.authRequired ? { authRequired: action.authRequired, failed: true } : {}) }
+            ? { ...m, ...(action.bot ? { bot: action.bot, botStatus: action.botStatus } : {}), content: action.content, attachments: action.attachments, thinking: action.thinking ?? m.thinking, tokens: action.tokens, memoryUsed: action.memoryUsed, durationSec: action.durationSec, agent: action.agent, model: action.model, isComplete: true, choices: action.choices, userQuestion: action.userQuestion, fallback: action.fallback, ...(action.authRequired ? { authRequired: action.authRequired, failed: true } : {}), ...(action.folderMissing ? { folderMissing: action.folderMissing, failed: true } : {}) }
             : m
         )
       } else {
@@ -619,6 +619,7 @@ export function reducer(state: State, action: Action): State {
           userQuestion: action.userQuestion,
           fallback: action.fallback,
           ...(action.authRequired ? { authRequired: action.authRequired, failed: true } : {}),
+          ...(action.folderMissing ? { folderMissing: action.folderMissing, failed: true } : {}),
         }]
       }
       if (action.taskId !== undefined) {
@@ -953,6 +954,7 @@ export const ChatsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               userQuestion: ev.userQuestion,
               fallback: ev.fallback,
               authRequired: ev.authRequired,
+              folderMissing: ev.folderMissing,
               teamTurnId: ev.teamTurnId,
             })
             delete pendingAssistantId.current[ev.chatId]

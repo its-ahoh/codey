@@ -404,6 +404,11 @@ export interface AgentResponse {
    * Never set for an agent running on an API key.
    */
   authRequired?: { agent: CodingAgent };
+  /**
+   * The run never started because its working folder is gone (renamed, moved
+   * or deleted outside Codey). No agent or fallback was spawned.
+   */
+  folderMissing?: { workingDir: string };
   /** Structured question extracted from an AskUserQuestion tool call. */
   userQuestion?: {
     question: string;
