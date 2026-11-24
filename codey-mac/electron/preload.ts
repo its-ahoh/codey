@@ -37,6 +37,7 @@ contextBridge.exposeInMainWorld('codey', {
     create: (dir: string) => ipcRenderer.invoke('workspaces:create', dir),
     delete: (name: string) => ipcRenderer.invoke('workspaces:delete', name),
     rename: (oldName: string, newName: string) => ipcRenderer.invoke('workspaces:rename', oldName, newName),
+    setFolder: (name: string, dir: string) => ipcRenderer.invoke('workspaces:setFolder', name, dir),
     reveal: (name: string) => ipcRenderer.invoke('workspaces:reveal', name),
   },
   dialog: {

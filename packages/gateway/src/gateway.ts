@@ -222,6 +222,19 @@ export function channelTextFor(output: string, authRequired: AgentResponse['auth
   return authRequired ? authRequiredHint(authRequired.agent) : output;
 }
 
+/** The error for a run whose working folder is gone. Spawning there would fail
+ *  every agent with "spawn <cli> ENOENT", which reads like no agent is
+ *  installed, so the run stops before any agent or fallback starts. */
+export function folderMissingResponse(workingDir: string | undefined): AgentResponse | undefined {
+  if (!workingDir || fs.existsSync(workingDir)) return undefined;
+  return {
+    success: false,
+    output: '',
+    error: `Project folder not found: ${workingDir}. It may have been renamed, moved or deleted. Choose its new location in the Codey Mac app.`,
+    folderMissing: { workingDir },
+  };
+}
+
 /** What a failed chat turn shows: whatever the agent already wrote (streamed,
  *  or returned as output with no error), then the failure, then why each
  *  fallback failed. Never blank, and never mistakes a reply for the error. */
@@ -2321,6 +2334,22 @@ export class Codey {
       return chat.botChat.homeDir;
     }
     return this.resolveWorkspaceWorkingDir(chat.workspaceName);
+  }
+
+  /**
+   * Point a workspace at its project folder's new location (renamed or moved
+   * outside Codey). Agent sessions of the chats that run in that folder are
+   * dropped: Claude Code and pi file them under the old path, so a resume
+   * would miss; the next turn starts fresh from the chat's own history.
+   */
+  async setWorkspaceFolder(workspaceName: string, dir: string): Promise<string> {
+    const resolved = await this.workspaceManager.setWorkspaceWorkingDir(workspaceName, dir);
+    if (workspaceName === this.workspaceManager.getCurrentWorkspace()) this.workingDir = resolved;
+    for (const chat of this.chatManager.list(workspaceName, { includeAutomation: true })) {
+      if (chat.executionMode === 'isolated-worktree' || chat.workingDirOverride || chat.botChat) continue;
+      this.chatManager.clearSessionAnchor(chat.id);
+    }
+    return resolved;
   }
 
   /** workspace.json workingDir if present, else the gateway working dir. */
@@ -5959,6 +5988,11 @@ Example: /model gpt-4.1 write a Python script`;
     if (request.effort === undefined) {
       request = { ...request, effort: this.getDefaultEffort(agent) };
     }
+    const missing = folderMissingResponse(request.context?.workingDir);
+    if (missing) {
+      this.logger.error(`Agent ${agent} not started: ${missing.error}`);
+      return missing;
+    }
     const response = await this.runAgentWithNetworkRetry(agent, request);
     if (response.success || response.permissionDenials?.length || response.userQuestion) return response;
 
@@ -7442,6 +7476,7 @@ Example: /model gpt-4.1 write a Python script`;
         ...(terminalTeamSummary ? { teamSummary: terminalTeamSummary } : {}),
         ...(turnError ? { failed: true } : {}),
         ...(turnError && singleAgentResponse?.authRequired ? { authRequired: singleAgentResponse.authRequired } : {}),
+        ...(turnError && singleAgentResponse?.folderMissing ? { folderMissing: singleAgentResponse.folderMissing } : {}),
       };
       // For per-bot team runs the transcript was already persisted as
       // individual bot messages by the BotMessageEmitter. Persist only a
@@ -7539,7 +7574,7 @@ Example: /model gpt-4.1 write a Python script`;
       // The Mac app turns a non-empty team response into a footer bubble, so
       // it only travels when a footer was actually persisted.
       const doneResponse = teamTurnId && footerPlan !== 'append' ? '' : output;
-      sink({ type: 'done', chatId, response: doneResponse, channelText: channelTextFor(output, assistantMessage.authRequired), ...(outputImages.length ? { attachments: outputImages } : {}), memoryUsed: assistantMessage.memoryUsed, bot: assistantMessage.bot, botStatus: assistantMessage.botStatus, thinking: singleAgentResponse?.thinking, tokens, durationSec, agent: responseAgent, ...(responseModel ? { model: responseModel } : {}), title: finalTitle, choices: surfacedChoices, userQuestion: agentUserQuestion, fallback: singleAgentResponse?.fallback, ...(teamTurnId ? { teamTurnId } : {}), ...(assistantMessage.authRequired ? { authRequired: assistantMessage.authRequired } : {}) });
+      sink({ type: 'done', chatId, response: doneResponse, channelText: channelTextFor(output, assistantMessage.authRequired), ...(outputImages.length ? { attachments: outputImages } : {}), memoryUsed: assistantMessage.memoryUsed, bot: assistantMessage.bot, botStatus: assistantMessage.botStatus, thinking: singleAgentResponse?.thinking, tokens, durationSec, agent: responseAgent, ...(responseModel ? { model: responseModel } : {}), title: finalTitle, choices: surfacedChoices, userQuestion: agentUserQuestion, fallback: singleAgentResponse?.fallback, ...(teamTurnId ? { teamTurnId } : {}), ...(assistantMessage.authRequired ? { authRequired: assistantMessage.authRequired } : {}), ...(assistantMessage.folderMissing ? { folderMissing: assistantMessage.folderMissing } : {}) });
 
       // ── Skills: post-run pass (fire-and-forget, response already delivered) ──
       // Skip the whole pass when this turn ended PAUSED — i.e. the team run

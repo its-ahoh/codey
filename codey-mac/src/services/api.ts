@@ -105,6 +105,9 @@ export const apiService = {
   renameWorkspace: async (oldName: string, newName: string): Promise<void> =>
     unwrap(await window.codey.workspaces.rename(oldName, newName)),
 
+  setWorkspaceFolder: async (name: string, dir: string): Promise<string> =>
+    unwrap(await window.codey.workspaces.setFolder(name, dir)),
+
   revealWorkspace: async (name: string): Promise<void> =>
     unwrap(await window.codey.workspaces.reveal(name)),
 

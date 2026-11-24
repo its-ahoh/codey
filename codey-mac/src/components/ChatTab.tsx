@@ -1,6 +1,7 @@
 import { TeamAvatar } from './TeamAvatar'
 import { BotInteractionCard } from './BotInteractionCard'
 import { AgentSignInCard } from './AgentSignInCard'
+import { FolderMissingCard } from './FolderMissingCard'
 import { ChatHeaderActions } from './ChatHeaderActions'
 import { NotificationCenter } from './NotificationCenter'
 import { BotMembers } from './BotMembers'
@@ -2208,7 +2209,7 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
                 {!isUser && (isBotMessage ? memberActive && memberState === 'working' : !!flight && msg === lastMsg) && (
                   <LiveActivity toolCalls={msg.toolCalls} />
                 )}
-                {!msg.authRequired && (msg.content || (!isUser && msg.userQuestion?.question)) && (() => {
+                {!msg.authRequired && !msg.folderMissing && (msg.content || (!isUser && msg.userQuestion?.question)) && (() => {
                   if (isUser) {
                     if (isEditing) return (
                       <div style={styles.msgEditBox}>
@@ -2299,6 +2300,17 @@ const ChatTabView: React.FC<Props & { chat: Chat }> = ({
               </div>
               {msg.botInteraction && <BotInteractionCard chatId={chat.id} message={msg} />}
               {/* Signed out: the card stands in for the raw error, which stays one click away. */}
+              {/* Folder gone: the card offers to repoint the workspace instead of the raw error. */}
+              {msg.folderMissing && !msg.authRequired && (
+                <FolderMissingCard
+                  workspaceName={chat.workspaceName}
+                  message={msg}
+                  messages={chat.messages}
+                  busy={!canResend}
+                  onRerun={rerunUserMessage}
+                  onFolderChanged={dir => { if (!chat.botChat) setWorkspaceDir(dir) }}
+                />
+              )}
               {msg.authRequired && (
                 <AgentSignInCard
                   chatId={chat.id}

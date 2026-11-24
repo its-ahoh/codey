@@ -148,6 +148,59 @@ describe('WorkspaceManager workspace ordering', () => {
   });
 });
 
+describe('WorkspaceManager.setWorkspaceWorkingDir', () => {
+  let root: string;
+  let wsDir: string;
+  let manager: WorkspaceManager;
+  const write = (name: string, workingDir: string) => {
+    fs.mkdirSync(path.join(wsDir, name), { recursive: true });
+    fs.writeFileSync(path.join(wsDir, name, 'workspace.json'), JSON.stringify({ workingDir, createdAt: '2026-01-01T00:00:00.000Z' }));
+  };
+  const read = (name: string) => JSON.parse(fs.readFileSync(path.join(wsDir, name, 'workspace.json'), 'utf-8'));
+
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'ws-folder-'));
+    wsDir = path.join(root, 'workspaces');
+    manager = new WorkspaceManager(new BotManager(path.join(root, 'bots')), wsDir);
+  });
+  afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  it('repoints a workspace whose folder was renamed and keeps its other fields', async () => {
+    const renamed = path.join(root, 'cronAgent');
+    fs.mkdirSync(renamed);
+    write('proj', path.join(root, 'agent-cron'));
+    await manager.setWorkspaceWorkingDir('proj', renamed);
+    expect(read('proj')).toEqual({ workingDir: renamed, createdAt: '2026-01-01T00:00:00.000Z' });
+  });
+
+  it('updates the active workspace in memory too', async () => {
+    const renamed = path.join(root, 'new');
+    fs.mkdirSync(renamed);
+    write('proj', path.join(root, 'old'));
+    await manager.switchWorkspace('proj');
+    await manager.setWorkspaceWorkingDir('proj', renamed);
+    expect(manager.getWorkingDir()).toBe(renamed);
+  });
+
+  it('refuses a folder that does not exist', async () => {
+    write('proj', root);
+    await expect(manager.setWorkspaceWorkingDir('proj', path.join(root, 'nope'))).rejects.toThrow(/Not a directory/);
+    expect(read('proj').workingDir).toBe(root);
+  });
+
+  it('refuses a folder another workspace already uses', async () => {
+    const shared = path.join(root, 'shared');
+    fs.mkdirSync(shared);
+    write('proj', path.join(root, 'gone'));
+    write('other', shared);
+    await expect(manager.setWorkspaceWorkingDir('proj', shared)).rejects.toThrow(/already used by workspace "other"/);
+  });
+
+  it('refuses an unknown workspace', async () => {
+    await expect(manager.setWorkspaceWorkingDir('ghost', root)).rejects.toThrow(/does not exist/);
+  });
+});
+
 const validGraph = {
   entry: 'start',
   maxHops: 5,
