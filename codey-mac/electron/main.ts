@@ -34,6 +34,7 @@ import type { MemoryPanelScope } from './codey-memory'
 import { scanSkillUsage } from './skill-usage'
 import type { SkillUsageMap, UsageCacheEntry } from './skill-usage'
 import { BROWSER_PARTITION, BrowserController, type BrowserBounds } from './browser-controller'
+import { applyBrowserIdentity } from './browser-user-agent'
 import { BrowserAgentBridge, type BrowserLoginWaitEvent } from './browser-agent-bridge'
 import { assertProfileName, availableProfileName, deriveProfileNameFromFile, siteCoversHost } from './browser-profiles'
 import { BrowserControlPermissionGate } from './browser-control-permission'
@@ -94,6 +95,10 @@ let warnedWebAuthnUnavailable = false
 /** Everything a profile's jar needs the first time the browser opens it:
  *  the user's extensions, and the native Touch ID authenticator. */
 const onBrowserSessionOpened = (target: Electron.Session) => {
+  // Google sign-in rejects Electron as an embedded browser; see
+  // browser-user-agent.ts. Set before the tab's view exists, so every page,
+  // worker and sign-in popup in this jar carries the same identity.
+  applyBrowserIdentity(target)
   void browserExtensionManager?.attach(target)
   if (configuredWebAuthn.has(target)) return
   configuredWebAuthn.add(target)
